@@ -31,6 +31,13 @@
       qrStep1: 'Установите приложение WireGuard (или клиент Fibr)',
       qrStep2: 'Нажмите «+» и выберите «Создать из QR-кода»',
       qrStep3: 'Наведите камеру на код',
+      btnCode: 'Код',
+      codeTitle: 'Код быстрого подключения',
+      codeHintClient: 'В приложении Fibr: «Добавить туннель» → «По коду» — введите код или отсканируйте QR.',
+      codeHintLink: 'Или откройте ссылку — на странице будет кнопка «Открыть в приложении».',
+      codeExpires: 'Действует {t}',
+      codeMin: 'мин',
+      codeExpired: 'Код истёк — закройте окно и сгенерируйте новый',
       configTitle: 'Конфигурация',
       copy: 'Копировать', copied: 'Скопировано', close: 'Закрыть',
       footHint: 'QR также совместим с официальным приложением WireGuard',
@@ -87,6 +94,13 @@
       qrStep1: 'Install the WireGuard app (or the Fibr client)',
       qrStep2: 'Tap “+” and choose “Create from QR code”',
       qrStep3: 'Point your camera at the code',
+      btnCode: 'Code',
+      codeTitle: 'Quick-connect code',
+      codeHintClient: 'In the Fibr app: “Add tunnel” → “By code” — type the code or scan the QR.',
+      codeHintLink: 'Or open the link — the page has an “Open in the app” button.',
+      codeExpires: 'Valid {t}',
+      codeMin: 'min',
+      codeExpired: 'The code has expired — close and generate a new one',
       configTitle: 'Configuration',
       copy: 'Copy', copied: 'Copied', close: 'Close',
       footHint: 'The QR also works with the official WireGuard app',
@@ -161,6 +175,7 @@
   }
 
   function closeModal() {
+    if (codeTimer) { clearInterval(codeTimer); codeTimer = null; }
     el('modal').classList.add('hidden');
     el('modal-body').innerHTML = '';
   }
@@ -386,6 +401,7 @@
         '<span>' + t('tx', { v: fmtBytes(d.total_tx) }) + '</span></div>' +
         '<div class="device-actions">' +
         '<button class="btn btn--secondary btn--small" data-act="qr" data-id="' + d.id + '">' + t('btnQR') + '</button>' +
+        '<button class="btn btn--secondary btn--small" data-act="code" data-id="' + d.id + '">' + t('btnCode') + '</button>' +
         '<button class="btn btn--tertiary btn--small" data-act="cfg" data-id="' + d.id + '">' + t('btnConfig') + '</button>' +
         '<button class="btn btn--ghost btn--small" data-act="del" data-id="' + d.id + '" data-name="' + esc(d.name) + '">' + t('btnDelete') + '</button>' +
         '</div></div></div>';
@@ -415,6 +431,7 @@
       showQR(id, dev && dev.protocol);
     }
     else if (act === 'cfg') showConfig(id);
+    else if (act === 'code') showJoinCode(id);
     else if (act === 'del') {
       if (!confirm(t('confirmDelete', { name: btn.getAttribute('data-name') }))) return;
       api('/api/me/devices/' + id, { method: 'DELETE' }).then(load).catch(fail);
@@ -600,13 +617,22 @@
       '<li>' + esc(t('qrStep3')) + '</li></ol>';
   }
 
-  function qrModal(url, protocol) {
+  function qrModal(url, protocol, joinPath) {
     var hint = protocol === 'xray' ? t('qrHintXray') : t('qrHint');
+    var joinBtn = joinPath
+      ? '<button class="btn btn--secondary btn--small" id="qr-join">' + esc(t('btnCode')) + '</button>'
+      : '';
     openModal('<h3>' + esc(t('qrTitle')) + '</h3>' +
       '<p class="muted modal-sub">' + esc(hint) + '</p>' +
       '<div class="qr-wrap"><img src="' + url + '" alt="QR"></div>' +
       qrSteps(protocol) +
-      '<div class="modal-actions"><button class="btn" onclick="document.getElementById(\'modal\').classList.add(\'hidden\')">' + esc(t('close')) + '</button></div>');
+      '<div class="modal-actions">' + joinBtn +
+      '<button class="btn" onclick="document.getElementById(\'modal\').classList.add(\'hidden\')">' + esc(t('close')) + '</button></div>');
+    if (joinPath) {
+      el('qr-join').addEventListener('click', function () {
+        api(joinPath, { method: 'POST', body: {} }).then(joinCodeModal).catch(fail);
+      });
+    }
   }
 
   function showQR(id, protocol) {
@@ -622,7 +648,8 @@
   }
 
   // Admin variant for devices just issued to one of my users (the QR pops up
-  // immediately so it can be handed over right away).
+  // immediately so it can be handed over right away; the extra "Code" button
+  // mints a quick-connect code for the same device via the admin endpoint).
   function showAdminQR(id, protocol) {
     fetch('/api/admin/devices/' + id + '/qr.png', { headers: { Authorization: 'Bearer ' + token } })
       .then(function (res) {
@@ -630,13 +657,59 @@
         return res.blob();
       })
       .then(function (blob) {
-        qrModal(URL.createObjectURL(blob), protocol);
+        qrModal(URL.createObjectURL(blob), protocol, '/api/admin/devices/' + id + '/join');
       })
       .catch(fail);
   }
 
-  function showConfig(id) {
-    fetch('/api/me/devices/' + id + '/config', { headers: { Authorization: 'Bearer ' + token } })
+  // Quick-connect code (docs/join.md): a short one-time code minted for
+  // this device. The holder types it in the Fibr client ("By code") or opens
+  // the link; the modal shows the code big, the link and a QR of the link,
+  // plus a live countdown to the code's TTL.
+  var codeTimer = null;
+
+  function showJoinCode(id) {
+    api('/api/me/devices/' + id + '/join', { method: 'POST', body: {} }).then(joinCodeModal).catch(function (e) {
+      if (e && e.status === 403 && e.message === 'subscription expired') { showExpired(); return; }
+      fail(e);
+    });
+  }
+
+  function joinCodeModal(j) {
+    var qrImg = j.qr ? '<div class="qr-wrap"><img src="' + j.qr + '" alt="QR"></div>' : '';
+    openModal('<h3>' + esc(t('codeTitle')) + '</h3>' +
+      '<p class="muted modal-sub">' + esc(t('codeHintClient')) + '</p>' +
+      '<div class="join-code mono" id="join-code" title="' + esc(t('copy')) + '">' + esc(j.code) + '</div>' +
+      qrImg +
+      '<p class="muted modal-sub">' + esc(t('codeHintLink')) + '</p>' +
+      '<div class="join-link mono" id="join-link" title="' + esc(t('copy')) + '">' + esc(j.url) + '</div>' +
+      '<p class="muted" id="join-ttl"></p>' +
+      '<div class="modal-actions">' +
+      '<button class="btn btn--tertiary btn--small" id="copy-join-link">' + esc(t('copy')) + '</button>' +
+      '<button class="btn" id="close-join">' + esc(t('close')) + '</button></div>');
+    function copyText(txt) {
+      navigator.clipboard.writeText(txt).then(function () { /* tap feedback via :active is enough */ });
+    }
+    el('join-code').addEventListener('click', function () { copyText(j.code); });
+    el('join-link').addEventListener('click', function () { copyText(j.url); });
+    el('copy-join-link').addEventListener('click', function () {
+      navigator.clipboard.writeText(j.url).then(function () { this.textContent = t('copied'); }.bind(this));
+    });
+    el('close-join').addEventListener('click', closeModal);
+    function tick() {
+      var ttl = el('join-ttl');
+      if (!ttl) { if (codeTimer) { clearInterval(codeTimer); codeTimer = null; } return; }
+      var left = Math.max(0, Math.floor((new Date(j.expires_at).getTime() - Date.now()) / 1000));
+      if (left <= 0) { ttl.textContent = t('codeExpired'); clearInterval(codeTimer); codeTimer = null; return; }
+      var m = Math.floor(left / 60), s = left % 60;
+      ttl.textContent = t('codeExpires', { t: m + ' ' + t('codeMin') + ' ' + (s < 10 ? '0' : '') + s });
+    }
+    if (codeTimer) clearInterval(codeTimer);
+    tick();
+    codeTimer = setInterval(tick, 1000);
+  }
+
+  function showConfig(id) {    fetch('/api/me/devices/' + id + '/config', { headers: { Authorization: 'Bearer ' + token } })
       .then(function (res) {
         if (!res.ok) throw new Error('HTTP ' + res.status);
         return res.text();

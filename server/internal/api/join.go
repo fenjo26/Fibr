@@ -18,6 +18,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/skip2/go-qrcode"
+
 	"github.com/fenjo26/Fibr/internal/store"
 )
 
@@ -55,12 +57,25 @@ func JoinLink(domain, code string) string {
 	return "https://" + d + "/join/" + code
 }
 
-// joinOut is the JSON shape returned when a code is minted.
+// joinOut is the JSON shape returned when a code is minted. QR is a
+// ready-to-render data:image/png URI of the join link so the Mini App needs
+// no client-side QR library.
 type joinOut struct {
 	Code      string    `json:"code"`
 	URL       string    `json:"url"`
+	QR        string    `json:"qr,omitempty"`
 	DeviceID  int64     `json:"device_id"`
 	ExpiresAt time.Time `json:"expires_at"`
+}
+
+// joinQRDataURI renders the join-link QR as a PNG data URI (Medium error
+// correction is plenty for a URL typed once and scanned once).
+func joinQRDataURI(link string) (string, error) {
+	png, err := qrcode.Encode(link, qrcode.Medium, 384)
+	if err != nil {
+		return "", err
+	}
+	return "data:image/png;base64," + base64.StdEncoding.EncodeToString(png), nil
 }
 
 // issueJoinCode mints a code for an already-scoped device. Shared by the
@@ -82,12 +97,18 @@ func (a *API) issueJoinCode(w http.ResponseWriter, d *store.Device, creator int6
 		}
 		if err := a.store.CreateJoinCode(jc); err == nil {
 			a.log.Info("join code created", "code", jc.Code, "device_id", d.ID, "created_by", creator)
-			writeJSON(w, http.StatusCreated, joinOut{
+			out := joinOut{
 				Code:      jc.Code,
 				URL:       JoinLink(a.cfg.Domain, jc.Code),
 				DeviceID:  d.ID,
 				ExpiresAt: jc.ExpiresAt,
-			})
+			}
+			if qr, err := joinQRDataURI(out.URL); err == nil {
+				out.QR = qr
+			} else {
+				a.log.Error("join qr render failed", "error", err)
+			}
+			writeJSON(w, http.StatusCreated, out)
 			return
 		}
 	}
