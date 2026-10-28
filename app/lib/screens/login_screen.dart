@@ -7,6 +7,7 @@ import '../services/server_api_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/fibr_widgets.dart';
 import 'add_tunnel_screen.dart';
+import 'howto_screen.dart';
 import 'settings_screen.dart';
 
 /// First-launch sign-in (simple mode entry point). Three ways, as cards:
@@ -111,6 +112,10 @@ class _LoginScreenState extends State<LoginScreen> {
         child: ListView(
           padding: const EdgeInsets.all(16),
           children: [
+            _HowToCard(onTap: () => Navigator.of(context).push(
+                  MaterialPageRoute<void>(builder: (_) => const HowToScreen()),
+                )),
+            const SizedBox(height: 12),
             _KeyCard(
               domain: _domain,
               keyInput: _key,
@@ -266,6 +271,43 @@ class _QrCard extends StatelessWidget {
                     style: Theme.of(context).textTheme.titleMedium),
                 Text(
                   l10n.t('loginQrCardHint'),
+                  style: TextStyle(color: c.muted, fontSize: 12),
+                ),
+              ],
+            ),
+          ),
+          Icon(Icons.chevron_right, color: c.faint),
+        ],
+      ),
+    );
+  }
+}
+
+/// Card: the step-by-step "How to connect" guide, first on the screen so a
+/// non-technical person starts there.
+class _HowToCard extends StatelessWidget {
+  const _HowToCard({required this.onTap});
+
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
+    final c = FibrColors.of(context);
+    return FibrCard(
+      onTap: onTap,
+      child: Row(
+        children: [
+          Icon(Icons.help_outline, color: c.secondary),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(l10n.t('howToCard'),
+                    style: Theme.of(context).textTheme.titleMedium),
+                Text(
+                  l10n.t('howToCardHint'),
                   style: TextStyle(color: c.muted, fontSize: 12),
                 ),
               ],

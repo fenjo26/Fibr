@@ -33,7 +33,8 @@ func ReferralLink(domain, code string) string {
 }
 
 // ReferralShareLink: the bot deep link t.me/<bot>?start=ref_CODE when the
-// bot username is known (see InviteShareLink for why), else ReferralLink.
+// bot username is known (opens Telegram, the bot hands over a Mini App
+// button with the code), else ReferralLink.
 func ReferralShareLink(domain, botUsername, code string) string {
 	if b := strings.TrimPrefix(strings.TrimSpace(botUsername), "@"); b != "" {
 		return "https://t.me/" + b + "?start=ref_" + code

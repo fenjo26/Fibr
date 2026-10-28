@@ -10,6 +10,7 @@ import '../theme/app_theme.dart';
 import '../utils/format.dart';
 import '../widgets/fibr_widgets.dart';
 import 'devices_screen.dart';
+import 'howto_screen.dart';
 import 'settings_screen.dart';
 import 'tunnel_list_screen.dart';
 
@@ -124,6 +125,13 @@ class _HomeScreenState extends State<HomeScreen> {
       appBar: AppBar(
         title: Text(l10n.t('appName')),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.help_outline),
+            tooltip: l10n.t('howToTitle'),
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(builder: (_) => const HowToScreen()),
+            ),
+          ),
           IconButton(
             icon: const Icon(Icons.list_alt_outlined),
             tooltip: l10n.t('tunnelsTitle'),

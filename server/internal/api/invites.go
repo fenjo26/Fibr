@@ -53,17 +53,16 @@ func InviteLink(domain, code string) string {
 	return "https://" + d + "/miniapp/?invite=" + code
 }
 
-// InviteShareLink is the link actually handed to people. With the bot
-// username known it is a bot deep link (t.me/<bot>?start=inv_CODE): it opens
-// Telegram, the bot answers with a Web App button carrying the code, and the
-// Mini App starts with real initData. A bare https://<domain>/miniapp/ link
-// opens in a browser (no initData -> "open this from the bot") — that is the
-// fallback only when the bot username is unknown.
+// InviteShareLink is the link actually handed to people: the web cabinet
+// (https://<domain>/cabinet/?invite=CODE). It opens in any browser, the
+// person signs in with the Telegram Login Widget and the cabinet presents
+// the code — the same invite gate as the Mini App. (A /miniapp/ link opened
+// outside Telegram has no initData; old ones forward to the cabinet.)
+// botUsername is unused now and kept for call-site symmetry with
+// ReferralShareLink.
 func InviteShareLink(domain, botUsername, code string) string {
-	if b := strings.TrimPrefix(strings.TrimSpace(botUsername), "@"); b != "" {
-		return "https://t.me/" + b + "?start=inv_" + code
-	}
-	return InviteLink(domain, code)
+	_ = botUsername
+	return strings.Replace(InviteLink(domain, code), "/miniapp/", "/cabinet/", 1)
 }
 
 // inviteOut is the JSON shape of an invite in the admin panel, with the

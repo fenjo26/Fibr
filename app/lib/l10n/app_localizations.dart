@@ -211,6 +211,10 @@ class AppLocalizations {
     'connectOnLaunchHint': 'Активное устройство поднимется сразу после запуска',
     // TV UI (feature 2)
     'tvJoinTitle': 'Подключение по коду',
+    'howToTitle': 'Как подключиться',
+    'howToIntro': 'Выберите удобный способ и откройте его. Одно устройство = один гаджет: для каждого телефона, ноутбука или ТВ — свой файл или код.',
+    'howToCard': 'Как подключиться?',
+    'howToCardHint': 'Пошагово: файл, QR, код, AmneziaVPN, телевизор',
     'tvPairTitle': 'Подключить с телефона',
     'tvPairHint': 'Отсканируйте QR камерой телефона — откроется бот Fibr. Или в приложении Fibr в Telegram нажмите «Подключить телевизор» и введите этот код.',
     'tvPairNeedServer': 'Введите адрес сервера ниже один раз — и здесь появится QR для подключения с телефона.',
@@ -411,6 +415,10 @@ class AppLocalizations {
     'connectOnLaunchHint': 'The active device comes up right after launch',
     // TV UI (feature 2)
     'tvJoinTitle': 'Connect with a code',
+    'howToTitle': 'How to connect',
+    'howToIntro': 'Pick the way that suits you and open it. One device = one gadget: every phone, laptop or TV gets its own file or code.',
+    'howToCard': 'How to connect?',
+    'howToCardHint': 'Step by step: file, QR, code, AmneziaVPN, TV',
     'tvPairTitle': 'Connect from your phone',
     'tvPairHint': 'Scan the QR with your phone camera — the Fibr bot opens. Or in the Fibr app in Telegram tap “Connect a TV” and type this code.',
     'tvPairNeedServer': 'Type the server address below once — a QR for connecting from your phone appears here.',

@@ -39,7 +39,9 @@
       errNoBot: 'Бот ещё не настроен. Попросите администратора задать FIBR_TELEGRAM_BOT_TOKEN.',
       lblDevices: 'Устройства', lblOnline: 'Онлайн', lblTraffic: 'Трафик',
       phName: 'Название устройства (телефон, ноутбук…)',
-      devicesHint: 'Устройство — это телефон или компьютер. Добавьте по одному на каждый.',
+      devicesHint: 'Одно устройство = один телефон, ноутбук или ТВ. Добавьте по одному на каждый. Не знаете, как подключить? Нажмите «Как подключиться» — там пошагово для WireGuard, AmneziaVPN, QR и телевизора.',
+      btnSendTg: 'Файл в Telegram', sentTg: 'Файл отправлен в чат с ботом ✅',
+      errSendTg: 'Не удалось отправить. Откройте чат с ботом в Telegram, нажмите «Старт» и повторите.',
       addDevice: 'Добавить',
       online: 'онлайн', offline: 'офлайн', disabled: 'отключено', never: 'не подключалось',
       lastSeen: 'было(а) {ago}', rx: '↓ {v}', tx: '↑ {v}',
@@ -55,7 +57,7 @@
       unlimited: 'Бессрочно',
       shortExpired: 'истёк',
       validUntilShort: 'до {d}',
-      empty: 'Пока нет устройств.\nДобавьте первое — и отсканируйте QR.',
+      empty: 'Пока нет устройств.\nДобавьте первое — затем «Файл в Telegram» (откроете файл на телефоне) или «QR-код» (отсканируете телефоном с этого экрана).',
       qrTitle: 'QR-код конфигурации',
       qrHint: 'Отсканируйте в приложении WireGuard/Fibr',
       qrHintXray: 'Ссылка VLESS — отсканируйте в клиенте Xray (v2rayNG, Hiddify, Streisand)',
@@ -108,7 +110,9 @@
       errNoBot: 'The bot is not configured yet. Ask the administrator to set FIBR_TELEGRAM_BOT_TOKEN.',
       lblDevices: 'Devices', lblOnline: 'Online', lblTraffic: 'Traffic',
       phName: 'Device name (phone, laptop…)',
-      devicesHint: 'A device is a phone or a computer. Add one for each.',
+      devicesHint: 'One device = one phone, laptop or TV. Add one for each. Not sure how to connect? Tap “How to connect” — step by step for WireGuard, AmneziaVPN, QR and TV.',
+      btnSendTg: 'File to Telegram', sentTg: 'The file is in your chat with the bot ✅',
+      errSendTg: 'Could not send. Open the bot chat in Telegram, press Start and try again.',
       addDevice: 'Add',
       online: 'online', offline: 'offline', disabled: 'disabled', never: 'never connected',
       lastSeen: 'last seen {ago}', rx: '↓ {v}', tx: '↑ {v}',
@@ -124,7 +128,7 @@
       unlimited: 'Unlimited',
       shortExpired: 'expired',
       validUntilShort: 'until {d}',
-      empty: 'No devices yet.\nAdd one and scan the QR code.',
+      empty: 'No devices yet.\nAdd one, then “File to Telegram” (open the file on your phone) or “QR code” (scan it with your phone from this screen).',
       qrTitle: 'Configuration QR code',
       qrHint: 'Scan it in the WireGuard/Fibr app',
       qrHintXray: 'VLESS link — scan it with an Xray client (v2rayNG, Hiddify, Streisand)',
@@ -423,7 +427,9 @@
       : t('unlimited');
 
     if (!devices.length) {
-      el('devices').innerHTML = '<div class="card empty">' + esc(t('empty')).replace(/\n/g, '<br>') + '</div>';
+      el('devices').innerHTML = '<div class="card empty">' + esc(t('empty')).replace(/\n/g, '<br>') +
+        '<br><button class="btn btn--small" id="guide-empty" style="margin-top:12px">❓ ' + esc(window.Fibr.guideTitle(t.lang)) + '</button></div>';
+      el('guide-empty').addEventListener('click', showGuide);
       return;
     }
 
@@ -446,6 +452,7 @@
         '<span>' + t('tx', { v: fmtBytes(d.total_tx) }) + '</span></div>' +
         '<div class="device-actions">' +
         '<button class="btn btn--secondary btn--small" data-act="qr" data-id="' + d.id + '">' + t('btnQR') + '</button>' +
+        '<button class="btn btn--secondary btn--small" data-act="send" data-id="' + d.id + '">' + t('btnSendTg') + '</button>' +
         '<button class="btn btn--tertiary btn--small" data-act="cfg" data-id="' + d.id + '">' + t('btnConfig') + '</button>' +
         '<button class="btn btn--danger-ghost btn--small" data-act="del" data-id="' + d.id + '" data-name="' + esc(d.name) + '">' + t('btnDelete') + '</button>' +
         '</div></div></div>';
@@ -465,6 +472,27 @@
     });
   });
 
+  // The bot drops the device config into the user's Telegram chat; from
+  // there it opens straight in WireGuard / AmneziaVPN on the phone.
+  function sendToTelegram(id, btn) {
+    btn.disabled = true;
+    api('/api/me/devices/' + id + '/send', { method: 'POST', body: {} }).then(function () {
+      btn.textContent = t('sentTg');
+    }).catch(function () {
+      btn.disabled = false;
+      alert(t('errSendTg'));
+    });
+  }
+
+  // "How to connect" walkthrough (shared with the Mini App: /shared/app.js).
+  function showGuide() {
+    openModal(window.Fibr.guideHTML(t.lang) +
+      '<div class="modal-actions"><button class="btn" id="guide-close">' + esc(t('close')) + '</button></div>');
+    el('guide-close').addEventListener('click', closeModal);
+  }
+  el('guide-open').textContent = '❓ ' + window.Fibr.guideTitle(t.lang);
+  el('guide-open').addEventListener('click', showGuide);
+
   el('devices').addEventListener('click', function (e) {
     var btn = e.target.closest('button[data-act]');
     if (!btn) return;
@@ -475,6 +503,7 @@
       showQR(id, dev && dev.protocol);
     }
     else if (act === 'cfg') showConfig(id);
+    else if (act === 'send') sendToTelegram(id, btn);
     else if (act === 'del') {
       if (!confirm(t('confirmDelete', { name: btn.getAttribute('data-name') }))) return;
       api('/api/me/devices/' + id, { method: 'DELETE' }).then(load).catch(fail);

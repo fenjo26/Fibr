@@ -93,7 +93,7 @@
       fieldName: 'Название', fieldProtocol: 'Протокол',
       btnCancel: 'Отмена', btnCreate: 'Создать',
       inviteModalTitle: 'Ссылка-приглашение',
-      inviteHint: 'Один человек сможет зарегистрироваться, открыв эту ссылку в Telegram.',
+      inviteHint: 'Один человек сможет зарегистрироваться: откроет ссылку в любом браузере и войдёт через Telegram.',
       refTitle: 'Реферальная программа',
       refHint: 'Приглашайте друзей — получайте процент с их пополнений.',
       refCopy: 'Копировать',
@@ -187,7 +187,7 @@
       fieldName: 'Name', fieldProtocol: 'Protocol',
       btnCancel: 'Cancel', btnCreate: 'Create',
       inviteModalTitle: 'Invite link',
-      inviteHint: 'One person can register by opening this link in Telegram.',
+      inviteHint: 'One person can register: open the link in any browser and sign in with Telegram.',
       refTitle: 'Referral program',
       refHint: 'Invite friends — earn a cut of their top-ups.',
       refCopy: 'Copy',
@@ -347,6 +347,12 @@
   // working this way.
   function redirectToBot() {
     var code = inviteCode();
+    // Invite links belong to the web cabinet (Telegram Login Widget works
+    // in any browser) — old /miniapp/?invite= links land there.
+    if (code) {
+      window.location.replace('/cabinet/?invite=' + encodeURIComponent(code));
+      return;
+    }
     var ref = referralCode();
     var pair = null;
     try { pair = new URLSearchParams(window.location.search).get('pair'); } catch (e) { /* ignore */ }
@@ -522,7 +528,9 @@
     }
 
     if (!devices.length) {
-      el('devices').innerHTML = '<div class="card empty">' + esc(t('empty')).replace(/\n/g, '<br>') + '</div>';
+      el('devices').innerHTML = '<div class="card empty">' + esc(t('empty')).replace(/\n/g, '<br>') +
+        '<br><button class="btn btn--small" id="guide-empty" style="margin-top:12px">❓ ' + esc(window.Fibr.guideTitle(t.lang)) + '</button></div>';
+      el('guide-empty').addEventListener('click', showGuide);
       return;
     }
 
@@ -612,6 +620,15 @@
     });
     el('tv-close').addEventListener('click', closeModal);
   }
+
+  // "How to connect" walkthrough (shared with the cabinet: /shared/app.js).
+  function showGuide() {
+    openModal(window.Fibr.guideHTML(t.lang) +
+      '<div class="modal-actions"><button class="btn" id="guide-close">' + esc(t('close')) + '</button></div>');
+    el('guide-close').addEventListener('click', closeModal);
+  }
+  el('guide-open').textContent = '❓ ' + window.Fibr.guideTitle(t.lang);
+  el('guide-open').addEventListener('click', showGuide);
 
   el('tv-connect').textContent = t('tvBtn');
   el('tv-connect').addEventListener('click', function () { tvModal(''); });

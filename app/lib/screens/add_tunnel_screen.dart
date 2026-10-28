@@ -13,6 +13,7 @@ import '../services/tunnel_service.dart';
 import '../services/wg_config_parser.dart';
 import '../theme/app_theme.dart';
 import '../widgets/fibr_widgets.dart';
+import 'howto_screen.dart';
 
 /// Add-tunnel flow: scan a QR code, paste a wg-quick config, exchange a
 /// quick-connect code, or arrive pre-filled from a fibr:// deep link. After
@@ -314,7 +315,18 @@ class _AddTunnelScreenState extends State<AddTunnelScreen> {
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context);
     return Scaffold(
-      appBar: AppBar(title: Text(l10n.t('addTitle'))),
+      appBar: AppBar(
+        title: Text(l10n.t('addTitle')),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.help_outline),
+            tooltip: l10n.t('howToTitle'),
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(builder: (_) => const HowToScreen()),
+            ),
+          ),
+        ],
+      ),
       body: _pendingConfig != null ? _buildConfirm(l10n) : _buildTabs(l10n),
     );
   }

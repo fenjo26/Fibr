@@ -544,3 +544,24 @@
     font-size: 15px;
   }
 }
+
+/* ---------- "How to connect" guide ---------- */
+.guide { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+.guide-sec {
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  overflow: hidden;
+}
+.guide-sec > summary {
+  cursor: pointer;
+  list-style: none;
+  padding: 12px 14px;
+  font-weight: 700;
+  font-size: 15px;
+}
+.guide-sec > summary::-webkit-details-marker { display: none; }
+.guide-sec > summary::after { content: '▾'; float: right; opacity: .5; }
+.guide-sec[open] > summary::after { content: '▴'; }
+.guide-sec .qr-steps { margin: 0 12px 12px; }
+.guide-btn { margin: 4px 0 12px; }
