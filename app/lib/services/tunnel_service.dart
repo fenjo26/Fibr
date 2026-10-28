@@ -49,7 +49,9 @@ class WireGuardFlutterEngine implements TunnelEngine {
 
   static const _interfaceName = 'wg0';
 
-  final WireGuardFlutterInterface _wg = WireGuardFlutter.instance;
+  // Inferred interface type: the plugin does not export the class name,
+  // WireGuardFlutter.instance's static type is its implementation interface.
+  final _wg = WireGuardFlutter.instance;
   final _status = StreamController<TunnelStatus>.broadcast();
 
   bool _initialized = false;

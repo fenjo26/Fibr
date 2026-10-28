@@ -72,7 +72,6 @@ class WgConfig {
 class WgConfigParser {
   /// Parses [text]; throws [WgConfigFormatException] on structural errors.
   static WgConfig parse(String text) {
-    WgInterface? iface;
     final peers = <WgPeer>[];
 
     var section = ''; // '' | 'interface' | 'peer'
@@ -147,7 +146,7 @@ class WgConfigParser {
     }
     finishPeer();
 
-    if (iface == null) {
+    if (!sawInterface) {
       throw const WgConfigFormatException('no [Interface] section');
     }
     final privateKey = ifaceValues['privatekey'];
@@ -158,7 +157,7 @@ class WgConfigParser {
     if (addresses.isEmpty) {
       throw const WgConfigFormatException('Interface has no Address');
     }
-    iface = WgInterface(
+    final iface = WgInterface(
       privateKey: privateKey,
       addresses: addresses,
       dns: _splitList(ifaceValues['dns']),
