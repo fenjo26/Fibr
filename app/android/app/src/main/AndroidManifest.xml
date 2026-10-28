@@ -64,6 +64,29 @@
                 <data android:scheme="fibr" android:host="import" />
                 <data android:scheme="fibr" android:host="join" />
             </intent-filter>
+
+            <!-- Config FILES (the "file" connection path): a fibr-*.conf
+                 tapped in Telegram / a file manager offers "Open with Fibr",
+                 and the share sheet offers "Fibr" for configs and links.
+                 .conf has no registered MIME type, so senders label it
+                 text/plain or application/octet-stream. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="content" />
+                <data android:scheme="file" />
+                <data android:mimeType="text/plain" />
+                <data android:mimeType="application/octet-stream" />
+                <data android:mimeType="application/x-wireguard-config" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+                <data android:mimeType="application/octet-stream" />
+                <data android:mimeType="application/x-wireguard-config" />
+            </intent-filter>
         </activity>
 
         <meta-data

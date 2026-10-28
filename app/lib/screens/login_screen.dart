@@ -125,6 +125,11 @@ class _LoginScreenState extends State<LoginScreen> {
                       builder: (_) => const AddTunnelScreen()),
                 )),
             const SizedBox(height: 12),
+            _FileCard(onTap: () => Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                      builder: (_) => const AddTunnelScreen(initialTab: 2)),
+                )),
+            const SizedBox(height: 12),
             _WhereKeyCard(
               open: _whereOpen,
               onToggle: () => setState(() => _whereOpen = !_whereOpen),
@@ -261,6 +266,43 @@ class _QrCard extends StatelessWidget {
                     style: Theme.of(context).textTheme.titleMedium),
                 Text(
                   l10n.t('loginQrCardHint'),
+                  style: TextStyle(color: c.muted, fontSize: 12),
+                ),
+              ],
+            ),
+          ),
+          Icon(Icons.chevron_right, color: c.faint),
+        ],
+      ),
+    );
+  }
+}
+
+/// Card: config file or anything copied (Amnezia's "File with connection
+/// settings" / "Paste key" paths) — opens the paste/file tab.
+class _FileCard extends StatelessWidget {
+  const _FileCard({required this.onTap});
+
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
+    final c = FibrColors.of(context);
+    return FibrCard(
+      onTap: onTap,
+      child: Row(
+        children: [
+          Icon(Icons.file_open_outlined, color: c.muted),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(l10n.t('loginFileCard'),
+                    style: Theme.of(context).textTheme.titleMedium),
+                Text(
+                  l10n.t('loginFileCardHint'),
                   style: TextStyle(color: c.muted, fontSize: 12),
                 ),
               ],

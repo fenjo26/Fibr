@@ -1,10 +1,13 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../l10n/app_localizations.dart';
 import '../models/tunnel.dart';
+import '../services/deep_link_service.dart';
+import '../services/file_import_service.dart';
 import '../services/join_service.dart';
 import '../services/tunnel_service.dart';
 import '../services/wg_config_parser.dart';
@@ -16,9 +19,12 @@ import '../widgets/fibr_widgets.dart';
 /// a successful scan the screen switches to a confirmation form with the
 /// parsed summary.
 class AddTunnelScreen extends StatefulWidget {
-  const AddTunnelScreen({super.key, this.initialConfig, this.initialJoinUrl});
+  const AddTunnelScreen({super.key, this.initialConfig, this.initialJoinUrl, this.initialTab});
 
   final String? initialConfig;
+
+  /// 0 — scan, 1 — code, 2 — paste / file (the login screen's "file" card).
+  final int? initialTab;
 
   /// A fibr://join/... or https://.../join/<code> link: the screen exchanges
   /// it for the config right away (quick-connect; docs/join.md on server).
@@ -48,6 +54,8 @@ class _AddTunnelScreenState extends State<AddTunnelScreen> {
   void initState() {
     super.initState();
     _loadServerPref();
+    final tab = widget.initialTab;
+    if (tab != null && tab >= 0 && tab <= 2) _tab = tab;
     if (widget.initialConfig != null) _tab = 2;
     if (widget.initialJoinUrl != null) {
       _joinInput.text = widget.initialJoinUrl!;
@@ -142,6 +150,55 @@ class _AddTunnelScreenState extends State<AddTunnelScreen> {
       if (mounted) setState(() => _joining = false);
       _handlingScan = false; // re-arm the scanner either way
     }
+  }
+
+  /// One entry point for anything the user brings as text — clipboard or a
+  /// picked file: a join link / fibr:// link goes to the quick-connect
+  /// exchange, a fibr://import link or a wg-quick config to the
+  /// confirmation form, a bare 8-char code to the "code" tab.
+  void _importText(String? raw) {
+    if (!mounted) return;
+    final l10n = AppLocalizations.of(context);
+    final text = raw?.trim() ?? '';
+    if (text.isEmpty) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(l10n.t('errImportEmpty'))));
+      return;
+    }
+    final joinUrl = DeepLinkService.decodeJoinLink(text) ?? JoinService.extractJoinUrl(text);
+    if (joinUrl != null) {
+      _joinInput.text = joinUrl;
+      setState(() => _tab = 1);
+      _exchange();
+      return;
+    }
+    final config = DeepLinkService.decodeImportLink(text) ?? text;
+    final parsed = WgConfigParser.tryParse(config);
+    if (parsed != null) {
+      setState(() {
+        _pendingConfig = config;
+        _name.text = WgConfigParser.suggestName(parsed);
+      });
+      return;
+    }
+    if (RegExp(r'^[A-Za-z0-9]{6,10}$').hasMatch(text)) {
+      _joinInput.text = text;
+      setState(() => _tab = 1);
+      return;
+    }
+    final key = text.startsWith('vless://') ? 'errJoinVless' : 'errImportUnknown';
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(l10n.t(key))));
+  }
+
+  Future<void> _pasteFromClipboard() async {
+    final data = await Clipboard.getData(Clipboard.kTextPlain);
+    _importText(data?.text);
+  }
+
+  Future<void> _pickFile() async {
+    final text = await FileImportService.pickConfig();
+    if (text == null) return; // cancelled
+    _importText(text);
   }
 
   static String _joinErrorKey(JoinError e) {
@@ -369,6 +426,33 @@ class _AddTunnelScreenState extends State<AddTunnelScreen> {
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
+        // Amnezia-style quick actions: anything copied (link, code, config)
+        // or a .conf file from Telegram / Downloads.
+        Row(
+          children: [
+            Expanded(
+              child: FilledButton.icon(
+                onPressed: _pasteFromClipboard,
+                icon: const Icon(Icons.content_paste_go),
+                label: Text(l10n.t('importFromClipboard')),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: OutlinedButton.icon(
+                onPressed: _pickFile,
+                icon: const Icon(Icons.file_open_outlined),
+                label: Text(l10n.t('importFromFile')),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        Text(
+          l10n.t('importAnyHint'),
+          style: TextStyle(color: FibrColors.of(context).muted, fontSize: 12),
+        ),
+        const SizedBox(height: 16),
         TextField(
           controller: _name,
           decoration: InputDecoration(labelText: l10n.t('nameField'), hintText: l10n.t('nameHint')),

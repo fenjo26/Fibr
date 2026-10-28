@@ -193,6 +193,10 @@ func main() {
 
 	if cfg.TelegramBotToken != "" {
 		b := bot.New(cfg, st, apiSrv.BuildOverview, log)
+		// Config files through Telegram: /new in the bot and the Mini App
+		// "send file to Telegram" button (internal/api/deliver.go).
+		b.SetDeviceIssuer(apiSrv)
+		apiSrv.SetFileSender(b.SendFile)
 		if name, err := b.FetchMe(); err == nil {
 			apiSrv.SetBotUsername(name)
 		} else {

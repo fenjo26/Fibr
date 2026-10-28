@@ -32,6 +32,7 @@ type API struct {
 	log         *slog.Logger
 	botUsername atomic.Value // string, "" until the bot reports getMe
 	updaterURL  string       // opt-in update sidecar; "" = never configured
+	fileSender  FileSender   // Telegram document sender; nil without a bot
 }
 
 // New creates the API.
@@ -83,6 +84,7 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("GET /api/me/devices/{id}/config", a.auth(a.handleDeviceConfig))
 	mux.HandleFunc("GET /api/me/devices/{id}/qr.png", a.auth(a.handleDeviceQR))
 	mux.HandleFunc("POST /api/me/devices/{id}/join", a.auth(a.handleMeJoinCode))
+	mux.HandleFunc("POST /api/me/devices/{id}/send", a.auth(a.handleMeSendDevice))
 
 	// App access key management (server login; see access_key.go). The
 	// plaintext key leaves the server only from the create/rotate handler.
@@ -1326,7 +1328,7 @@ func (a *API) serveConfig(w http.ResponseWriter, d store.Device) {
 	}
 	a.touchConfigFetched(d.ID)
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="fibr-%s.%s"`, fileSafe(d.Name), suffix))
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, ConfFileName(d.Name, suffix)))
 	w.Write([]byte(content))
 }
 

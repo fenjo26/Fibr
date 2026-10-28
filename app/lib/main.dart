@@ -16,6 +16,7 @@ import 'services/join_service.dart';
 import 'services/server_api_service.dart';
 import 'services/settings_service.dart';
 import 'services/tunnel_service.dart';
+import 'services/wg_config_parser.dart';
 import 'theme/app_theme.dart';
 
 Future<void> main() async {
@@ -107,7 +108,10 @@ class _FibrAppState extends State<FibrApp> {
       );
       return;
     }
-    final config = DeepLinkService.decodeImportLink(url);
+    // fibr://import/<base64>, or the raw text of a .conf file opened with /
+    // shared to Fibr (MainActivity reads content:// files into text).
+    final config = DeepLinkService.decodeImportLink(url) ??
+        (WgConfigParser.tryParse(url) != null ? url : null);
     if (config == null) return;
     _navKey.currentState?.push(
       MaterialPageRoute<void>(

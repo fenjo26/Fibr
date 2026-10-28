@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -37,6 +38,25 @@ type Bot struct {
 	http    *http.Client
 	me      string
 	offset  int64
+	devices DeviceIssuer // nil = /new and /devices are unavailable
+}
+
+// DeviceIssuer is the slice of the API the bot needs to hand out config
+// files (implemented by *api.API).
+type DeviceIssuer interface {
+	IssueDeviceFile(userID int64, name string) (filename string, data []byte, err error)
+	DeviceSlots(userID int64) (used, limit int, err error)
+}
+
+// SetDeviceIssuer enables /new and /devices (main.go wires the API).
+func (b *Bot) SetDeviceIssuer(d DeviceIssuer) { b.devices = d }
+
+// SendFile delivers an in-memory document to a chat; the API uses it for
+// "send the config to Telegram" from the Mini App (api.FileSender).
+func (b *Bot) SendFile(chatID int64, filename string, data []byte, caption string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	return b.sendDocument(ctx, chatID, filename, bytes.NewReader(data), caption)
 }
 
 // New creates the bot.
@@ -232,6 +252,45 @@ func (b *Bot) handleUpdate(ctx context.Context, u tgUpdate) {
 		} else {
 			b.sendMessage(ctx, msg.Chat.ID, t(lang, "appLinks", "https://github.com/fenjo26/Fibr/releases/latest"), nil)
 		}
+	case "/new", "/file":
+		// "One more file for the next iPhone": every call is a new device
+		// (own key, one slot of the account's device cap).
+		if b.devices == nil {
+			b.sendMessage(ctx, msg.Chat.ID, t(lang, "fileUnavailable"), nil)
+			return
+		}
+		// "/new iPhone" or "/new@bot iPhone": everything after the command.
+		name := ""
+		if f := strings.Fields(msg.Text); len(f) > 1 {
+			name = strings.Join(f[1:], " ")
+		}
+		filename, data, err := b.devices.IssueDeviceFile(user.ID, name)
+		if errors.Is(err, api.ErrDeviceLimit) {
+			used, limit, _ := b.devices.DeviceSlots(user.ID)
+			b.sendMessage(ctx, msg.Chat.ID, t(lang, "fileLimit", used, limit), nil)
+			return
+		}
+		if err != nil {
+			b.log.Warn("bot: issue device file failed", "user_id", user.ID, "error", err)
+			b.sendMessage(ctx, msg.Chat.ID, t(lang, "fileError"), nil)
+			return
+		}
+		used, limit, _ := b.devices.DeviceSlots(user.ID)
+		if err := b.sendDocument(ctx, msg.Chat.ID, filename, bytes.NewReader(data), t(lang, "fileCaption", used, limit)); err != nil {
+			b.log.Warn("bot: send config file failed", "user_id", user.ID, "error", err)
+			b.sendMessage(ctx, msg.Chat.ID, t(lang, "fileError"), nil)
+		}
+	case "/devices":
+		if b.devices == nil {
+			b.sendMessage(ctx, msg.Chat.ID, t(lang, "fileUnavailable"), nil)
+			return
+		}
+		used, limit, err := b.devices.DeviceSlots(user.ID)
+		if err != nil {
+			b.sendMessage(ctx, msg.Chat.ID, t(lang, "fileError"), nil)
+			return
+		}
+		b.sendMessage(ctx, msg.Chat.ID, t(lang, "deviceSlots", used, limit, limit-used), b.miniAppKeyboard(lang, "", ""))
 	case "/id":
 		b.sendMessage(ctx, msg.Chat.ID, "Telegram ID: "+strconv.FormatInt(from.ID, 10), nil)
 	default:
@@ -420,12 +479,16 @@ func (b *Bot) sendDocumentFile(ctx context.Context, chatID int64, path, caption 
 		return err
 	}
 	defer f.Close()
+	return b.sendDocument(ctx, chatID, filepath.Base(path), f, caption)
+}
 
+// sendDocument uploads a document (multipart sendDocument).
+func (b *Bot) sendDocument(ctx context.Context, chatID int64, filename string, f io.Reader, caption string) error {
 	body := &bytes.Buffer{}
 	w := multipart.NewWriter(body)
 	_ = w.WriteField("chat_id", strconv.FormatInt(chatID, 10))
 	_ = w.WriteField("caption", caption)
-	fw, err := w.CreateFormFile("document", filepath.Base(path))
+	fw, err := w.CreateFormFile("document", filename)
 	if err != nil {
 		return err
 	}
@@ -473,9 +536,9 @@ func pickLang(code string) string {
 
 var texts = map[string]map[string]string{
 	"ru": {
-		"welcome":         "👋 Добро пожаловать в <b>Fibr</b>!\n\nКнопкой ниже откройте приложение: там можно создать устройство, забрать QR-код конфигурации и посмотреть свою статистику.",
-		"welcomeReferred": "👋 Добро пожаловать в <b>Fibr</b>!\n\nВы пришли по приглашению — оно уже учтено ✅\nОткройте приложение кнопкой ниже: создайте устройство и заберите QR-код конфигурации.",
-		"help":            "Команды:\n/start — открыть приложение\n/help — справка\n/app — получить приложение (APK файлом)\n/ref — реферальный код и ссылка\n/stats — статистика (только владелец)\n/invite — создать приглашение (только админ)\n/id — узнать свой Telegram ID",
+		"welcome":         "👋 Добро пожаловать в <b>Fibr</b>!\n\nКнопкой ниже откройте приложение: там можно создать устройство, забрать QR-код конфигурации и посмотреть свою статистику.\n\nФайл подключения для WireGuard / AmneziaVPN прямо сюда в чат: /new",
+		"welcomeReferred": "👋 Добро пожаловать в <b>Fibr</b>!\n\nВы пришли по приглашению — оно уже учтено ✅\nОткройте приложение кнопкой ниже: создайте устройство и заберите QR-код конфигурации.\n\nИли сразу файл для WireGuard / AmneziaVPN: /new",
+		"help":            "Команды:\n/start — открыть приложение\n/help — справка\n/new — новый файл подключения (на одно устройство)\n/devices — сколько устройств занято\n/app — получить приложение (APK файлом)\n/ref — реферальный код и ссылка\n/stats — статистика (только владелец)\n/invite — создать приглашение (только админ)\n/id — узнать свой Telegram ID",
 		"denied":          "⛔ Команда доступна только администраторам.",
 		"unknown":         "Не понял команду. /help — список команд.",
 		"appSending":      "📲 Отправляю приложение (~%s МБ)…",
@@ -484,6 +547,11 @@ var texts = map[string]map[string]string{
 		"inviteError":     "Не удалось создать приглашение, смотрите логи сервера.",
 		"referralCard":    "🎁 Реферальная программа\n\nВаш код: <code>%s</code>\nСсылка: %s\n\nОтправьте их другу — с каждого его пополнения вам идёт процент. Баланс и подробности — в приложении.",
 		"openApp":         "Открыть Fibr",
+		"fileCaption":     "📄 Файл подключения Fibr (устройство %d из %d)\n\nНажмите на файл → «Открыть в…» → WireGuard или AmneziaVPN (или Fibr).\nВ AmneziaVPN: «Файл с настройками подключения». В WireGuard: «+» → «Создать из файла».\n\nОдин файл — одно устройство. Нужен ещё для другого телефона — снова /new",
+		"fileLimit":       "⛔ Лимит устройств: %d из %d. Удалите старое устройство в приложении (/start) и повторите /new.",
+		"fileError":       "Не удалось подготовить файл, попробуйте позже.",
+		"fileUnavailable": "Выдача файлов сейчас недоступна — откройте приложение: /start",
+		"deviceSlots":     "📱 Устройств: %d из %d (свободно %d).\nНовый файл подключения: /new или /new iPhone",
 		"welcomeInvite":   "👋 Добро пожаловать в <b>Fibr</b>!\n\nНажмите кнопку ниже — приложение откроется и активирует ваше приглашение.",
 		"inviteOnly":      "🔒 Регистрация в Fibr только по приглашению. Попросите ссылку-приглашение у того, кто вас позвал.",
 		"statsHeader":     "📊 <b>Статистика Fibr</b>",
@@ -496,9 +564,9 @@ var texts = map[string]map[string]string{
 		"tunnelRate":      "Туннель",
 	},
 	"en": {
-		"welcome":         "👋 Welcome to <b>Fibr</b>!\n\nUse the button below to open the app: create a device, grab a QR config and check your traffic stats.",
-		"welcomeReferred": "👋 Welcome to <b>Fibr</b>!\n\nYou arrived via an invitation — it has been credited ✅\nOpen the app with the button below: create a device and grab a QR config.",
-		"help":            "Commands:\n/start — open the app\n/help — help\n/app — get the app (APK as a file)\n/ref — your referral code and link\n/stats — stats (owner only)\n/invite — create an invite (admin only)\n/id — show your Telegram ID",
+		"welcome":         "👋 Welcome to <b>Fibr</b>!\n\nUse the button below to open the app: create a device, grab a QR config and check your traffic stats.\n\nA connection file for WireGuard / AmneziaVPN right here in the chat: /new",
+		"welcomeReferred": "👋 Welcome to <b>Fibr</b>!\n\nYou arrived via an invitation — it has been credited ✅\nOpen the app with the button below: create a device and grab a QR config.\n\nOr get a file for WireGuard / AmneziaVPN right away: /new",
+		"help":            "Commands:\n/start — open the app\n/help — help\n/new — a new connection file (one device)\n/devices — device slots used\n/app — get the app (APK as a file)\n/ref — your referral code and link\n/stats — stats (owner only)\n/invite — create an invite (admin only)\n/id — show your Telegram ID",
 		"denied":          "⛔ This command is admin-only.",
 		"unknown":         "Unknown command. /help lists commands.",
 		"appSending":      "📲 Sending the app (~%s MB)…",
@@ -507,6 +575,11 @@ var texts = map[string]map[string]string{
 		"inviteError":     "Failed to create an invite, check server logs.",
 		"referralCard":    "🎁 Referral program\n\nYour code: <code>%s</code>\nLink: %s\n\nShare them with a friend — you earn a cut of every top-up they make. Balance and details are in the app.",
 		"openApp":         "Open Fibr",
+		"fileCaption":     "📄 Fibr connection file (device %d of %d)\n\nTap the file → \"Open in…\" → WireGuard or AmneziaVPN (or Fibr).\nAmneziaVPN: \"File with connection settings\". WireGuard: \"+\" → \"Create from file\".\n\nOne file = one device. Need one for another phone — send /new again",
+		"fileLimit":       "⛔ Device limit: %d of %d. Delete an old device in the app (/start) and send /new again.",
+		"fileError":       "Could not prepare the file, try again later.",
+		"fileUnavailable": "File delivery is unavailable right now — open the app: /start",
+		"deviceSlots":     "📱 Devices: %d of %d (%d free).\nNew connection file: /new or /new iPhone",
 		"welcomeInvite":   "👋 Welcome to <b>Fibr</b>!\n\nTap the button below — the app opens and activates your invitation.",
 		"inviteOnly":      "🔒 Fibr is invite-only. Ask whoever told you about it for an invite link.",
 		"statsHeader":     "📊 <b>Fibr stats</b>",

@@ -59,6 +59,14 @@
       qrStep2: 'Нажмите «+» и выберите «Создать из QR-кода»',
       qrStep3: 'Наведите камеру на код',
       btnCode: 'Код',
+      btnSendTg: 'Файл в Telegram', sentTg: 'Файл отправлен в чат с ботом ✅',
+      errSendTg: 'Не удалось отправить. Откройте чат с ботом, нажмите «Старт» и повторите.',
+      howToTitle: 'Как подключить файлом',
+      howAmnezia: 'AmneziaVPN: «Файл с настройками подключения» → выберите файл',
+      howWireGuard: 'WireGuard: «+» → «Создать из файла или архива»',
+      howFibr: 'Fibr: «Добавить» → «Вставить / файл»',
+      howOneFile: 'Один файл — одно устройство. Для другого телефона создайте ещё одно устройство (или /new в боте).',
+      inviteField: 'Код приглашения', inviteBtn: 'Войти по приглашению',
       codeTitle: 'Код быстрого подключения',
       codeHintClient: 'В приложении Fibr: «Добавить туннель» → «По коду» — введите код или отсканируйте QR.',
       codeHintLink: 'Или откройте ссылку — на странице будет кнопка «Открыть в приложении».',
@@ -137,6 +145,14 @@
       qrStep2: 'Tap “+” and choose “Create from QR code”',
       qrStep3: 'Point your camera at the code',
       btnCode: 'Code',
+      btnSendTg: 'File to Telegram', sentTg: 'The file is in your chat with the bot ✅',
+      errSendTg: 'Could not send. Open the bot chat, press Start and try again.',
+      howToTitle: 'Connect with a file',
+      howAmnezia: 'AmneziaVPN: “File with connection settings” → pick the file',
+      howWireGuard: 'WireGuard: “+” → “Create from file or archive”',
+      howFibr: 'Fibr: “Add” → “Paste / file”',
+      howOneFile: 'One file = one device. For another phone create another device (or /new in the bot).',
+      inviteField: 'Invite code', inviteBtn: 'Sign in with invite',
       codeTitle: 'Quick-connect code',
       codeHintClient: 'In the Fibr app: “Add tunnel” → “By code” — type the code or scan the QR.',
       codeHintLink: 'Or open the link — the page has an “Open in the app” button.',
@@ -283,7 +299,10 @@
     } catch (e) { return null; }
   }
 
+  var manualInvite = null; // typed on the invite-required screen
+
   function inviteCode() {
+    if (manualInvite) return manualInvite;
     try {
       var p = new URLSearchParams(window.location.search).get('invite');
       if (p) return p;
@@ -329,6 +348,27 @@
     }).catch(function () { /* keep the plain error */ });
   }
 
+  // Invite-only sign-up without a code in the link: let the person type or
+  // paste the code (or the whole invite link) and retry.
+  function showInviteForm() {
+    if (el('invite-form')) return;
+    var box = document.createElement('div');
+    box.id = 'invite-form';
+    box.style.marginTop = '12px';
+    box.innerHTML = '<input id="invite-input" class="mono" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="' + esc(t('inviteField')) + '" style="width:100%;margin-bottom:8px">' +
+      '<button class="btn" id="invite-go" style="width:100%">' + esc(t('inviteBtn')) + '</button>';
+    el('error-text').parentNode.appendChild(box);
+    el('invite-go').addEventListener('click', function () {
+      var raw = (el('invite-input').value || '').trim();
+      if (!raw) { el('invite-input').focus(); return; }
+      // Accept a bare code, ?invite=CODE links and t.me/…?start=inv_CODE.
+      var m = raw.match(/[?&](?:invite|startapp)=([A-Za-z0-9]+)/) || raw.match(/start=inv_([A-Za-z0-9]+)/);
+      manualInvite = m ? m[1] : raw.replace(/^inv_/, '');
+      el('error-view').classList.add('hidden');
+      signIn();
+    });
+  }
+
   function signIn() {
     if (!tg || !tg.initData) {
       showError(t('errNotTelegram'));
@@ -350,6 +390,7 @@
           var msg = data && data.error ? data.error : 'auth failed';
           if (res.status === 403 && (msg === 'invite required' || msg === 'invalid invite')) {
             showError(t('errInvite'));
+            showInviteForm();
             throw new Error('invite');
           }
           if (res.status === 403 && msg === 'subscription expired') {
@@ -491,6 +532,7 @@
         '<div class="device-actions">' +
         '<button class="btn btn--secondary btn--small" data-act="qr" data-id="' + d.id + '">' + t('btnQR') + '</button>' +
         '<button class="btn btn--secondary btn--small" data-act="code" data-id="' + d.id + '">' + t('btnCode') + '</button>' +
+        '<button class="btn btn--secondary btn--small" data-act="send" data-id="' + d.id + '">' + t('btnSendTg') + '</button>' +
         '<button class="btn btn--tertiary btn--small" data-act="cfg" data-id="' + d.id + '">' + t('btnConfig') + '</button>' +
         '<button class="btn btn--danger-ghost btn--small" data-act="del" data-id="' + d.id + '" data-name="' + esc(d.name) + '">' + t('btnDelete') + '</button>' +
         '</div></div></div>';
@@ -522,6 +564,7 @@
     }
     else if (act === 'cfg') showConfig(id);
     else if (act === 'code') showJoinCode(id);
+    else if (act === 'send') sendToTelegram(id, btn);
     else if (act === 'del') {
       if (!confirm(t('confirmDelete', { name: btn.getAttribute('data-name') }))) return;
       api('/api/me/devices/' + id, { method: 'DELETE' }).then(load).catch(fail);
@@ -857,6 +900,41 @@
     codeTimer = setInterval(tick, 1000);
   }
 
+  // How to use a config file in the common clients (Amnezia's screen lists
+  // "File with connection settings"; WireGuard "Create from file").
+  function fileSteps() {
+    return '<p class="muted modal-sub"><b>' + esc(t('howToTitle')) + '</b></p>' +
+      '<ul class="qr-steps muted">' +
+      '<li>' + esc(t('howAmnezia')) + '</li>' +
+      '<li>' + esc(t('howWireGuard')) + '</li>' +
+      '<li>' + esc(t('howFibr')) + '</li>' +
+      '<li>' + esc(t('howOneFile')) + '</li></ul>';
+  }
+
+  // Download name: WireGuard turns it into the tunnel name and Android's
+  // WireGuard only accepts up to 15 chars of [a-zA-Z0-9_=+.-].
+  function confName(id) {
+    var dev = (me && me.devices || []).filter(function (x) { return String(x.id) === String(id); })[0];
+    var isXray = dev && dev.protocol === 'xray';
+    var stem = ('fibr-' + String(dev ? dev.name : id).replace(/[^a-zA-Z0-9_.-]/g, '-')).slice(0, 15).replace(/-+$/, '');
+    return stem + (isXray ? '.txt' : '.conf');
+  }
+
+  // The bot drops the config into the user's chat as a file: from there it
+  // opens straight in WireGuard / AmneziaVPN ("Open in…"), which is the
+  // easiest one-phone path (Telegram webviews are bad at downloads).
+  function sendToTelegram(id, btn) {
+    if (btn) btn.disabled = true;
+    api('/api/me/devices/' + id + '/send', { method: 'POST', body: {} }).then(function () {
+      if (btn) { btn.textContent = t('sentTg'); }
+      try { if (tg && tg.HapticFeedback) tg.HapticFeedback.notificationOccurred('success'); } catch (e) { /* ignore */ }
+    }).catch(function (e) {
+      if (btn) btn.disabled = false;
+      if (e && e.status === 403 && e.message === 'subscription expired') { showExpired(); return; }
+      alert(t('errSendTg'));
+    });
+  }
+
   function showConfig(id) {    fetch('/api/me/devices/' + id + '/config', { headers: { Authorization: 'Bearer ' + token } })
       .then(function (res) {
         if (!res.ok) throw new Error('HTTP ' + res.status);
@@ -867,8 +945,10 @@
         // via "+" -> "Import from file" — no second phone to scan the QR.
         openModal('<h3>' + esc(t('configTitle')) + '</h3>' +
           '<pre class="config-pre mono">' + esc(text) + '</pre>' +
+          fileSteps() +
           '<div class="modal-actions">' +
           '<button class="btn btn--tertiary btn--small" id="copy-cfg">' + esc(t('copy')) + '</button>' +
+          '<button class="btn btn--secondary btn--small" id="tg-cfg">' + esc(t('btnSendTg')) + '</button>' +
           '<button class="btn btn--secondary btn--small" id="dl-cfg">' + esc(t('downloadConf')) + '</button>' +
           '<button class="btn" id="close-cfg">' + esc(t('close')) + '</button></div>');
         el('copy-cfg').addEventListener('click', function () {
@@ -879,11 +959,12 @@
         el('dl-cfg').addEventListener('click', function () {
           var a = document.createElement('a');
           a.href = URL.createObjectURL(new Blob([text], { type: 'text/plain' }));
-          a.download = 'fibr-' + id + '.conf';
+          a.download = confName(id);
           document.body.appendChild(a);
           a.click();
           a.remove();
         });
+        el('tg-cfg').addEventListener('click', function () { sendToTelegram(id, el('tg-cfg')); });
         el('close-cfg').addEventListener('click', closeModal);
       })
       .catch(fail);
