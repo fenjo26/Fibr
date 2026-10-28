@@ -10,6 +10,27 @@
 		reverse_proxy fibr:8080
 	}
 
+	# Quick-connect landing pages (https://<domain>/join/<code>): rendered by
+	# the API container; the page itself never consumes the code.
+	handle /join/* {
+		reverse_proxy fibr:8080
+	}
+
+	# Client binaries dropped into /opt/fibr/download (see sync-downloads.sh).
+	# `browse` renders a simple listing so Android TV's Downloader app users
+	# can also navigate to the file when they forget the exact name.
+	handle /download/* {
+		root * /srv
+		file_server browse
+	}
+
+	# Short download links people can type: on a TV remote (Downloader app)
+	# and in a phone browser alike. They 302 to the stable release asset name.
+	redir /tv.apk /download/Fibr-Android.apk 302
+	redir /app.apk /download/Fibr-Android.apk 302
+	redir /windows.zip /download/Fibr-Windows.zip 302
+	redir /macos.zip /download/Fibr-macOS.zip 302
+
 	handle {
 		root * /srv
 		redir / /miniapp/ 302

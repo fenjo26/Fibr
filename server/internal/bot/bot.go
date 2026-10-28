@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/fenjo26/Fibr/internal/api"
@@ -45,19 +46,29 @@ func New(cfg *config.Config, st *store.Store, statsFn StatsFunc, log *slog.Logge
 	}
 }
 
-// Run polls updates until ctx is cancelled.
-func (b *Bot) Run(ctx context.Context) error {
-	res, err := b.call(ctx, "getMe", nil)
+// FetchMe returns the bot's @username with a single API call; main.go uses
+// it to publish the name to /api/public/info for the web cabinet widget.
+func (b *Bot) FetchMe() (string, error) {
+	res, err := b.call(context.Background(), "getMe", nil)
 	if err != nil {
-		return fmt.Errorf("getMe: %w", err)
+		return "", fmt.Errorf("getMe: %w", err)
 	}
 	var me struct {
 		Username string `json:"username"`
 	}
 	if err := json.Unmarshal(res, &me); err != nil {
-		return fmt.Errorf("getMe: %w", err)
+		return "", fmt.Errorf("getMe: %w", err)
 	}
-	b.me = me.Username
+	return me.Username, nil
+}
+
+// Run polls updates until ctx is cancelled.
+func (b *Bot) Run(ctx context.Context) error {
+	name, err := b.FetchMe()
+	if err != nil {
+		return err
+	}
+	b.me = name
 	b.log.Info("telegram bot running", "bot", "@"+b.me)
 
 	for {
@@ -117,7 +128,13 @@ func (b *Bot) handleUpdate(ctx context.Context, u tgUpdate) {
 		return
 	}
 	from := msg.From
-	user, err := b.upsertUser(from)
+	// A t.me/<bot>?start=ref_CODE deep link arrives as "/start ref_CODE";
+	// the payload decides whether this is a referral arrival.
+	refCode := ""
+	if cmd := firstWord(msg.Text); cmd == "/start" {
+		refCode = startReferralCode(msg.Text)
+	}
+	user, err := b.upsertUser(from, refCode)
 	if err != nil {
 		b.log.Error("bot: cannot upsert user", "telegram_id", from.ID, "error", err)
 		return
@@ -135,7 +152,11 @@ func (b *Bot) handleUpdate(ctx context.Context, u tgUpdate) {
 
 	switch firstWord(msg.Text) {
 	case "/start":
-		b.sendMessage(ctx, msg.Chat.ID, t(lang, "welcome", b.me), b.miniAppKeyboard(lang))
+		if refCode != "" {
+			b.sendMessage(ctx, msg.Chat.ID, t(lang, "welcomeReferred", b.me), b.miniAppKeyboard(lang, refCode))
+		} else {
+			b.sendMessage(ctx, msg.Chat.ID, t(lang, "welcome", b.me), b.miniAppKeyboard(lang, ""))
+		}
 	case "/help":
 		b.sendMessage(ctx, msg.Chat.ID, t(lang, "help"), nil)
 	case "/stats":
@@ -165,6 +186,8 @@ func (b *Bot) handleUpdate(ctx context.Context, u tgUpdate) {
 			return
 		}
 		b.sendMessage(ctx, msg.Chat.ID, t(lang, "inviteCreated", code, api.InviteLink(b.cfg.Domain, code)), nil)
+	case "/ref":
+		b.sendMessage(ctx, msg.Chat.ID, t(lang, "referralCard", user.ReferralCode, api.ReferralLink(b.cfg.Domain, user.ReferralCode)), nil)
 	case "/id":
 		b.sendMessage(ctx, msg.Chat.ID, "Telegram ID: "+strconv.FormatInt(from.ID, 10), nil)
 	default:
@@ -172,10 +195,27 @@ func (b *Bot) handleUpdate(ctx context.Context, u tgUpdate) {
 	}
 }
 
+// startReferralCode extracts a referral code from a "/start ref_CODE"
+// message, or "" for a plain /start (any other payload is ignored — only
+// the "ref_" scheme exists on the bot surface).
+func startReferralCode(text string) string {
+	fields := strings.Fields(text)
+	if len(fields) < 2 {
+		return ""
+	}
+	payload := fields[1]
+	if rest, ok := strings.CutPrefix(payload, "ref_"); ok {
+		return rest
+	}
+	return ""
+}
+
 // upsertUser mirrors the Mini App auth: FIBR_ADMIN_TELEGRAM_IDS entries are
 // (re)promoted to superadmin on every message, everyone else registers as a
-// plain user.
-func (b *Bot) upsertUser(from *tgUser) (*store.User, error) {
+// plain user. A referral code presented on the very first message (the
+// /start of a t.me deep link) records the attribution once, at account
+// creation — the same one-shot semantics as the Mini App sign-in.
+func (b *Bot) upsertUser(from *tgUser, refCode string) (*store.User, error) {
 	if u, err := b.store.GetUserByTelegramID(from.ID); err == nil {
 		if u.Role != "superadmin" && b.isAdminID(from.ID) {
 			_ = b.store.SetUserRole(u.ID, "superadmin")
@@ -195,6 +235,17 @@ func (b *Bot) upsertUser(from *tgUser) (*store.User, error) {
 		name = from.FirstName
 	}
 	u := &store.User{TelegramID: &tid, Username: name, Role: role}
+	if refCode != "" {
+		// Unknown or disabled referrer: register without attribution rather
+		// than bouncing a human at the door.
+		if ref, err := b.store.GetUserByReferralCode(refCode); err == nil && !ref.Disabled {
+			if ref.TelegramID == nil || *ref.TelegramID != tid {
+				rid := ref.ID
+				u.ReferredBy = &rid
+				b.log.Info("bot: referral attribution", "new_user", tid, "referred_by", rid)
+			}
+		}
+	}
 	if err := b.store.CreateUser(u); err != nil {
 		return nil, err
 	}
@@ -224,14 +275,20 @@ func (b *Bot) userExpired(u *store.User) bool {
 }
 
 // miniAppKeyboard returns the inline button opening the Mini App. Web App
-// buttons require an https URL, so they are skipped in local dev.
-func (b *Bot) miniAppKeyboard(lang string) any {
+// buttons require an https URL, so they are skipped in local dev. With a
+// referral code the button URL carries ?ref=CODE so the Mini App sign-in
+// attributes the newcomer even though bot deep links cannot set startapp.
+func (b *Bot) miniAppKeyboard(lang, refCode string) any {
 	if b.cfg.Domain == "" || b.cfg.Domain == "localhost" || b.cfg.Domain == "127.0.0.1" {
 		return nil
 	}
+	url := "https://" + b.cfg.Domain + "/miniapp/"
+	if refCode != "" {
+		url += "?ref=" + refCode
+	}
 	return map[string]any{
 		"inline_keyboard": [][]map[string]any{{
-			{"text": t(lang, "openApp"), "web_app": map[string]string{"url": "https://" + b.cfg.Domain + "/miniapp/"}},
+			{"text": t(lang, "openApp"), "web_app": map[string]string{"url": url}},
 		}},
 	}
 }
@@ -313,36 +370,40 @@ func pickLang(code string) string {
 
 var texts = map[string]map[string]string{
 	"ru": {
-		"welcome":       "👋 Добро пожаловать в <b>Fibr</b>!\n\nКнопкой ниже откройте приложение: там можно создать устройство, забрать QR-код конфигурации и посмотреть свою статистику.",
-		"help":          "Команды:\n/start — открыть приложение\n/help — справка\n/stats — статистика (только владелец)\n/invite — создать приглашение (только админ)\n/id — узнать свой Telegram ID",
-		"denied":        "⛔ Команда доступна только администраторам.",
-		"unknown":       "Не понял команду. /help — список команд.",
-		"inviteCreated": "🎟 Одноразовое приглашение:\n\nКод: <code>%s</code>\nСсылка: %s\n\nОдин человек сможет зарегистрироваться, открыв ссылку в Telegram.",
-		"openApp":       "Открыть Fibr",
-		"statsHeader":   "📊 <b>Статистика Fibr</b>",
-		"statsError":    "Не удалось собрать статистику, смотрите логи сервера.",
-		"users":         "Пользователей",
-		"devices":       "Устройств",
-		"online":        "Онлайн",
-		"expiredSubs":   "Истекших подписок",
-		"traffic":       "Трафик",
-		"tunnelRate":    "Туннель",
+		"welcome":         "👋 Добро пожаловать в <b>Fibr</b>!\n\nКнопкой ниже откройте приложение: там можно создать устройство, забрать QR-код конфигурации и посмотреть свою статистику.",
+		"welcomeReferred": "👋 Добро пожаловать в <b>Fibr</b>!\n\nВы пришли по приглашению — оно уже учтено ✅\nОткройте приложение кнопкой ниже: создайте устройство и заберите QR-код конфигурации.",
+		"help":            "Команды:\n/start — открыть приложение\n/help — справка\n/ref — реферальный код и ссылка\n/stats — статистика (только владелец)\n/invite — создать приглашение (только админ)\n/id — узнать свой Telegram ID",
+		"denied":          "⛔ Команда доступна только администраторам.",
+		"unknown":         "Не понял команду. /help — список команд.",
+		"inviteCreated":   "🎟 Одноразовое приглашение:\n\nКод: <code>%s</code>\nСсылка: %s\n\nОдин человек сможет зарегистрироваться, открыв ссылку в Telegram.",
+		"referralCard":    "🎁 Реферальная программа\n\nВаш код: <code>%s</code>\nСсылка: %s\n\nОтправьте их другу — с каждого его пополнения вам идёт процент. Баланс и подробности — в приложении.",
+		"openApp":         "Открыть Fibr",
+		"statsHeader":     "📊 <b>Статистика Fibr</b>",
+		"statsError":      "Не удалось собрать статистику, смотрите логи сервера.",
+		"users":           "Пользователей",
+		"devices":         "Устройств",
+		"online":          "Онлайн",
+		"expiredSubs":     "Истекших подписок",
+		"traffic":         "Трафик",
+		"tunnelRate":      "Туннель",
 	},
 	"en": {
-		"welcome":       "👋 Welcome to <b>Fibr</b>!\n\nUse the button below to open the app: create a device, grab a QR config and check your traffic stats.",
-		"help":          "Commands:\n/start — open the app\n/help — help\n/stats — stats (owner only)\n/invite — create an invite (admin only)\n/id — show your Telegram ID",
-		"denied":        "⛔ This command is admin-only.",
-		"unknown":       "Unknown command. /help lists commands.",
-		"inviteCreated": "🎟 One-time invite:\n\nCode: <code>%s</code>\nLink: %s\n\nOne person can register by opening the link in Telegram.",
-		"openApp":       "Open Fibr",
-		"statsHeader":   "📊 <b>Fibr stats</b>",
-		"statsError":    "Failed to collect stats, check server logs.",
-		"users":         "Users",
-		"devices":       "Devices",
-		"online":        "Online",
-		"expiredSubs":   "Expired subscriptions",
-		"traffic":       "Traffic",
-		"tunnelRate":    "Tunnel",
+		"welcome":         "👋 Welcome to <b>Fibr</b>!\n\nUse the button below to open the app: create a device, grab a QR config and check your traffic stats.",
+		"welcomeReferred": "👋 Welcome to <b>Fibr</b>!\n\nYou arrived via an invitation — it has been credited ✅\nOpen the app with the button below: create a device and grab a QR config.",
+		"help":            "Commands:\n/start — open the app\n/help — help\n/ref — your referral code and link\n/stats — stats (owner only)\n/invite — create an invite (admin only)\n/id — show your Telegram ID",
+		"denied":          "⛔ This command is admin-only.",
+		"unknown":         "Unknown command. /help lists commands.",
+		"inviteCreated":   "🎟 One-time invite:\n\nCode: <code>%s</code>\nLink: %s\n\nOne person can register by opening the link in Telegram.",
+		"referralCard":    "🎁 Referral program\n\nYour code: <code>%s</code>\nLink: %s\n\nShare them with a friend — you earn a cut of every top-up they make. Balance and details are in the app.",
+		"openApp":         "Open Fibr",
+		"statsHeader":     "📊 <b>Fibr stats</b>",
+		"statsError":      "Failed to collect stats, check server logs.",
+		"users":           "Users",
+		"devices":         "Devices",
+		"online":          "Online",
+		"expiredSubs":     "Expired subscriptions",
+		"traffic":         "Traffic",
+		"tunnelRate":      "Tunnel",
 	},
 }
 

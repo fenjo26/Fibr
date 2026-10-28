@@ -44,7 +44,20 @@
       btnCancel: 'Отмена', btnCreate: 'Создать',
       inviteModalTitle: 'Ссылка-приглашение',
       inviteHint: 'Один человек сможет зарегистрироваться, открыв эту ссылку в Telegram.',
-      errXrayDisabled: 'Xray выключен на сервере'
+      refTitle: 'Реферальная программа',
+      refHint: 'Приглашайте друзей — получайте процент с их пополнений.',
+      refCopy: 'Копировать',
+      refTerms: '{p1}% с пополнений приглашённых и {p2}% с пополнений их гостей.',
+      refInvited: 'Приглашено', refEarned: 'Заработано', refPaidOut: 'Выплачено', refBalance: 'Баланс',
+      refEmpty: 'Пока никого.\nОтправьте ссылку другу — он появится здесь после регистрации.',
+      refEarnedFrom: 'Заработано',
+      refPayout: 'Вывод средств',
+      refContactLabel: 'Связь с администратором',
+      errXrayDisabled: 'Xray выключен на сервере',
+      /* multi-node (docs/multinode.md) */
+      sumNode: 'Сервер: {node}',
+      staleConfig: 'конфиг устарел',
+      userLimit: 'лимит {n}'
     },
     en: {
       greeting: 'Hi, {name}!',
@@ -87,7 +100,20 @@
       btnCancel: 'Cancel', btnCreate: 'Create',
       inviteModalTitle: 'Invite link',
       inviteHint: 'One person can register by opening this link in Telegram.',
-      errXrayDisabled: 'Xray is disabled on the server'
+      refTitle: 'Referral program',
+      refHint: 'Invite friends — earn a cut of their top-ups.',
+      refCopy: 'Copy',
+      refTerms: '{p1}% of your invitees\u2019 top-ups and {p2}% of their guests\u2019.',
+      refInvited: 'Invited', refEarned: 'Earned', refPaidOut: 'Paid out', refBalance: 'Balance',
+      refEmpty: 'Nobody yet.\nSend the link to a friend — they appear here after signing up.',
+      refEarnedFrom: 'Earned',
+      refPayout: 'Withdrawals',
+      refContactLabel: 'Contact the administrator',
+      errXrayDisabled: 'Xray is disabled on the server',
+      /* multi-node (docs/multinode.md) */
+      sumNode: 'Server: {node}',
+      staleConfig: 'config outdated',
+      userLimit: 'limit {n}'
     }
   };
 
@@ -95,6 +121,7 @@
   var esc = window.Fibr.esc;
   var fmtBytes = window.Fibr.fmtBytes;
   var fmtAgo = window.Fibr.fmtAgo;
+  var fmtMoney = window.Fibr.fmtMoney;
 
   var token = null;
   var me = null; // {user, devices, max_devices}
@@ -122,6 +149,9 @@
   el('users-title').textContent = t('usersTitle');
   el('users-hint').textContent = t('usersHint');
   el('invite-create').textContent = t('btnInviteCreate');
+  el('ref-title').textContent = t('refTitle');
+  el('ref-hint').textContent = t('refHint');
+  el('ref-copy').textContent = t('refCopy');
 
   /* ---------- modal ---------- */
 
@@ -141,7 +171,7 @@
 
   function fail(e) {
     if (e && e.status === 403 && e.message === 'subscription expired') {
-      showError(t('errExpired')); // deadline passed mid-session (docs/billing.md)
+      showExpired(); // deadline passed mid-session (docs/billing.md)
       return;
     }
     if (e && e.status === 401) { showError(t('errAuth')); return; }
@@ -154,19 +184,52 @@
     el('app-view').classList.add('hidden');
   }
 
+  // The "subscription expired" screen gets the owner's contact line appended
+  // (settings.contact_info via /api/public/info) so the user immediately sees
+  // who to pay — no login possible, hence the anonymous fetch.
+  function showExpired() {
+    showError(t('errExpired'));
+    fetch('/api/public/info').then(function (res) { return res.ok ? res.json() : null; }).then(function (info) {
+      if (info && info.contact_info) {
+        el('error-text').innerHTML =
+          esc(t('errExpired')) + '<br><br><b>' + esc(t('refContactLabel')) + ':</b><br>' +
+          esc(info.contact_info).replace(/\n/g, '<br>');
+      }
+    }).catch(function () { /* keep the plain message */ });
+  }
+
   /* ---------- auth ---------- */
 
   // Invite code for self-enroll: either an explicit ?invite=CODE query (the
   // admin panel copies links like https://<domain>/miniapp/?invite=CODE) or
-  // the start_param of a t.me/<bot>?startapp=CODE deep link.
+  // the start_param of a t.me/<bot>?startapp=CODE deep link. Referral deep
+  // links carry the "ref_CODE" scheme, which is NOT an invite.
+  function startParam() {
+    try {
+      return (tg && tg.initDataUnsafe && tg.initDataUnsafe.start_param) || null;
+    } catch (e) { return null; }
+  }
+
   function inviteCode() {
     try {
       var p = new URLSearchParams(window.location.search).get('invite');
       if (p) return p;
     } catch (e) { /* ignore */ }
+    var sp = startParam();
+    if (sp && sp.indexOf('ref_') === 0) return null;
+    return sp;
+  }
+
+  // Referral code: ?ref=CODE query (the referral card and the bot's app
+  // button both use it) or a "ref_CODE" start_param deep link.
+  function referralCode() {
     try {
-      return (tg && tg.initDataUnsafe && tg.initDataUnsafe.start_param) || null;
-    } catch (e) { return null; }
+      var p = new URLSearchParams(window.location.search).get('ref');
+      if (p) return p;
+    } catch (e) { /* ignore */ }
+    var sp = startParam();
+    if (sp && sp.indexOf('ref_') === 0) return sp.slice(4);
+    return null;
   }
 
   function signIn() {
@@ -177,6 +240,8 @@
     var body = { init_data: tg.initData };
     var code = inviteCode();
     if (code) body.invite_code = code;
+    var ref = referralCode();
+    if (ref) body.referral_code = ref;
     fetch('/api/auth/telegram', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -190,7 +255,7 @@
             throw new Error('invite');
           }
           if (res.status === 403 && msg === 'subscription expired') {
-            showError(t('errExpired'));
+            showExpired();
             throw new Error('expired');
           }
           if (res.status === 403) { showError(t('errDisabled')); throw new Error('disabled'); }
@@ -231,6 +296,7 @@
       el('error-view').classList.add('hidden');
       render();
       loadUsersSection();
+      loadRefSection();
     }).catch(fail);
   }
 
@@ -248,6 +314,26 @@
     return d.toLocaleDateString(t.lang === 'ru' ? 'ru-RU' : 'en-GB', { day: 'numeric', month: 'short' });
   }
 
+  // Multi-node timestamps (docs/multinode.md): endpoint_changed_at is unix
+  // seconds, config_fetched_at may be unix seconds or an ISO string —
+  // normalize both to unix seconds (0 = unknown/never).
+  function toUnix(v) {
+    if (v == null) return 0;
+    if (typeof v === 'number') return Math.floor(v < 1e12 ? v : v / 1000);
+    var s = String(v).trim();
+    if (/^\d+$/.test(s)) return parseInt(s, 10);
+    var p = Date.parse(s);
+    return isNaN(p) ? 0 : Math.floor(p / 1000);
+  }
+
+  // A config downloaded before the last endpoint switch is stale: its
+  // embedded endpoint/server key point at the old node. Tapping the badge
+  // opens the QR again (the download stamps config_fetched_at server-side,
+  // so the badge clears on the next 20s refresh).
+  function isStale(d) {
+    return (toUnix(me && me.endpoint_changed_at) || 0) > toUnix(d.config_fetched_at);
+  }
+
   function render() {
     var devices = me.devices || [];
     var online = devices.filter(function (d) { return d.online; }).length;
@@ -262,6 +348,14 @@
     el('sum-expiry').textContent = (me.user && me.user.expires_at)
       ? t('validUntil', { d: fmtDate(me.user.expires_at) })
       : t('unlimited');
+    // Which node serves the VPN right now (docs/multinode.md).
+    var sumNode = el('sum-node');
+    if (me.active_node) {
+      sumNode.textContent = t('sumNode', { node: me.active_node });
+      sumNode.classList.remove('hidden');
+    } else {
+      sumNode.classList.add('hidden');
+    }
 
     if (!devices.length) {
       el('devices').innerHTML = '<div class="card empty">' + esc(t('empty')).replace(/\n/g, '<br>') + '</div>';
@@ -276,12 +370,17 @@
       var proto = d.protocol === 'xray'
         ? '<span class="pill pill--live proto-pill">Xray</span>'
         : '<span class="pill pill--off proto-pill">WG</span>';
+      // Stale-config badge (both protocols — vless links embed the endpoint
+      // too): a button so the delegated handler routes the tap to the QR.
+      var stale = isStale(d)
+        ? '<button class="pill pill--warn stale-pill" data-act="qr" data-id="' + d.id + '">' + esc(t('staleConfig')) + '</button>'
+        : '';
       return '<div class="card device">' +
         '<div class="device-top">' +
         '<span class="dot ' + (d.online ? 'dot--on' : 'dot--off') + '"></span>' +
         '<div class="grow"><h3>' + esc(d.name) + '</h3>' +
         '<span class="ip mono">' + esc(d.ipv4) + '</span>' + proto + '</div>' +
-        '<span class="pill ' + pill + '">' + label + '</span></div>' +
+        '<span class="pill ' + pill + '">' + label + '</span>' + stale + '</div>' +
         '<div class="device-meta"><span>' + esc(seen) + '</span>' +
         '<span>' + t('rx', { v: fmtBytes(d.total_rx) }) + '</span>' +
         '<span>' + t('tx', { v: fmtBytes(d.total_tx) }) + '</span></div>' +
@@ -358,11 +457,17 @@
         } else {
           expPill = '<span class="pill pill--off">∞</span>';
         }
+        // Own device cap (docs/devices.md): shown only when set personally —
+        // null means the global default the miniapp cannot see. No control
+        // here: limits are the panel's job (the server 403s non-owners).
+        var limitPill = u.max_devices != null
+          ? '<span class="pill pill--live">' + esc(t('userLimit', { n: u.max_devices })) + '</span>'
+          : '';
         return '<div class="card device">' +
           '<div class="device-top">' +
           '<div class="grow"><h3>' + esc(u.username || ('#' + u.id)) + '</h3>' +
           '<span class="muted mono user-tg">' + esc(tg) + '</span></div>' +
-          '<span class="user-pills">' + expPill +
+          '<span class="user-pills">' + expPill + limitPill +
           '<span class="pill pill--off">' + esc(t('devicesOf', { n: counts[u.id] || 0 })) + '</span></span></div>' +
           '<div class="device-actions">' +
           '<button class="btn btn--secondary btn--small" data-uact="grant" data-id="' + u.id + '">' + esc(t('btnGrantDevice')) + '</button>' +
@@ -426,6 +531,61 @@
       });
       el('inv-close').addEventListener('click', closeModal);
     }).catch(fail);
+  });
+
+  /* ---------- referral section (every account) ---------- */
+
+  var refData = null; // last /api/me/referrals payload (for the copy button)
+
+  // The referral card: share link, terms, balance tiles, the invited list
+  // and the owner's contact line for withdrawals. Hidden entirely when the
+  // program is off (docs/referrals.md).
+  function loadRefSection() {
+    api('/api/me/referrals').then(function (ref) {
+      if (!ref || !ref.enabled) {
+        el('ref-view').classList.add('hidden');
+        return;
+      }
+      refData = ref;
+      el('ref-view').classList.remove('hidden');
+      var money = function (m) { return fmtMoney(m, ref.currency); };
+      var stats = ref.stats || {};
+      var rows = (ref.referrals || []).map(function (r) {
+        return '<div class="ref-row">' +
+          '<span class="grow"><b>' + esc(r.username || ('#' + r.id)) + '</b>' +
+          ' <span class="muted">' + fmtDateShort(r.created_at) + '</span></span>' +
+          '<span class="ref-earned">' + esc(t('refEarnedFrom')) + ': <b>' + esc(money(r.earned)) + '</b></span>' +
+          '</div>';
+      }).join('');
+      el('ref-body').innerHTML =
+        '<pre class="config-pre mono">' + esc(ref.link) + '</pre>' +
+        '<p class="muted ref-terms">' + esc(t('refTerms', { p1: ref.percent_l1, p2: ref.percent_l2 })) + '</p>' +
+        '<div class="card summary ref-card">' +
+        '<div class="summary-row">' +
+        '<div><span class="muted">' + esc(t('refInvited')) + '</span><b>' + (stats.invited || 0) + '</b></div>' +
+        '<div><span class="muted">' + esc(t('refEarned')) + '</span><b>' + esc(money((stats.earned_l1 || 0) + (stats.earned_l2 || 0))) + '</b></div>' +
+        '<div><span class="muted">' + esc(t('refPaidOut')) + '</span><b>' + esc(money(stats.paid_out || 0)) + '</b></div>' +
+        '<div><span class="muted">' + esc(t('refBalance')) + '</span><b>' + esc(money(stats.balance || 0)) + '</b></div>' +
+        '</div></div>' +
+        (rows
+          ? '<div class="card ref-list">' + rows + '</div>'
+          : '<div class="card empty">' + esc(t('refEmpty')).replace(/\n/g, '<br>') + '</div>') +
+        (ref.contact_info
+          ? '<p class="muted"><b>' + esc(t('refPayout')) + ':</b> ' + esc(ref.contact_info).replace(/\n/g, '<br>') + '</p>'
+          : '');
+    }).catch(function (e) {
+      // The card is auxiliary: any failure just hides it.
+      el('ref-view').classList.add('hidden');
+    });
+  }
+
+  el('ref-copy').addEventListener('click', function () {
+    var link = refData && refData.link;
+    if (!link) return;
+    navigator.clipboard.writeText(link).then(function () {
+      el('ref-copy').textContent = t('copied');
+      setTimeout(function () { el('ref-copy').textContent = t('refCopy'); }, 1500);
+    });
   });
 
   /* ---------- qr & config ---------- */

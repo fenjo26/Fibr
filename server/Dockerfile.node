@@ -1,0 +1,19 @@
+# syntax=docker/dockerfile:1
+
+# Remote node agent image (install/docker-compose.node.yml; see
+# docs/multinode.md). Kernel WireGuard only — the AmneziaWG userspace
+# engine is a control-plane feature and is not served by nodes yet.
+FROM golang:1.26-alpine AS build
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o /out/fibr-node ./cmd/fibr-node
+
+FROM alpine:3.24
+# iproute2/iptables manage the interface and NAT; wireguard-tools for debugging.
+RUN apk add --no-cache ca-certificates iproute2 iptables wireguard-tools
+COPY --from=build /out/fibr-node /usr/local/bin/fibr-node
+VOLUME /data
+EXPOSE 8081 51820/udp
+ENTRYPOINT ["/usr/local/bin/fibr-node"]

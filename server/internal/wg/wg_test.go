@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/fenjo26/Fibr/internal/config"
+	"github.com/fenjo26/Fibr/internal/node"
 	"github.com/fenjo26/Fibr/internal/store"
 )
 
@@ -162,5 +163,41 @@ func TestClientConfigKernelEngineHasNoAWG(t *testing.T) {
 		if strings.Contains(conf, banned) {
 			t.Errorf("kernel engine config must not contain awg field %q:\n%s", banned, conf)
 		}
+	}
+}
+
+// TestClientConfigAt: rendering against an arbitrary node endpoint (multi-
+// node) replaces the [Peer] host/port/public key while the tunnel-local
+// fields (address, DNS, MTU) stay with this manager.
+func TestClientConfigAt(t *testing.T) {
+	m, st := newTestManager(t)
+	d := testDevice(t, st)
+	ep := node.Endpoint{
+		Name:           "edge-1",
+		Host:           "edge1.example.com",
+		WGPort:         51821,
+		WGServerPubKey: "REMOTEPUBKEYAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+	}
+	conf := m.ClientConfigAt(d, ep)
+	for _, want := range []string{
+		"PublicKey = " + ep.WGServerPubKey,
+		"Endpoint = edge1.example.com:51821",
+		"Address = 10.8.0.2/32, fd42:f1b2::2/128",
+		"DNS = 1.1.1.1, 1.0.0.1",
+		"MTU = 1420",
+		"PresharedKey = PSK",
+	} {
+		if !strings.Contains(conf, want) {
+			t.Errorf("endpoint config missing %q:\n%s", want, conf)
+		}
+	}
+	// The manager's own key must NOT leak into the remote rendering.
+	if strings.Contains(conf, m.PublicKey()) {
+		t.Errorf("local server key leaked into remote endpoint config:\n%s", conf)
+	}
+	// The plain ClientConfig keeps rendering the local endpoint.
+	local := m.ClientConfig(d)
+	if !strings.Contains(local, "Endpoint = vpn.example.com:51820") || !strings.Contains(local, m.PublicKey()) {
+		t.Errorf("local rendering broken:\n%s", local)
 	}
 }

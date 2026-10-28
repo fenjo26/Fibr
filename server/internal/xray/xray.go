@@ -28,8 +28,10 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/fenjo26/Fibr/internal/config"
+	"github.com/fenjo26/Fibr/internal/node"
 	"github.com/fenjo26/Fibr/internal/store"
 )
 
@@ -103,6 +105,29 @@ func New(cfg *config.Config, st *store.Store, log *slog.Logger) (*Manager, error
 // clients (the pbk= parameter of vless:// links).
 func (m *Manager) PublicKey() string { return m.pubKeyB64 }
 
+// ShortID returns the shared Reality short id (sid= in client links).
+func (m *Manager) ShortID() string { return m.cfg.XrayShortID }
+
+// SNI returns the Reality camouflage domain.
+func (m *Manager) SNI() string { return m.cfg.XraySNI }
+
+// Port returns the xray TCP listen port.
+func (m *Manager) Port() int { return m.cfg.XrayPort }
+
+// GenerateRealityKeypair returns a fresh x25519 Reality keypair in the
+// base64url wire format used by configs (private) and vless links (public).
+// Used by the control-plane manager (settings-backed) and by node agents
+// (file-backed) alike.
+func GenerateRealityKeypair() (privB64, pubB64 string, err error) {
+	priv, err := ecdh.X25519().GenerateKey(rand.Reader)
+	if err != nil {
+		return "", "", err
+	}
+	privB64 = base64.RawURLEncoding.EncodeToString(priv.Bytes())
+	pubB64 = base64.RawURLEncoding.EncodeToString(priv.PublicKey().Bytes())
+	return privB64, pubB64, nil
+}
+
 func decodeX25519Private(enc string) (*ecdh.PrivateKey, error) {
 	raw, err := base64.RawURLEncoding.DecodeString(enc)
 	if err != nil {
@@ -126,13 +151,27 @@ func NewUUID() string {
 	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
 }
 
-// ClientLink renders the vless:// share URL for an xray device. The UUID is
-// taken from Device.PublicKey (see store.Device for the field convention);
-// host comes from FIBR_WG_HOST and the port from FIBR_XRAY_PORT — xray has no
-// separate public hostname in this MVP.
+// ClientLink renders the vless:// share URL for an xray device against this
+// box's own endpoint. The UUID is taken from Device.PublicKey (see
+// store.Device for the field convention); host comes from FIBR_WG_HOST and
+// the port from FIBR_XRAY_PORT — xray has no separate public hostname in
+// this MVP.
 func (m *Manager) ClientLink(d store.Device) string {
+	return m.ClientLinkAt(d, node.Endpoint{
+		Host:          m.cfg.WGHost,
+		XrayPort:      m.cfg.XrayPort,
+		XrayPubKeyB64: m.pubKeyB64,
+		XrayShortID:   m.cfg.XrayShortID,
+		XraySNI:       m.cfg.XraySNI,
+	})
+}
+
+// ClientLinkAt renders the link for an arbitrary node endpoint — with
+// multi-node, the active node's host/port/keys replace this box's own (see
+// internal/node).
+func (m *Manager) ClientLinkAt(d store.Device, ep node.Endpoint) string {
 	return fmt.Sprintf("vless://%s@%s:%d?type=tcp&security=reality&fp=chrome&sni=%s&pbk=%s&sid=%s&flow=%s&encryption=none#%s",
-		d.PublicKey, m.cfg.WGHost, m.cfg.XrayPort, m.cfg.XraySNI, m.pubKeyB64, m.cfg.XrayShortID,
+		d.PublicKey, ep.Host, ep.XrayPort, ep.XraySNI, ep.XrayPubKeyB64, ep.XrayShortID,
 		ClientFlow, url.PathEscape("Fibr-"+d.Name))
 }
 
@@ -192,8 +231,17 @@ type serverConfig struct {
 }
 
 // BuildServerConfig renders the xray-core config for the given client UUIDs:
-// one VLESS inbound with Reality over TCP, flow xtls-rprx-vision.
+// one VLESS inbound with Reality over TCP, flow xtls-rprx-vision, using this
+// box's own key/port/camouflage settings.
 func (m *Manager) BuildServerConfig(uuids []string) ([]byte, error) {
+	return BuildStandaloneConfig(m.cfg.XrayPort, m.cfg.XraySNI, m.cfg.XrayDest, m.privB64, m.cfg.XrayShortID, uuids)
+}
+
+// BuildStandaloneConfig renders an xray-core config for an arbitrary Reality
+// setup — the node agents (cmd/fibr-node) own their keypair and short id in
+// local files instead of the control plane's settings table, so they render
+// through this function with their own values.
+func BuildStandaloneConfig(listenPort int, sni, dest, privKeyB64, shortID string, uuids []string) ([]byte, error) {
 	clients := make([]clientEntry, 0, len(uuids))
 	for _, id := range uuids {
 		clients = append(clients, clientEntry{ID: id, Flow: ClientFlow})
@@ -202,7 +250,7 @@ func (m *Manager) BuildServerConfig(uuids []string) ([]byte, error) {
 	cfg.Log.LogLevel = "warning"
 	cfg.Inbounds = []inbound{{
 		Listen:   "0.0.0.0",
-		Port:     m.cfg.XrayPort,
+		Port:     listenPort,
 		Protocol: "vless",
 		Settings: inboundSettings{Clients: clients, Decryption: "none"},
 		StreamSettings: streamSettings{
@@ -210,11 +258,11 @@ func (m *Manager) BuildServerConfig(uuids []string) ([]byte, error) {
 			Security: "reality",
 			RealitySettings: realitySettings{
 				Show:        false,
-				Dest:        m.cfg.XrayDest,
+				Dest:        dest,
 				Xver:        0,
-				ServerNames: []string{m.cfg.XraySNI},
-				PrivateKey:  m.privB64,
-				ShortIds:    []string{m.cfg.XrayShortID},
+				ServerNames: []string{sni},
+				PrivateKey:  privKeyB64,
+				ShortIds:    []string{shortID},
 			},
 		},
 		Sniffing: sniffingSettings{Enabled: true, DestOverride: []string{"http", "tls", "quic"}},
@@ -234,22 +282,27 @@ func (m *Manager) BuildServerConfig(uuids []string) ([]byte, error) {
 // docker volume shared with the xray container.
 func (m *Manager) ConfigPath() string { return filepath.Join(m.cfg.DataDir, "xray", "config.json") }
 
-// SyncClients rebuilds /data/xray/config.json from the enabled xray devices.
+// SyncClients rebuilds /data/xray/config.json from the active xray devices.
 // No-op (nil) when xray is disabled in config. The file is replaced
 // atomically; the xray container must be restarted to pick it up:
 //
 //	docker compose restart xray
+//
+// The device source is ListActiveDevices (the store's expiry-aware view):
+// an xray device whose owner is past their subscription deadline must be
+// dropped from the inbound exactly like a wg peer would be (see
+// docs/billing.md).
 func (m *Manager) SyncClients() error {
 	if !m.cfg.XrayEnabled {
 		return nil
 	}
-	devices, err := m.store.ListDevices(0)
+	devices, err := m.store.ListActiveDevices(time.Now())
 	if err != nil {
 		return err
 	}
 	uuids := make([]string, 0, len(devices))
 	for _, d := range devices {
-		if d.Protocol == store.ProtocolXray && d.Enabled {
+		if d.Protocol == store.ProtocolXray {
 			uuids = append(uuids, d.PublicKey) // uuid, see store.Device
 		}
 	}

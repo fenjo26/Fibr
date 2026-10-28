@@ -21,6 +21,7 @@ import (
 
 	"github.com/fenjo26/Fibr/internal/awg"
 	"github.com/fenjo26/Fibr/internal/config"
+	"github.com/fenjo26/Fibr/internal/node"
 	"github.com/fenjo26/Fibr/internal/store"
 	"golang.zx2c4.com/wireguard/wgctrl"
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
@@ -41,8 +42,10 @@ type Manager struct {
 	extIface string
 	awg      *awg.Params // non-nil when FIBR_WG_ENGINE=awg
 
-	mu      sync.Mutex
-	samples []ifaceSample
+	mu          sync.Mutex
+	samples     []ifaceSample
+	speeds      map[int64]PeerSpeed // last per-device rates; nil until 2nd sample
+	lastStatsAt time.Time           // zero until the first CollectStats
 }
 
 type ifaceSample struct {
@@ -316,14 +319,31 @@ func (m *Manager) SyncPeers() error {
 	return nil
 }
 
+// PeerSpeed is the current transfer rate of one device, computed from the
+// delta between the two most recent stats samples.
+type PeerSpeed struct {
+	RxBps float64
+	TxBps float64
+}
+
 // CollectStats reads peer transfer counters into the database and records an
 // interface throughput sample. Online = handshake in the last 3 minutes.
+// Per-device speeds are refreshed here too (DeviceSpeeds).
 func (m *Manager) CollectStats() {
+	now := time.Now()
 	if m.client != nil && runtime.GOOS == "linux" {
 		dev, err := m.client.Device(m.cfg.WGInterface)
 		if err != nil {
 			m.log.Warn("stats: cannot read device", "error", err)
 		} else {
+			speeds := make(map[int64]PeerSpeed, len(dev.Peers))
+			// Speeds need a previous sample to compare against; the very
+			// first pass only records counters (otherwise a restart would
+			// show a huge spike from all historical traffic).
+			var dt float64
+			if !m.lastStatsAt.IsZero() {
+				dt = now.Sub(m.lastStatsAt).Seconds()
+			}
 			for _, p := range dev.Peers {
 				d, err := m.store.GetDeviceByKey(p.PublicKey.String())
 				if err != nil {
@@ -337,10 +357,22 @@ func (m *Manager) CollectStats() {
 				if dTx < 0 {
 					dTx = tx
 				}
+				if dt > 0 {
+					speeds[d.ID] = PeerSpeed{
+						RxBps: float64(dRx) * 8 / dt,
+						TxBps: float64(dTx) * 8 / dt,
+					}
+				}
 				if err := m.store.UpdateDeviceStats(d.ID, p.LastHandshakeTime, rx, tx, d.TotalRx+dRx, d.TotalTx+dTx); err != nil {
 					m.log.Warn("stats: cannot update device", "device_id", d.ID, "error", err)
 				}
 			}
+			m.mu.Lock()
+			if dt > 0 {
+				m.speeds = speeds
+			}
+			m.lastStatsAt = now
+			m.mu.Unlock()
 		}
 	}
 	m.sampleIfaces()
@@ -348,6 +380,18 @@ func (m *Manager) CollectStats() {
 
 // Throughput returns current bits-per-second over the tunnel and the external
 // interface, computed from the last two samples.
+// DeviceSpeeds returns a copy of the latest per-device transfer rates
+// (empty until the second stats sample; xray devices are never listed).
+func (m *Manager) DeviceSpeeds() map[int64]PeerSpeed {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make(map[int64]PeerSpeed, len(m.speeds))
+	for k, v := range m.speeds {
+		out[k] = v
+	}
+	return out
+}
+
 func (m *Manager) Throughput() (wgIn, wgOut, extIn, extOut float64) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -407,11 +451,24 @@ func readIfaces(name string) (rx, tx int64) {
 	return 0, 0
 }
 
-// ClientConfig renders a wg-quick-compatible config for the device. In awg
-// engine mode the [Interface] section carries the AmneziaWG parameters —
-// such a config is understood by AmneziaVPN clients, not by the official
-// WireGuard app (see docs/awg.md).
+// ClientConfig renders a wg-quick-compatible config for the device against
+// this box's own endpoint (the single-node behaviour). In awg engine mode
+// the [Interface] section carries the AmneziaWG parameters — such a config
+// is understood by AmneziaVPN clients, not by the official WireGuard app
+// (see docs/awg.md).
 func (m *Manager) ClientConfig(d store.Device) string {
+	return m.ClientConfigAt(d, node.Endpoint{
+		Host:           m.cfg.WGHost,
+		WGPort:         m.cfg.WGPort,
+		WGServerPubKey: m.PublicKey(),
+	})
+}
+
+// ClientConfigAt renders the config for an arbitrary node endpoint — with
+// multi-node, the active node's host/port/server key go into the [Peer]
+// section instead of this box's own (see internal/node). Addressing, DNS and
+// MTU are properties of the tunnel and stay the manager's own.
+func (m *Manager) ClientConfigAt(d store.Device, ep node.Endpoint) string {
 	awgBlock := "\n"
 	if m.awg != nil {
 		awgBlock = m.awg.ClientINI() + "\n"
@@ -432,7 +489,7 @@ AllowedIPs = 0.0.0.0/0, ::/0
 Endpoint = %s:%d
 PersistentKeepalive = 25
 `, d.PrivateKey, address, strings.Join(m.cfg.DNS, ", "), m.cfg.MTU, awgBlock,
-		m.PublicKey(), d.PresharedKey, m.cfg.WGHost, m.cfg.WGPort)
+		ep.WGServerPubKey, d.PresharedKey, ep.Host, ep.WGPort)
 }
 
 func detectDefaultIface() string {

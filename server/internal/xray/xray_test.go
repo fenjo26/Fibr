@@ -10,8 +10,10 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/fenjo26/Fibr/internal/config"
+	"github.com/fenjo26/Fibr/internal/node"
 	"github.com/fenjo26/Fibr/internal/store"
 )
 
@@ -249,5 +251,99 @@ func TestSyncClients(t *testing.T) {
 	}
 	if _, err := os.Stat(m2.ConfigPath()); !os.IsNotExist(err) {
 		t.Fatalf("expected no config file when xray disabled, stat err=%v", err)
+	}
+}
+
+// TestClientLinkAt: rendering against an arbitrary node endpoint replaces
+// the vless host/port while sni/pbk/sid come from the endpoint too; the
+// plain ClientLink keeps the local values.
+func TestClientLinkAt(t *testing.T) {
+	m, _, _ := newTestManager(t, true)
+	d := store.Device{Name: "pixel", Protocol: store.ProtocolXray, PublicKey: "11111111-2222-4333-8444-555555555555"}
+	ep := node.Endpoint{
+		Host:          "edge1.example.com",
+		XrayPort:      9443,
+		XrayPubKeyB64: "REMOTEPBKAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+		XrayShortID:   "ffff0000",
+		XraySNI:       "www.apple.com",
+	}
+	link := m.ClientLinkAt(d, ep)
+	want := "vless://11111111-2222-4333-8444-555555555555@edge1.example.com:9443" +
+		"?type=tcp&security=reality&fp=chrome&sni=www.apple.com" +
+		"&pbk=" + ep.XrayPubKeyB64 + "&sid=ffff0000&flow=xtls-rprx-vision&encryption=none" +
+		"#Fibr-pixel"
+	if link != want {
+		t.Fatalf("link mismatch:\n got %q\nwant %q", link, want)
+	}
+	// The manager's own key must not leak into the remote rendering.
+	if strings.Contains(link, m.PublicKey()) {
+		t.Fatalf("local reality key leaked into remote endpoint link: %s", link)
+	}
+	// Local rendering unchanged.
+	if got := m.ClientLink(d); !strings.Contains(got, "@vpn.example.com:8443") || !strings.Contains(got, m.PublicKey()) {
+		t.Fatalf("local rendering broken: %s", got)
+	}
+}
+
+// TestSyncClientsDropsExpired: SyncClients uses ListActiveDevices, so an
+// xray device of an expired user (own deadline or the owner cascade) must
+// not appear in the rendered inbound — the billing fix mirroring wg peers.
+func TestSyncClientsDropsExpired(t *testing.T) {
+	m, st, cfg := newTestManager(t, true)
+
+	mkUser := func(name string) *store.User {
+		u := &store.User{Username: name}
+		if err := st.CreateUser(u); err != nil {
+			t.Fatalf("seed user %s: %v", name, err)
+		}
+		return u
+	}
+	paid := mkUser("paid")
+	expired := mkUser("expired")
+	past := time.Now().Add(-time.Hour).Unix()
+	if err := st.SetUserExpiry(expired.ID, &past); err != nil {
+		t.Fatalf("expire: %v", err)
+	}
+
+	mkXray := func(uid int64, name string) string {
+		ip, _ := st.NextIPv4(cfg.Subnet)
+		d := &store.Device{UserID: uid, Name: name, Protocol: store.ProtocolXray, PublicKey: NewUUID(), IPv4: ip, Enabled: true}
+		if err := st.CreateDevice(d); err != nil {
+			t.Fatalf("seed device %s: %v", name, err)
+		}
+		return d.PublicKey
+	}
+	paidUUID := mkXray(paid.ID, "paid-phone")
+	expiredUUID := mkXray(expired.ID, "expired-phone")
+
+	if err := m.SyncClients(); err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+	data, err := os.ReadFile(m.ConfigPath())
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	if !strings.Contains(string(data), paidUUID) {
+		t.Fatalf("paid uuid missing from xray config:\n%s", data)
+	}
+	if strings.Contains(string(data), expiredUUID) {
+		t.Fatalf("expired uuid must be dropped from xray config:\n%s", data)
+	}
+}
+
+// TestGenerateRealityKeypair: the agent-side key generation helper produces
+// decodable base64url x25519 material.
+func TestGenerateRealityKeypair(t *testing.T) {
+	priv, pub, err := GenerateRealityKeypair()
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	rawPriv, err1 := base64.RawURLEncoding.DecodeString(priv)
+	rawPub, err2 := base64.RawURLEncoding.DecodeString(pub)
+	if err1 != nil || err2 != nil || len(rawPriv) != 32 || len(rawPub) != 32 {
+		t.Fatalf("keypair not base64url(32): %q %q %v %v", priv, pub, err1, err2)
+	}
+	if priv == pub {
+		t.Fatal("private and public halves must differ")
 	}
 }

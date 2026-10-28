@@ -47,6 +47,7 @@ type Config struct {
 	AdminTelegramIDs []int64       // telegram user ids auto-promoted to admin
 	StatsInterval    time.Duration // peer stats collection period
 	RequireInvite    bool          // FIBR_REQUIRE_INVITE: new Mini App users need a one-time invite code
+	JoinTTL          time.Duration // FIBR_JOIN_TTL: lifetime of quick-connect codes (default 15m)
 
 	// Xray (VLESS + Reality) — second protocol for DPI resistance. All fields
 	// except XrayPort are meaningful only when XrayEnabled is true.
@@ -76,6 +77,7 @@ func Load() (*Config, error) {
 		TelegramBotToken: strings.TrimSpace(os.Getenv("FIBR_TELEGRAM_BOT_TOKEN")),
 		StatsInterval:    getenvDuration("FIBR_STATS_INTERVAL", 30*time.Second),
 		RequireInvite:    getenvBool("FIBR_REQUIRE_INVITE", false),
+		JoinTTL:          getenvDuration("FIBR_JOIN_TTL", 15*time.Minute),
 	}
 
 	for _, raw := range splitCSV(os.Getenv("FIBR_ADMIN_TELEGRAM_IDS")) {
@@ -100,6 +102,9 @@ func Load() (*Config, error) {
 	}
 	if c.Secret == "" {
 		return nil, fmt.Errorf("FIBR_SECRET is required")
+	}
+	if c.JoinTTL <= 0 {
+		return nil, fmt.Errorf("FIBR_JOIN_TTL must be a positive duration")
 	}
 	switch c.WGEngine {
 	case EngineKernel, EngineAWG:

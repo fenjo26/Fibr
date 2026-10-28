@@ -42,7 +42,17 @@ curl -fsSL https://raw.githubusercontent.com/fenjo26/Fibr/main/install/install.s
 
 ## Скачать клиент
 
-Готовые сборки публикуются в [Releases](https://github.com/fenjo26/Fibr/releases) и собираются автоматически из тегов (`git tag v0.2.0 && git push --tags`) — релизный конвейер в `.github/workflows/release.yml`.
+Готовые сборки публикуются в [Releases](https://github.com/fenjo26/Fibr/releases) и собираются автоматически из тегов — конвейер в `.github/workflows/release.yml`.
+
+**Проще всего — со своего сервера** (после `bash install/sync-downloads.sh` на нём): короткие ссылки удобно диктовать и набирать с пульта ТВ (приложение Downloader):
+
+| Короткая ссылка | Куда ведёт |
+|---|---|
+| `https://ваш-домен/tv.apk` | Android-приложение (телефон и Android TV) |
+| `https://ваш-домен/app.apk` | то же — удобно давать в чатах |
+| `https://ваш-домен/windows.zip` · `/macos.zip` | десктопные сборки |
+
+Прямые ссылки на GitHub (всегда последняя версия):
 
 | Платформа | Скачать |
 |---|---|
@@ -53,7 +63,8 @@ curl -fsSL https://raw.githubusercontent.com/fenjo26/Fibr/main/install/install.s
 
 Примечания:
 
-- Пока клиент — этап 2, сборки экспериментальные. Для всех платформ по-прежнему работает связка «QR из Mini App + официальное приложение WireGuard».
+- Один и тот же APK работает на телефоне и Android TV; требуется Android 7.0+ (minSdk 24). На ТВ интерфейс пока телефонный — полноценный TV-UI в планах.
+- Пока клиент ранний, сборки экспериментальные. Для всех платформ по-прежнему работает связка «QR из Mini App + официальное приложение WireGuard».
 - APK подписан CI-ключом: устанавливается как «неизвестный источник»; перед массовой раздачей настроим собственный keystore.
 - macOS-сборка без подписи разработчика: первый запуск — правый клик по приложению → «Открыть».
 
@@ -66,19 +77,31 @@ curl -fsSL https://raw.githubusercontent.com/fenjo26/Fibr/main/install/install.s
 3. `docker compose -f /opt/fibr/install/docker-compose.yml up -d`
 4. В BotFather: `/mybots` → ваш бот → *Bot Settings* → *Menu Button* →
    `https://vpn.example.com/miniapp/`
-5. Откройте бота в Telegram → **Start** → кнопка «Открыть Fibr».
+5. Откройте бота в Telegram → **Start** — кнопка «Открыть Fibr».
 
 Mini App требует HTTPS и домен — это ограничение платформы Telegram.
+После шага 4 миниапп подтягивается из бота **автоматически**: кнопка слева от
+поля ввода сообщения открывает приложение, ставить ничего не нужно.
+
+Два способа зайти без Telegram:
+
+- **веб-кабинет** `https://vpn.example.com/cabinet/` — тот же личный кабинет
+  в обычном браузере, вход кнопкой «Log in with Telegram». Чтобы Telegram
+  авторизовал вход с домена, в BotFather сделайте ещё `/mybots` → *Bot
+  Settings* → *Domain* → `vpn.example.com`;
+- **админ-панель** `/admin/` — по токену из `.env` (только суперадмин).
 
 ## Состав репозитория
 
 ```
 server/   Go-сервер: REST API + WireGuard-менеджер + Telegram-бот (один бинарник)
+          + fibr-node — агент дополнительной ноды (docs/multinode.md)
 install/  install.sh, docker-compose.yml, Caddyfile, .env.example
 admin/    Админ-панель (vanilla JS, без сборки)
 miniapp/  Telegram Mini App (vanilla JS)
+cabinet/  Веб-кабинет: миниапп для браузера, вход Telegram Login Widget
 design/   Общие дизайн-токены и хелперы (отдаются на /shared/*)
-app/      Flutter-клиент — этап 2
+app/      Flutter-клиент
 ```
 
 ## Архитектура

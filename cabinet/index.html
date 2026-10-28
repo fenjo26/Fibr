@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Fibr — личный кабинет</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@600;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/shared/tokens.css">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main class="wrap">
+    <!-- login: Telegram Login Widget -->
+    <section id="login-view" class="card login-card">
+      <h1>Fibr</h1>
+      <p class="muted" id="login-hint"></p>
+      <div id="tg-widget"></div>
+      <p class="faint login-foot" id="login-foot"></p>
+    </section>
+
+    <!-- error state -->
+    <section id="error-view" class="card hidden">
+      <h2>Fibr</h2>
+      <p id="error-text" class="muted"></p>
+      <button class="btn btn--tertiary btn--small" id="error-back"></button>
+    </section>
+
+    <!-- app (same layout as the Mini App) -->
+    <section id="app-view" class="hidden">
+      <header class="head">
+        <div>
+          <h1>Fibr</h1>
+          <p class="muted" id="greeting"></p>
+        </div>
+        <div class="head-actions">
+          <button class="btn btn--tertiary btn--small" data-theme-toggle title="Theme">◐</button>
+          <button class="btn btn--ghost btn--small" id="logout"></button>
+        </div>
+      </header>
+
+      <div class="card summary">
+        <div class="summary-row">
+          <div><span class="muted" id="lbl-devices"></span><b id="sum-devices">—</b></div>
+          <div><span class="muted" id="lbl-online"></span><b id="sum-online">—</b></div>
+          <div><span class="muted" id="lbl-traffic"></span><b id="sum-traffic">—</b></div>
+        </div>
+        <p class="muted sum-expiry" id="sum-expiry"></p>
+      </div>
+
+      <p class="muted sec-hint" id="devices-hint"></p>
+
+      <div class="add-row">
+        <input class="input" id="new-name" maxlength="32">
+        <select class="input input--proto" id="new-proto" title="Protocol">
+          <option value="wg">WG</option>
+        </select>
+        <button class="btn" id="add-device"></button>
+      </div>
+
+      <div id="devices"></div>
+
+      <!-- reseller section: visible only to admins/superadmins -->
+      <section id="users-view" class="hidden">
+        <div class="sec-head">
+          <div>
+            <h2 id="users-title"></h2>
+            <p class="muted" id="users-hint"></p>
+          </div>
+          <button class="btn btn--tertiary btn--small" id="invite-create"></button>
+        </div>
+        <div id="users"></div>
+      </section>
+
+      <!-- referral section: every account (docs/referrals.md) -->
+      <section id="ref-view" class="hidden">
+        <div class="sec-head">
+          <div>
+            <h2 id="ref-title"></h2>
+            <p class="muted" id="ref-hint"></p>
+          </div>
+          <button class="btn btn--tertiary btn--small" id="ref-copy"></button>
+        </div>
+        <div id="ref-body"></div>
+      </section>
+
+      <p class="muted foot-hint" id="foot-hint"></p>
+    </section>
+  </main>
+
+  <div class="modal-backdrop hidden" id="modal">
+    <div class="modal" id="modal-body"></div>
+  </div>
+
+  <script src="/shared/app.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

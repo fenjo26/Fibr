@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/fenjo26/Fibr/internal/config"
@@ -23,16 +24,25 @@ import (
 
 // API bundles the HTTP handlers.
 type API struct {
-	cfg   *config.Config
-	store *store.Store
-	wg    *wg.Manager
-	xray  *xray.Manager
-	log   *slog.Logger
+	cfg         *config.Config
+	store       *store.Store
+	wg          *wg.Manager
+	xray        *xray.Manager
+	log         *slog.Logger
+	botUsername atomic.Value // string, "" until the bot reports getMe
 }
 
 // New creates the API.
 func New(cfg *config.Config, st *store.Store, wgm *wg.Manager, xm *xray.Manager, log *slog.Logger) *API {
-	return &API{cfg: cfg, store: st, wg: wgm, xray: xm, log: log}
+	a := &API{cfg: cfg, store: st, wg: wgm, xray: xm, log: log}
+	a.botUsername.Store("")
+	return a
+}
+
+// SetBotUsername records the bot @username (called from main after getMe) so
+// /api/public/info can render the Telegram Login Widget in the web cabinet.
+func (a *API) SetBotUsername(name string) {
+	a.botUsername.Store(name)
 }
 
 // Handler builds the routed, panic-safe HTTP handler.
@@ -40,14 +50,23 @@ func (a *API) Handler() http.Handler {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /api/health", a.handleHealth)
+	mux.HandleFunc("GET /api/public/info", a.handlePublicInfo)
 	mux.HandleFunc("POST /api/auth/telegram", a.handleAuthTelegram)
+
+	// Quick-connect: public exchange of a one-time code for a device config,
+	// plus the /join/<code> landing page (never consumes the code, so
+	// messenger link previews cannot burn it). See docs/join.md.
+	mux.HandleFunc("GET /join/{code}", a.handleJoinLanding)
+	mux.HandleFunc("POST /api/join/{code}", a.handleJoin)
 
 	// Mini App (user) endpoints.
 	mux.HandleFunc("GET /api/me", a.auth(a.handleMe))
+	mux.HandleFunc("GET /api/me/referrals", a.auth(a.handleMeReferrals))
 	mux.HandleFunc("POST /api/me/devices", a.auth(a.handleCreateDevice))
 	mux.HandleFunc("DELETE /api/me/devices/{id}", a.auth(a.handleDeleteDevice))
 	mux.HandleFunc("GET /api/me/devices/{id}/config", a.auth(a.handleDeviceConfig))
 	mux.HandleFunc("GET /api/me/devices/{id}/qr.png", a.auth(a.handleDeviceQR))
+	mux.HandleFunc("POST /api/me/devices/{id}/join", a.auth(a.handleMeJoinCode))
 
 	// Admin endpoints (admin token or admin-role user).
 	mux.HandleFunc("GET /api/admin/overview", a.admin(a.handleAdminOverview))
@@ -66,6 +85,32 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("GET /api/admin/invites", a.admin(a.handleAdminListInvites))
 	mux.HandleFunc("POST /api/admin/invites", a.admin(a.handleAdminCreateInvite))
 	mux.HandleFunc("DELETE /api/admin/invites/{code}", a.admin(a.handleAdminDeleteInvite))
+
+	// Quick-connect for admins: mint a join code for a device in the admin's
+	// subtree (a reseller handing a config to their customer).
+	mux.HandleFunc("POST /api/admin/devices/{id}/join", a.admin(a.handleAdminJoinCode))
+
+	// Referral program endpoints (see docs/referrals.md). The money-facing
+	// side (payments, payouts, settings) is the installation owner's alone.
+	mux.HandleFunc("POST /api/admin/users/{id}/payments", a.admin(a.handleAdminCreatePayment))
+	mux.HandleFunc("GET /api/admin/payments", a.admin(a.handleAdminListPayments))
+	mux.HandleFunc("GET /api/admin/referrals", a.admin(a.handleAdminReferralOverview))
+	mux.HandleFunc("POST /api/admin/referrals/payouts", a.admin(a.handleAdminCreatePayout))
+	mux.HandleFunc("GET /api/admin/settings", a.admin(a.handleAdminGetSettings))
+	mux.HandleFunc("PATCH /api/admin/settings", a.admin(a.handleAdminPatchSettings))
+
+	// Admin node endpoints (multi-node registry; superadmin only — infra is
+	// the installation owner's; see docs/multinode.md).
+	mux.HandleFunc("GET /api/admin/nodes", a.admin(a.handleAdminListNodes))
+	mux.HandleFunc("POST /api/admin/nodes", a.admin(a.handleAdminCreateNode))
+	mux.HandleFunc("PATCH /api/admin/nodes/{id}", a.admin(a.handleAdminUpdateNode))
+	mux.HandleFunc("DELETE /api/admin/nodes/{id}", a.admin(a.handleAdminDeleteNode))
+	mux.HandleFunc("POST /api/admin/nodes/{id}/activate", a.admin(a.handleAdminActivateNode))
+	mux.HandleFunc("POST /api/admin/nodes/{id}/token", a.admin(a.handleAdminRotateNodeToken))
+
+	// Node agent endpoints (remote fibr-node binaries; bearer node token).
+	mux.HandleFunc("POST /api/node/register", a.nodeAuth(a.handleNodeRegister))
+	mux.HandleFunc("POST /api/node/sync", a.nodeAuth(a.handleNodeSync))
 
 	return a.recoverMiddleware(mux)
 }
@@ -151,6 +196,28 @@ func userExpiredByMap(byID map[int64]*store.User, u store.User, now time.Time) b
 	return store.ExpiredAt(store.EffectiveExpiry(u.ExpiresAt, ownerExp), now)
 }
 
+// effectiveMaxDevices resolves the device cap that governs an account: its
+// own max_devices and — for plain users — the owner-admin's, with the global
+// FIBR_MAX_DEVICES as the fallback (store.EffectiveMaxDevices). Admins and
+// superadmin users carry their own-or-default cap: their owners can only be
+// superadmins (unlimited), so no cascade applies. The static admin token
+// never creates devices for itself and is never the target here.
+func (a *API) effectiveMaxDevices(u *store.User) (int, error) {
+	var ownerMax *int64
+	if u.OwnerID != nil && u.Role == store.RoleUser {
+		owner, err := a.store.GetUser(*u.OwnerID)
+		if err != nil {
+			if !errors.Is(err, store.ErrNotFound) {
+				return 0, err
+			}
+			// owner deleted (defensive; owner_id is ON DELETE SET NULL): no cap
+		} else {
+			ownerMax = owner.MaxDevices
+		}
+	}
+	return store.EffectiveMaxDevices(u.MaxDevices, ownerMax, a.cfg.MaxDevices), nil
+}
+
 func (a *API) auth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id, reason, ok := a.identify(r)
@@ -196,16 +263,40 @@ func (a *API) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok"})
 }
 
+// handlePublicInfo serves the unauthenticated bits the frontends need to
+// render the login screen: the bot @username for the Telegram Login Widget
+// (web cabinet), the invite-only mode flag and whether the xray protocol
+// is enabled. No secrets here — the bot username is public by definition.
+// The owner's contact line rides along so the "subscription expired" screen
+// can tell the user who to pay without authenticating first.
+func (a *API) handlePublicInfo(w http.ResponseWriter, r *http.Request) {
+	botName := a.botUsername.Load().(string)
+	contact, _ := a.store.GetSetting(store.SettingContactInfo)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"bot_username":    botName,
+		"domain":          a.cfg.Domain,
+		"invite_required": a.cfg.RequireInvite,
+		"xray_enabled":    a.cfg.XrayEnabled,
+		"contact_info":    contact,
+	})
+}
+
 func (a *API) handleAuthTelegram(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		InitData   string `json:"init_data"`
-		InviteCode string `json:"invite_code"` // required for NEW users when FIBR_REQUIRE_INVITE=true
+		InitData     string `json:"init_data"`
+		InviteCode   string `json:"invite_code"`   // required for NEW users when FIBR_REQUIRE_INVITE=true
+		ReferralCode string `json:"referral_code"` // optional: whose referral link the user followed
 	}
 	if err := decodeJSON(w, r, &body); err != nil {
 		a.errJSON(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	tu, err := ValidateInitData(body.InitData, a.cfg.TelegramBotToken)
+	if errors.Is(err, errBadInitData) {
+		// The web cabinet (/cabinet/) sends Telegram Login Widget data to
+		// this same endpoint — flat user fields, SHA256(bot_token) secret.
+		tu, err = ValidateLoginWidget(body.InitData, a.cfg.TelegramBotToken)
+	}
 	if err != nil {
 		a.errJSON(w, http.StatusUnauthorized, err.Error())
 		return
@@ -227,10 +318,31 @@ func (a *API) handleAuthTelegram(w http.ResponseWriter, r *http.Request) {
 			u.Role = store.RoleSuperadmin
 		}
 	case errors.Is(err, store.ErrNotFound):
+		// Referral attribution: a valid code from a live account records who
+		// invited the newcomer. An unknown or disabled referrer is ignored —
+		// a mistyped link must not block registration.
+		refCode := strings.TrimSpace(body.ReferralCode)
+		var referrer *store.User
+		if refCode != "" {
+			if ref, err := a.store.GetUserByReferralCode(refCode); err == nil && !ref.Disabled && !a.userExpired(ref) {
+				referrer = ref
+			} else if err != nil && !errors.Is(err, store.ErrNotFound) {
+				a.errJSON(w, http.StatusInternalServerError, "storage error")
+				return
+			}
+		}
+		// Self-referral cannot happen (the account does not exist yet), but a
+		// telegram_id collision with the referrer would make one user their
+		// own beneficiary; skip attribution in that case.
+		if referrer != nil && referrer.TelegramID != nil && *referrer.TelegramID == tu.ID {
+			referrer = nil
+		}
 		// Self-enroll gate: in invite-only mode a brand-new user must present
-		// a valid unused code (existing users sign in freely).
+		// a valid unused code (existing users sign in freely). A valid
+		// referral code counts as the invitation — that is the whole point of
+		// sharing a referral link in invite-only mode.
 		inviteCode := ""
-		if a.cfg.RequireInvite {
+		if a.cfg.RequireInvite && referrer == nil {
 			inviteCode = strings.TrimSpace(body.InviteCode)
 			if inviteCode == "" {
 				a.errJSON(w, http.StatusForbidden, "invite required")
@@ -247,6 +359,10 @@ func (a *API) handleAuthTelegram(w http.ResponseWriter, r *http.Request) {
 		}
 		tid := tu.ID
 		u = &store.User{TelegramID: &tid, Username: displayName(tu), Role: role}
+		if referrer != nil {
+			rid := referrer.ID
+			u.ReferredBy = &rid
+		}
 		if err := a.store.CreateUser(u); err != nil {
 			a.errJSON(w, http.StatusInternalServerError, "cannot create user")
 			return
@@ -262,7 +378,11 @@ func (a *API) handleAuthTelegram(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		a.log.Info("user registered via mini app", "user_id", u.ID, "telegram_id", tu.ID, "invite", inviteCode)
+		if referrer != nil {
+			a.log.Info("user registered via mini app", "user_id", u.ID, "telegram_id", tu.ID, "invite", inviteCode, "referred_by", referrer.ID)
+		} else {
+			a.log.Info("user registered via mini app", "user_id", u.ID, "telegram_id", tu.ID, "invite", inviteCode)
+		}
 	default:
 		a.errJSON(w, http.StatusInternalServerError, "storage error")
 		return
@@ -292,11 +412,30 @@ func (a *API) handleMe(w http.ResponseWriter, r *http.Request) {
 		a.errJSON(w, http.StatusInternalServerError, "storage error")
 		return
 	}
+	// The device cap is per-account with an owner cascade (like expires_at);
+	// admins and superadmin users resolve to their own-or-default cap.
+	limit, err := a.effectiveMaxDevices(u)
+	if err != nil {
+		a.errJSON(w, http.StatusInternalServerError, "storage error")
+		return
+	}
 	out := make([]deviceOut, 0, len(devices))
 	for _, d := range devices {
 		out = append(out, newDeviceOut(d, u.Username))
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"user": u, "devices": out, "max_devices": a.cfg.MaxDevices, "xray_enabled": a.cfg.XrayEnabled})
+	ep, _, err := a.resolveActiveEndpoint()
+	if err != nil {
+		a.errJSON(w, http.StatusInternalServerError, "storage error")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"user": u, "devices": out,
+		"max_devices": limit, "xray_enabled": a.cfg.XrayEnabled,
+		// The client compares endpoint_changed_at with its stored copy to
+		// decide a re-download is needed (multi-node endpoint switch).
+		"active_node":         ep.Name,
+		"endpoint_changed_at": a.endpointChangedAt(),
+	})
 }
 
 func (a *API) handleCreateDevice(w http.ResponseWriter, r *http.Request) {
@@ -306,7 +445,17 @@ func (a *API) handleCreateDevice(w http.ResponseWriter, r *http.Request) {
 		a.errJSON(w, http.StatusInternalServerError, "storage error")
 		return
 	}
-	if len(existing) >= a.cfg.MaxDevices {
+	u, err := a.store.GetUser(id.userID)
+	if err != nil {
+		a.errJSON(w, http.StatusInternalServerError, "storage error")
+		return
+	}
+	limit, err := a.effectiveMaxDevices(u)
+	if err != nil {
+		a.errJSON(w, http.StatusInternalServerError, "storage error")
+		return
+	}
+	if len(existing) >= limit {
 		a.errJSON(w, http.StatusConflict, "device limit reached")
 		return
 	}
@@ -394,19 +543,29 @@ type Overview struct {
 		ExtOutBps float64 `json:"ext_out_bps"`
 	} `json:"throughput"`
 	RecentDevices []deviceOut `json:"recent_devices"`
+	// Multi-node: which node's endpoint client configs currently render
+	// against, and when that last changed (unix seconds; 0 = never).
+	ActiveNode        string `json:"active_node"`
+	EndpointChangedAt int64  `json:"endpoint_changed_at"`
 }
 
 // BuildOverview computes the current stats snapshot.
 func (a *API) BuildOverview() (*Overview, error) {
 	ov := &Overview{}
-	ov.Server.PublicKey = a.wg.PublicKey()
-	ov.Server.Port = a.cfg.WGPort
-	ov.Server.Host = a.cfg.WGHost
+	ep, _, err := a.resolveActiveEndpoint()
+	if err != nil {
+		return nil, err
+	}
+	ov.Server.PublicKey = ep.WGServerPubKey
+	ov.Server.Port = ep.WGPort
+	ov.Server.Host = ep.Host
 	ov.Server.Subnet = a.cfg.Subnet
 	ov.Server.DNS = a.cfg.DNS
 	ov.Server.MTU = a.cfg.MTU
 	ov.Server.Passive = a.wg.Passive()
 	ov.Server.XrayEnabled = a.cfg.XrayEnabled
+	ov.ActiveNode = ep.Name
+	ov.EndpointChangedAt = a.endpointChangedAt()
 
 	users, err := a.store.ListUsers()
 	if err != nil {
@@ -479,10 +638,17 @@ type userOut struct {
 	Online  int   `json:"online"`
 	TotalRx int64 `json:"total_rx"`
 	TotalTx int64 `json:"total_tx"`
+	// Current transfer rates (bit/s): the sum of the user's devices' latest
+	// sample deltas — "what the port is doing right now for this account".
+	SpeedRxBps float64 `json:"speed_rx_bps"`
+	SpeedTxBps float64 `json:"speed_tx_bps"`
 	// Expired is the effective-deadline verdict (own expires_at OR the
 	// owner-admin's, whichever is earlier) so the frontends never have to
 	// resolve the cascade themselves.
 	Expired bool `json:"expired"`
+	// ReferredByName is whose referral link the account signed up with
+	//("" = organic) — the superadmin's attribution column.
+	ReferredByName string `json:"referred_by_name"`
 }
 
 func (a *API) handleAdminListUsers(w http.ResponseWriter, r *http.Request) {
@@ -521,14 +687,25 @@ func (a *API) handleAdminListUsers(w http.ResponseWriter, r *http.Request) {
 	out := make([]userOut, 0, len(users))
 	for _, u := range users {
 		s := userOut{User: u, Expired: userExpiredByMap(byID, u, now)}
+		if u.ReferredBy != nil {
+			if ref := byID[*u.ReferredBy]; ref != nil {
+				s.ReferredByName = ref.Username
+			}
+		}
 		stats[u.ID] = &s
 		out = append(out, s)
 	}
+	// Current per-user speed: sum of their devices' latest rates.
+	speeds := a.wg.DeviceSpeeds()
 	for _, d := range devices {
 		if s, ok := stats[d.UserID]; ok {
 			s.Devices++
 			s.TotalRx += d.TotalRx
 			s.TotalTx += d.TotalTx
+			if sp, okd := speeds[d.ID]; okd {
+				s.SpeedRxBps += sp.RxBps
+				s.SpeedTxBps += sp.TxBps
+			}
 			if isOnline(d) {
 				s.Online++
 			}
@@ -638,15 +815,33 @@ func patchExpiry(raw json.RawMessage) (set bool, unix *int64, err error) {
 	return true, &v, nil
 }
 
+// patchMaxDevices decodes the optional max_devices PATCH field, tri-state
+// like expires_at: absent (leave the cap alone), JSON null (reset to the
+// global default) or a non-negative integer (0 = "no new devices").
+func patchMaxDevices(raw json.RawMessage) (set bool, n *int64, err error) {
+	if len(raw) == 0 {
+		return false, nil, nil // field absent: no change
+	}
+	if string(raw) == "null" {
+		return true, nil, nil // explicit null: global default
+	}
+	var v int64
+	if err := json.Unmarshal(raw, &v); err != nil || v < 0 {
+		return false, nil, errors.New("max_devices must be a non-negative integer or null")
+	}
+	return true, &v, nil
+}
+
 func (a *API) handleAdminUpdateUser(w http.ResponseWriter, r *http.Request) {
 	u, caller, ok := a.fetchManagedUser(w, r)
 	if !ok {
 		return
 	}
 	var body struct {
-		Role      *string         `json:"role"`
-		Disabled  *bool           `json:"disabled"`
-		ExpiresAt json.RawMessage `json:"expires_at"` // RFC3339 | null; superadmin only
+		Role       *string         `json:"role"`
+		Disabled   *bool           `json:"disabled"`
+		ExpiresAt  json.RawMessage `json:"expires_at"`  // RFC3339 | null; superadmin only
+		MaxDevices json.RawMessage `json:"max_devices"` // int >= 0 | null; superadmin any, admin capped
 	}
 	if err := decodeJSON(w, r, &body); err != nil {
 		a.errJSON(w, http.StatusBadRequest, err.Error())
@@ -697,6 +892,41 @@ func (a *API) handleAdminUpdateUser(w http.ResponseWriter, r *http.Request) {
 			a.log.Info("user expiry set", "user_id", u.ID, "expires_at", unix)
 		}
 	}
+	if len(body.MaxDevices) > 0 {
+		set, n, err := patchMaxDevices(body.MaxDevices)
+		if err != nil {
+			a.errJSON(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if set {
+			// A reseller may cap their own users, but never above their own
+			// effective cap (they cannot sell device slots they do not have).
+			// The static token / superadmin sessions are uncapped. A null
+			// reset is always safe: the owner cascade still bounds the user.
+			if !caller.isSuper() {
+				callerUser, err := a.store.GetUser(caller.userID)
+				if err != nil {
+					a.errJSON(w, http.StatusForbidden, "device limit exceeds your own")
+					return
+				}
+				cap, err := a.effectiveMaxDevices(callerUser)
+				if err != nil {
+					a.errJSON(w, http.StatusInternalServerError, "storage error")
+					return
+				}
+				if n != nil && int(*n) > cap {
+					a.errJSON(w, http.StatusForbidden, "device limit exceeds your own")
+					return
+				}
+			}
+			if err := a.store.SetUserMaxDevices(u.ID, n); err != nil {
+				a.errJSON(w, http.StatusNotFound, "user not found")
+				return
+			}
+			// No tunnel change: the cap only gates future device creation.
+			a.log.Info("user max_devices set", "user_id", u.ID, "max_devices", n)
+		}
+	}
 	u, err := a.store.GetUser(u.ID)
 	if err != nil {
 		a.errJSON(w, http.StatusInternalServerError, "storage error")
@@ -733,7 +963,12 @@ func (a *API) handleAdminCreateDevice(w http.ResponseWriter, r *http.Request) {
 		a.errJSON(w, http.StatusInternalServerError, "storage error")
 		return
 	}
-	if len(existing) >= a.cfg.MaxDevices {
+	limit, err := a.effectiveMaxDevices(u)
+	if err != nil {
+		a.errJSON(w, http.StatusInternalServerError, "storage error")
+		return
+	}
+	if len(existing) >= limit {
 		a.errJSON(w, http.StatusConflict, "device limit reached")
 		return
 	}
@@ -851,12 +1086,17 @@ func (a *API) handleAdminDevices(w http.ResponseWriter, r *http.Request) {
 	for _, u := range users {
 		names[u.ID] = u.Username
 	}
+	speeds := a.wg.DeviceSpeeds()
 	out := make([]deviceOut, 0, len(devices))
 	for _, d := range devices {
 		if visible != nil && !visible[d.UserID] {
 			continue
 		}
-		out = append(out, newDeviceOut(d, names[d.UserID]))
+		o := newDeviceOut(d, names[d.UserID])
+		if sp, ok := speeds[d.ID]; ok {
+			o.SpeedRxBps, o.SpeedTxBps = sp.RxBps, sp.TxBps
+		}
+		out = append(out, o)
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -925,19 +1165,24 @@ func (a *API) handleAdminDeleteDevice(w http.ResponseWriter, r *http.Request) {
 // deviceOut is the JSON shape of a device (private keys never leave the
 // server except inside rendered configs).
 type deviceOut struct {
-	ID            int64      `json:"id"`
-	UserID        int64      `json:"user_id"`
-	Username      string     `json:"username,omitempty"`
-	Name          string     `json:"name"`
-	Protocol      string     `json:"protocol"` // "wg" | "xray"
-	PublicKey     string     `json:"public_key"`
-	IPv4          string     `json:"ipv4"`
-	Enabled       bool       `json:"enabled"`
-	Online        bool       `json:"online"`
-	CreatedAt     time.Time  `json:"created_at"`
-	LastHandshake *time.Time `json:"last_handshake"`
-	TotalRx       int64      `json:"total_rx"`
-	TotalTx       int64      `json:"total_tx"`
+	ID              int64      `json:"id"`
+	UserID          int64      `json:"user_id"`
+	Username        string     `json:"username,omitempty"`
+	Name            string     `json:"name"`
+	Protocol        string     `json:"protocol"` // "wg" | "xray"
+	PublicKey       string     `json:"public_key"`
+	IPv4            string     `json:"ipv4"`
+	Enabled         bool       `json:"enabled"`
+	Online          bool       `json:"online"`
+	CreatedAt       time.Time  `json:"created_at"`
+	LastHandshake   *time.Time `json:"last_handshake"`
+	TotalRx         int64      `json:"total_rx"`
+	TotalTx         int64      `json:"total_tx"`
+	ConfigFetchedAt *time.Time `json:"config_fetched_at"` // multi-node staleness signal (nil = never)
+	// Current transfer rates (bit/s) from the latest stats sample; zero for
+	// xray devices (no counters) and until the second sample.
+	SpeedRxBps float64 `json:"speed_rx_bps"`
+	SpeedTxBps float64 `json:"speed_tx_bps"`
 }
 
 func newDeviceOut(d store.Device, username string) deviceOut {
@@ -945,7 +1190,7 @@ func newDeviceOut(d store.Device, username string) deviceOut {
 		ID: d.ID, UserID: d.UserID, Username: username, Name: d.Name,
 		Protocol: d.Protocol, PublicKey: d.PublicKey, IPv4: d.IPv4, Enabled: d.Enabled,
 		Online: isOnline(d), CreatedAt: d.CreatedAt,
-		TotalRx: d.TotalRx, TotalTx: d.TotalTx,
+		TotalRx: d.TotalRx, TotalTx: d.TotalTx, ConfigFetchedAt: d.ConfigFetchedAt,
 	}
 	if out.Protocol == "" {
 		out.Protocol = store.ProtocolWG
@@ -1005,46 +1250,76 @@ func (a *API) scopedDevice(w http.ResponseWriter, r *http.Request) (*store.Devic
 	return d, true
 }
 
+// renderCredential renders the device's credential text against the ACTIVE
+// node endpoint (multi-node: the active node's host/ports/keys go into the
+// config instead of this box's own — see docs/multinode.md). The returned
+// status code is 0 on success.
+func (a *API) renderCredential(d store.Device) (content string, code int, err error) {
+	ep, _, err := a.resolveActiveEndpoint()
+	if err != nil {
+		return "", http.StatusInternalServerError, errors.New("cannot resolve active endpoint")
+	}
+	if d.Protocol == store.ProtocolXray {
+		if !a.cfg.XrayEnabled {
+			return "", http.StatusConflict, errors.New("xray protocol is not enabled on this server")
+		}
+		return a.xray.ClientLinkAt(d, ep), 0, nil
+	}
+	return a.wg.ClientConfigAt(d, ep), 0, nil
+}
+
 // serveConfig renders the device credential: a wg-quick config for "wg"
 // devices or the vless:// share link (text/plain) for "xray" devices.
 func (a *API) serveConfig(w http.ResponseWriter, d store.Device) {
-	if d.Protocol == store.ProtocolXray {
-		if !a.cfg.XrayEnabled {
-			a.errJSON(w, http.StatusConflict, "xray protocol is not enabled on this server")
-			return
-		}
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="fibr-%s.txt"`, fileSafe(d.Name)))
-		w.Write([]byte(a.xray.ClientLink(d)))
+	content, code, err := a.renderCredential(d)
+	if err != nil {
+		a.errJSON(w, code, err.Error())
 		return
 	}
+	suffix := "conf"
+	if d.Protocol == store.ProtocolXray {
+		suffix = "txt"
+	}
+	a.touchConfigFetched(d.ID)
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="fibr-%s.conf"`, fileSafe(d.Name)))
-	w.Write([]byte(a.wg.ClientConfig(d)))
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="fibr-%s.%s"`, fileSafe(d.Name), suffix))
+	w.Write([]byte(content))
 }
 
 // serveQR renders a PNG QR code of the device credential: the wg-quick config
 // or the vless:// link.
 func (a *API) serveQR(w http.ResponseWriter, d store.Device) {
-	content := a.wg.ClientConfig(d)
-	if d.Protocol == store.ProtocolXray {
-		if !a.cfg.XrayEnabled {
-			a.errJSON(w, http.StatusConflict, "xray protocol is not enabled on this server")
-			return
-		}
-		content = a.xray.ClientLink(d)
+	content, code, err := a.renderCredential(d)
+	if err != nil {
+		a.errJSON(w, code, err.Error())
+		return
 	}
 	png, err := qrcode.Encode(content, qrcode.Medium, 512)
 	if err != nil {
 		a.errJSON(w, http.StatusInternalServerError, "qr generation failed")
 		return
 	}
+	a.touchConfigFetched(d.ID)
 	w.Header().Set("Content-Type", "image/png")
 	w.Write(png)
 }
 
-// syncPeers pushes the current device set to WireGuard in the background.
+// touchConfigFetched stamps the config delivery time; best-effort.
+func (a *API) touchConfigFetched(deviceID int64) {
+	if err := a.store.TouchDeviceConfigFetched(deviceID, time.Now()); err != nil {
+		a.log.Warn("cannot stamp config_fetched_at", "device_id", deviceID, "error", err)
+	}
+}
+
+// syncPeers pushes the current device set to WireGuard in the background and
+// bumps the peer revision so remote node agents re-pull on their next tick.
+// The bump is synchronous: it is a single settings upsert, and doing it
+// inline guarantees the revision never lags a mutation (and never races the
+// caller's teardown in tests).
 func (a *API) syncPeers() {
+	if _, err := a.store.BumpPeerRevision(); err != nil {
+		a.log.Error("peer revision bump failed", "error", err)
+	}
 	go func() {
 		if err := a.wg.SyncPeers(); err != nil {
 			a.log.Error("peer sync after mutation failed", "error", err)

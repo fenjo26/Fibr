@@ -1,0 +1,270 @@
+/* Fibr web cabinet layout — a browser twin of the Mini App (tokens and
+ * components live in /shared/tokens.css). Keep in sync with
+ * ../miniapp/style.css plus the login-specific bits at the bottom. */
+
+.wrap {
+  max-width: 560px;
+  margin: 0 auto;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 100vh;
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.head h1 {
+  font-size: 33px;
+  line-height: 1.1;
+}
+
+.head p {
+  margin: 2px 0 0;
+}
+
+.head-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.summary-row {
+  display: flex;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+
+.summary-row > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.summary-row b {
+  font-size: 20px;
+  font-weight: 800;
+}
+
+.add-row {
+  display: flex;
+  gap: 8px;
+}
+
+.add-row .btn {
+  flex: none;
+}
+
+.input--proto {
+  flex: none;
+  width: auto;
+}
+
+.proto-pill {
+  margin-left: 6px;
+}
+
+#devices {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.device {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.device-top {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.device-top .grow {
+  flex: 1;
+  min-width: 0;
+}
+
+.device-top h3 {
+  font-size: 16px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.device-top .ip {
+  color: var(--muted);
+}
+
+.device-meta {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.device-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.foot-hint {
+  text-align: center;
+  padding-bottom: 16px;
+}
+
+.qr-wrap {
+  display: flex;
+  justify-content: center;
+  padding: 12px;
+  background: #fff;
+  border-radius: 12px;
+}
+
+.qr-wrap img {
+  width: 280px;
+  height: 280px;
+}
+
+.qr-steps {
+  margin: 12px 0 0;
+  padding-left: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.config-pre {
+  white-space: pre-wrap;
+  word-break: break-all;
+  background: var(--surface-2);
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  padding: 12px;
+  margin: 12px 0;
+  max-height: 40vh;
+  overflow: auto;
+}
+
+.modal h3 {
+  margin-bottom: 4px;
+}
+
+.modal .modal-sub {
+  margin: 0 0 12px;
+}
+
+.modal-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 12px;
+}
+
+.empty {
+  text-align: center;
+  color: var(--muted);
+  padding: 32px 16px;
+}
+
+.sec-hint {
+  margin: -4px 0 0;
+}
+
+.sec-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.sec-head h2 {
+  font-size: 20px;
+}
+
+.sec-head p {
+  margin: 2px 0 0;
+}
+
+.user-tg {
+  font-size: 12px;
+}
+
+.user-pills {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+/* ---------- login (cabinet only) ---------- */
+
+.login-card {
+  margin-top: 12vh;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.login-card h1 {
+  font-size: 33px;
+  line-height: 1.1;
+}
+
+#tg-widget {
+  min-height: 40px;
+  width: 100%;
+}
+
+.login-foot {
+  font-size: 12px;
+}
+
+/* ---------- referral section (docs/referrals.md) ---------- */
+
+#ref-view {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+#ref-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.ref-terms {
+  margin: -4px 0 0;
+  font-size: 13px;
+}
+
+.ref-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* One invited account: name + signup date on the left, L1 earnings right. */
+.ref-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 14px;
+}
+
+.ref-earned {
+  white-space: nowrap;
+  font-size: 13px;
+}

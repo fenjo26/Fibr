@@ -203,3 +203,68 @@ main {
   justify-content: flex-end;
   margin-top: 12px;
 }
+
+/* ---------- referral settings card ---------- */
+
+.settings-card {
+  max-width: 560px;
+}
+
+.settings-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0 0 14px;
+  font-size: 14px;
+}
+
+.settings-row--col {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+}
+
+.settings-inline {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.input--num {
+  width: 90px;
+}
+
+/* ---------- multi-node (docs/multinode.md) ---------- */
+
+/* Hint + "Add node" above the nodes table. */
+.nodes-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.nodes-toolbar .muted {
+  font-size: 13px;
+}
+
+/* Endpoint cell: wg host:port, optional xray port underneath. */
+.node-endpoint small {
+  display: block;
+  color: var(--muted);
+}
+
+/* "Active node: …" line on the dashboard server card. */
+.active-node {
+  margin: 10px 0 0;
+  font-size: 13px;
+}
+
+/* Show-once agent token warning in the node-token modal. */
+.token-warn {
+  color: var(--danger);
+  font-size: 13px;
+  margin: 0 0 8px;
+}

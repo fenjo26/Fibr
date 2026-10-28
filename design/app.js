@@ -103,6 +103,23 @@ window.Fibr = (function () {
     });
   }
 
+  /* ---------- money (referral program; docs/referrals.md) ---------- */
+
+  /* All amounts travel as INTEGER minor units (kopecks). toMinor parses the
+   * human form into minor units without any float math; null = bad input. */
+  function toMinor(s) {
+    var m = String(s == null ? '' : s).trim().replace(',', '.').match(/^(\d+)(?:\.(\d{1,2}))?$/);
+    if (!m) return null;
+    return parseInt(m[1], 10) * 100 + (m[2] ? parseInt(m[2].padEnd(2, '0'), 10) : 0);
+  }
+
+  function fmtMoney(minor, currency) {
+    if (minor == null || isNaN(minor)) return '—';
+    var v = (Math.round(minor) / 100).toFixed(2);
+    if (v.slice(-3) === '.00') v = v.slice(0, -3);
+    return currency ? v + ' ' + currency : v;
+  }
+
   /* ---------- api client ---------- */
 
   /* makeApi(getToken) -> (path, {method, body}) -> Promise<json>.
@@ -132,5 +149,5 @@ window.Fibr = (function () {
     };
   }
 
-  return { setTheme: setTheme, makeT: makeT, fmtBytes: fmtBytes, fmtBits: fmtBits, fmtAgo: fmtAgo, esc: esc, makeApi: makeApi };
+  return { setTheme: setTheme, makeT: makeT, fmtBytes: fmtBytes, fmtBits: fmtBits, fmtAgo: fmtAgo, esc: esc, makeApi: makeApi, toMinor: toMinor, fmtMoney: fmtMoney };
 })();

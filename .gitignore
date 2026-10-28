@@ -2,6 +2,11 @@
 bin/
 dist/
 
+# client binaries served from the server (download/README.md stays tracked)
+download/*.apk
+download/*.zip
+download/*.tmp
+
 # runtime state
 data/
 *.db
@@ -17,3 +22,6 @@ install/.env
 *.swp
 .idea/
 .vscode/
+
+# local ZCode session plans (parallel sessions)
+.zcode/

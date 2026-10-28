@@ -36,6 +36,7 @@
           <div><span class="muted" id="lbl-traffic"></span><b id="sum-traffic">—</b></div>
         </div>
         <p class="muted sum-expiry" id="sum-expiry"></p>
+        <p class="muted sum-node hidden" id="sum-node"></p>
       </div>
 
       <p class="muted sec-hint" id="devices-hint"></p>
@@ -60,6 +61,18 @@
           <button class="btn btn--tertiary btn--small" id="invite-create"></button>
         </div>
         <div id="users"></div>
+      </section>
+
+      <!-- referral section: every account (docs/referrals.md) -->
+      <section id="ref-view" class="hidden">
+        <div class="sec-head">
+          <div>
+            <h2 id="ref-title"></h2>
+            <p class="muted" id="ref-hint"></p>
+          </div>
+          <button class="btn btn--tertiary btn--small" id="ref-copy"></button>
+        </div>
+        <div id="ref-body"></div>
       </section>
 
       <p class="muted foot-hint" id="foot-hint"></p>

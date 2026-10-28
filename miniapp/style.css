@@ -49,6 +49,12 @@
   font-size: 13px;
 }
 
+/* Active-node line under it (docs/multinode.md): subtle, informational. */
+.sum-node {
+  margin: 6px 0 0;
+  font-size: 13px;
+}
+
 .add-row {
   display: flex;
   gap: 8px;
@@ -83,6 +89,25 @@
   display: flex;
   align-items: center;
   gap: 10px;
+  flex-wrap: wrap; /* stale-config badge may push the pills to a second line */
+}
+
+/* Stale-config badge (docs/multinode.md): warning amber, tappable —
+ * opens the QR so the user re-downloads against the new endpoint. */
+.pill--warn {
+  background: color-mix(in srgb, #f5a623 18%, transparent);
+  color: #f5a623;
+}
+
+:root[data-theme="light"] .pill--warn {
+  color: #a16207;
+}
+
+.stale-pill {
+  border: 0;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
 }
 
 .device-top .grow {
@@ -220,4 +245,43 @@
   padding-left: 20px;
   font-size: 13px;
   line-height: 1.7;
+}
+
+/* ---------- referral section (docs/referrals.md) ---------- */
+
+#ref-view {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+#ref-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.ref-terms {
+  margin: -4px 0 0;
+  font-size: 13px;
+}
+
+.ref-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* One invited account: name + signup date on the left, L1 earnings right. */
+.ref-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 14px;
+}
+
+.ref-earned {
+  white-space: nowrap;
+  font-size: 13px;
 }

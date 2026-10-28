@@ -62,7 +62,9 @@ services:
       - caddy-config:/config
       - ../admin:/srv/admin:ro
       - ../miniapp:/srv/miniapp:ro
+      - ../cabinet:/srv/cabinet:ro
       - ../design:/srv/shared:ro
+      - ../download:/srv/download:ro
     depends_on:
       - fibr
 

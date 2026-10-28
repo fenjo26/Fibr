@@ -56,6 +56,20 @@ func main() {
 	}
 	defer st.Close()
 
+	// Multi-node (see docs/multinode.md): upsert the built-in "local" node
+	// row so this box participates in the node registry, with host/ports
+	// refreshed from env on every boot. Xray port is recorded only while the
+	// xray protocol is enabled.
+	var localXrayPort *int
+	if cfg.XrayEnabled {
+		p := cfg.XrayPort
+		localXrayPort = &p
+	}
+	if _, err := store.EnsureLocalNode(st, cfg.WGHost, cfg.WGPort, localXrayPort); err != nil {
+		log.Error("cannot ensure local node", "error", err)
+		os.Exit(1)
+	}
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -119,9 +133,11 @@ func main() {
 
 	// Subscription expiry pass (manual monetization, see docs/billing.md).
 	// Runs on every stats tick: recompute the set of expired accounts and
-	// resync WireGuard peers only when that set CHANGED — an account that
-	// just crossed its deadline gets its tunnel cut within one interval,
-	// while a steady state never rebuilds peers for nothing.
+	// resync the tunnels only when that set CHANGED — an account that just
+	// crossed its deadline gets its tunnel cut within one interval, while a
+	// steady state never rebuilds peers for nothing. Both engines are
+	// resynced: WireGuard peers AND the xray client list (an expired user's
+	// VLESS credentials must stop working exactly like their wg ones).
 	var lastExpired map[int64]struct{}
 	checkExpiries := func() {
 		ids, err := st.ListExpiredUserIDs(time.Now())
@@ -141,6 +157,14 @@ func main() {
 		if err := wgm.SyncPeers(); err != nil {
 			log.Error("peer resync after expiry change failed", "error", err)
 			return
+		}
+		if xm != nil {
+			if err := xm.SyncClients(); err != nil {
+				log.Error("xray resync after expiry change failed", "error", err)
+			}
+		}
+		if _, err := st.BumpPeerRevision(); err != nil {
+			log.Error("peer revision bump after expiry change failed", "error", err)
 		}
 		if grew {
 			log.Info(fmt.Sprintf("%d users expired, peers resynced", len(cur)))
@@ -169,6 +193,11 @@ func main() {
 
 	if cfg.TelegramBotToken != "" {
 		b := bot.New(cfg, st, apiSrv.BuildOverview, log)
+		if name, err := b.FetchMe(); err == nil {
+			apiSrv.SetBotUsername(name)
+		} else {
+			log.Warn("cannot fetch bot username; web cabinet widget will be hidden", "error", err)
+		}
 		go func() {
 			if err := b.Run(ctx); err != nil {
 				log.Error("telegram bot stopped", "error", err)

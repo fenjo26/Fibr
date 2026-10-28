@@ -40,6 +40,9 @@
     <button class="tab active" data-tab="dashboard" data-i18n="tabDash"></button>
     <button class="tab" data-tab="users" data-i18n="tabUsers"></button>
     <button class="tab" data-tab="devices" data-i18n="tabDevices"></button>
+    <button class="tab" data-tab="nodes" data-i18n="tabNodes"></button>
+    <button class="tab" data-tab="referrals" data-i18n="tabReferrals"></button>
+    <button class="tab" data-tab="settings" data-i18n="tabSettings"></button>
   </nav>
 
   <main>
@@ -56,6 +59,7 @@
       <div class="two-col">
         <div class="card">
           <h3 data-i18n="serverCard"></h3>
+          <p class="muted active-node hidden" id="active-node"></p>
           <dl class="kv" id="server-info"></dl>
         </div>
         <div class="card">
@@ -102,6 +106,62 @@
         <div class="table-scroll">
           <table class="table" id="devices-table"></table>
         </div>
+      </div>
+    </section>
+
+    <!-- nodes (docs/multinode.md) -->
+    <section id="tab-nodes" class="page hidden">
+      <div class="card nodes-toolbar">
+        <span class="muted" data-i18n="nodesHint"></span>
+        <button class="btn" id="node-create" data-i18n="btnAddNode"></button>
+      </div>
+      <div class="card">
+        <div class="table-scroll">
+          <table class="table" id="nodes-table"></table>
+        </div>
+      </div>
+    </section>
+
+    <!-- referrals (docs/referrals.md) -->
+    <section id="tab-referrals" class="page hidden">
+      <div class="card">
+        <h3 data-i18n="refTreeTitle"></h3>
+        <p class="muted" id="ref-terms"></p>
+        <div class="table-scroll">
+          <table class="table" id="referrals-table"></table>
+        </div>
+      </div>
+      <div class="card">
+        <h3 data-i18n="payoutsTitle"></h3>
+        <div class="table-scroll">
+          <table class="table" id="payouts-table"></table>
+        </div>
+      </div>
+      <div class="card">
+        <h3 data-i18n="paymentsTitle"></h3>
+        <div class="table-scroll">
+          <table class="table" id="payments-table"></table>
+        </div>
+      </div>
+    </section>
+
+    <!-- settings (referral program; docs/referrals.md) -->
+    <section id="tab-settings" class="page hidden">
+      <div class="card settings-card">
+        <h3 data-i18n="settingsTitle"></h3>
+        <label class="settings-row"><input type="checkbox" id="set-enabled"> <span data-i18n="setEnabled"></span></label>
+        <label class="settings-row"><span data-i18n="setPercents" class="grow"></span>
+          <span class="settings-inline"><input class="input input--num" id="set-p1" type="number" min="0" max="100"> % L1 +
+          <input class="input input--num" id="set-p2" type="number" min="0" max="100"> % L2</span>
+        </label>
+        <label class="settings-row"><span data-i18n="setCurrency" class="grow"></span>
+          <input class="input input--num" id="set-currency" maxlength="16" placeholder="₽ / USDT">
+        </label>
+        <label class="settings-row settings-row--col"><span data-i18n="setContacts"></span>
+          <textarea class="input" id="set-contact" rows="4" data-i18n-ph="phContacts"></textarea>
+        </label>
+        <p class="muted" data-i18n="setContactsHint"></p>
+        <div><button class="btn" id="set-save" data-i18n="setSave"></button></div>
       </div>
     </section>
   </main>
