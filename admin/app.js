@@ -234,6 +234,29 @@
   var el = function (id) { return document.getElementById(id); };
   var refreshTimer = null;
 
+  var ICON_EDIT = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>';
+
+  // Phones fold every .table-cards table into "label · value" cards; the
+  // labels are taken from the <th> row so renderers don't have to repeat
+  // them. Cells that already carry data-label keep theirs.
+  function labelize(table) {
+    var heads = Array.prototype.map.call(table.querySelectorAll('thead th'), function (th) {
+      return th.textContent.trim();
+    });
+    if (!heads.length) return;
+    table.querySelectorAll('tbody tr').forEach(function (tr) {
+      Array.prototype.forEach.call(tr.children, function (td, i) {
+        if (!td.hasAttribute('data-label')) td.setAttribute('data-label', heads[i] || '');
+      });
+    });
+  }
+  new MutationObserver(function (muts) {
+    muts.forEach(function (m) {
+      var tb = m.target.closest && m.target.closest('table.table-cards');
+      if (tb) labelize(tb);
+    });
+  }).observe(document.body, { childList: true, subtree: true });
+
   /* ---------- i18n ---------- */
 
   function applyI18n() {
@@ -376,8 +399,8 @@
       el('st-users').textContent = ov.totals.users;
       el('st-devices').textContent = ov.totals.devices;
       el('st-expired').textContent = ov.totals.expired != null ? ov.totals.expired : '—';
-      el('st-traffic').innerHTML = '↓ ' + fmtBytes(ov.totals.total_rx) + ' · ↑ ' + fmtBytes(ov.totals.total_tx);
-      el('st-tunnel').innerHTML = '↓ ' + fmtBits(ov.throughput.wg_in_bps) + ' · ↑ ' + fmtBits(ov.throughput.wg_out_bps);
+      el('st-traffic').innerHTML = '↓ ' + fmtBytes(ov.totals.total_rx) + ' <small>↑ ' + fmtBytes(ov.totals.total_tx) + '</small>';
+      el('st-tunnel').innerHTML = '↓ ' + fmtBits(ov.throughput.wg_in_bps) + ' <small>↑ ' + fmtBits(ov.throughput.wg_out_bps) + '</small>';
       el('server-host').textContent = ov.server.host + ':' + ov.server.port;
 
       // Multi-node (docs/multinode.md): which node renders into client
@@ -410,7 +433,9 @@
           '<td>' + (d.last_handshake ? (fmtAgo(d.last_handshake, t.lang) || '') : t('never')) + '</td>' +
           '<td>↓ ' + fmtBytes(d.total_rx) + '<br>↑ ' + fmtBytes(d.total_tx) + '</td></tr>';
       }).join('');
-      el('recent-table').innerHTML = rows || '<tr><td class="muted">—</td></tr>';
+      el('recent-table').innerHTML = '<thead><tr><th>' + t('thStatus') + '</th><th>' + t('thDevice') + '</th><th>' + t('thIP') + '</th>' +
+        '<th>' + t('thLastSeen') + '</th><th>' + t('thTraffic') + '</th></tr></thead><tbody>' +
+        (rows || '<tr><td class="muted">—</td></tr>') + '</tbody>';
     }).catch(fail);
   }
 
@@ -521,7 +546,7 @@
             '<td' + L(t('thSpeed')) + '>↓ ' + fmtBits(u.speed_rx_bps) + '<br>↑ ' + fmtBits(u.speed_tx_bps) + '</td>' +
             '<td' + L(t('thStatus')) + '>' + (u.disabled ? '<span class="pill pill--danger">' + t('statusDisabled') + '</span>' : '<span class="pill pill--ok">' + t('statusActive') + '</span>') + '</td>' +
             '<td class="actions-cell"><div class="actions">' +
-            '<button class="btn btn--tertiary btn--small" data-act="edit" data-id="' + u.id + '" title="' + esc(t('btnEdit')) + '">✏️</button>' +
+            '<button class="btn btn--tertiary btn--small edit-btn" data-act="edit" data-id="' + u.id + '" title="' + esc(t('btnEdit')) + '">' + ICON_EDIT + '<span class="edit-lbl">' + esc(t('btnEdit')) + '</span></button>' +
             '</div></td></tr>';
         }).join('') + '</tbody>';
       renderInvites(res[3] || []);
@@ -613,7 +638,7 @@
           '<td>' + esc(inv.note || '—') + '</td>' +
           '<td>' + (fmtAgo(inv.created_at, t.lang) || '') + '</td>' +
           '<td>' + used + '</td>' +
-          '<td><button class="btn btn--danger btn--small" data-act="delinv" data-code="' + esc(inv.code) + '">' + t('btnDelete') + '</button></td>' +
+          '<td><button class="btn btn--danger-ghost btn--small" data-act="delinv" data-code="' + esc(inv.code) + '">' + t('btnDelete') + '</button></td>' +
           '</tr>';
       }).join('') + '</tbody>';
   }
@@ -710,7 +735,7 @@
     var disBtn = u.disabled
       ? '<button class="btn btn--ghost btn--small" data-act="undisable" data-id="' + u.id + '">' + t('btnEnable') + '</button>'
       : '<button class="btn btn--ghost btn--small" data-act="disable" data-id="' + u.id + '">' + t('btnDisable') + '</button>';
-    openModal('<h3>✏️ ' + esc(u.username || ('#' + u.id)) +
+    openModal('<h3>' + esc(u.username || ('#' + u.id)) +
       ' <span class="mono muted">#' + u.id + '</span> ' + rolePill(u.role) + '</h3>' +
       '<p class="muted modal-sub">' + (u.telegram_id ? 'TG ' + u.telegram_id : t('noTG')) + '</p>' +
 
@@ -974,7 +999,7 @@
             (d.enabled
               ? '<button class="btn btn--ghost btn--small" data-act="off" data-id="' + d.id + '">' + t('btnDisable') + '</button>'
               : '<button class="btn btn--ghost btn--small" data-act="on" data-id="' + d.id + '">' + t('btnEnable') + '</button>') +
-            '<button class="btn btn--danger btn--small" data-act="del" data-id="' + d.id + '">' + t('btnDelete') + '</button>' +
+            '<button class="btn btn--danger-ghost btn--small" data-act="del" data-id="' + d.id + '">' + t('btnDelete') + '</button>' +
             '</div></td></tr>';
         }).join('') + '</tbody>';
     }).catch(fail);
@@ -1081,7 +1106,7 @@
         acts.push('<button class="btn btn--ghost btn--small" data-nact="block" data-id="' + n.id + '" data-name="' + esc(n.name) + '"' + (n.is_active ? ' disabled' : '') + '>' + t('btnNodeBlock') + '</button>');
       }
       acts.push('<button class="btn btn--ghost btn--small" data-nact="token" data-id="' + n.id + '" data-name="' + esc(n.name) + '">' + t('btnNodeToken') + '</button>');
-      acts.push('<button class="btn btn--danger btn--small" data-nact="delnode" data-id="' + n.id + '" data-name="' + esc(n.name) + '"' + (n.is_active ? ' disabled' : '') + '>' + t('btnNodeDelete') + '</button>');
+      acts.push('<button class="btn btn--danger-ghost btn--small" data-nact="delnode" data-id="' + n.id + '" data-name="' + esc(n.name) + '"' + (n.is_active ? ' disabled' : '') + '>' + t('btnNodeDelete') + '</button>');
     }
     var name = '<div class="user-cell"><b>' + esc(n.name) + '</b>' +
       (n.is_active ? ' <span class="pill pill--ok">' + t('nodeActiveBadge') + '</span>' : '') +
@@ -1311,6 +1336,7 @@
   }
 
   applyI18n();
+  burgerLabel();
   if (token) {
     api('/api/admin/overview').then(function () {
       el('login').classList.add('hidden');

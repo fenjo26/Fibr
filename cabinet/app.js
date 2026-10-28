@@ -416,7 +416,8 @@
 
     el('sum-devices').textContent = devices.length + (me.max_devices ? ' / ' + me.max_devices : '');
     el('sum-online').textContent = online;
-    el('sum-traffic').innerHTML = fmtBytes(rx) + ' · ' + fmtBytes(tx);
+    el('sum-traffic').textContent = fmtBytes(rx + tx);
+    el('sum-traffic').title = '↓ ' + fmtBytes(rx) + ' · ↑ ' + fmtBytes(tx);
     el('sum-expiry').textContent = (me.user && me.user.expires_at)
       ? t('validUntil', { d: fmtDate(me.user.expires_at) })
       : t('unlimited');
@@ -446,7 +447,7 @@
         '<div class="device-actions">' +
         '<button class="btn btn--secondary btn--small" data-act="qr" data-id="' + d.id + '">' + t('btnQR') + '</button>' +
         '<button class="btn btn--tertiary btn--small" data-act="cfg" data-id="' + d.id + '">' + t('btnConfig') + '</button>' +
-        '<button class="btn btn--ghost btn--small" data-act="del" data-id="' + d.id + '" data-name="' + esc(d.name) + '">' + t('btnDelete') + '</button>' +
+        '<button class="btn btn--danger-ghost btn--small" data-act="del" data-id="' + d.id + '" data-name="' + esc(d.name) + '">' + t('btnDelete') + '</button>' +
         '</div></div></div>';
     }).join('');
   }
@@ -518,7 +519,7 @@
           '<span class="user-pills">' + expPill +
           '<span class="pill pill--off">' + esc(t('devicesOf', { n: counts[u.id] || 0 })) + '</span></span></div>' +
           '<div class="device-actions">' +
-          '<button class="btn btn--secondary btn--small" data-uact="grant" data-id="' + u.id + '">' + esc(t('btnGrantDevice')) + '</button>' +
+          '<button class="btn btn--tertiary btn--small btn--block" data-uact="grant" data-id="' + u.id + '">' + esc(t('btnGrantDevice')) + '</button>' +
           '</div></div>';
       }).join('');
     }).catch(function (e) {
