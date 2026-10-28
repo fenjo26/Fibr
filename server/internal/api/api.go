@@ -52,6 +52,12 @@ func (a *API) SetBotUsername(name string) {
 	a.botUsername.Store(name)
 }
 
+// botName is the bot @username ("" until the bot reported getMe).
+func (a *API) botName() string {
+	name, _ := a.botUsername.Load().(string)
+	return name
+}
+
 // Handler builds the routed, panic-safe HTTP handler.
 func (a *API) Handler() http.Handler {
 	mux := http.NewServeMux()

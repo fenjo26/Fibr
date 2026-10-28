@@ -53,6 +53,19 @@ func InviteLink(domain, code string) string {
 	return "https://" + d + "/miniapp/?invite=" + code
 }
 
+// InviteShareLink is the link actually handed to people. With the bot
+// username known it is a bot deep link (t.me/<bot>?start=inv_CODE): it opens
+// Telegram, the bot answers with a Web App button carrying the code, and the
+// Mini App starts with real initData. A bare https://<domain>/miniapp/ link
+// opens in a browser (no initData -> "open this from the bot") — that is the
+// fallback only when the bot username is unknown.
+func InviteShareLink(domain, botUsername, code string) string {
+	if b := strings.TrimPrefix(strings.TrimSpace(botUsername), "@"); b != "" {
+		return "https://t.me/" + b + "?start=inv_" + code
+	}
+	return InviteLink(domain, code)
+}
+
 // inviteOut is the JSON shape of an invite in the admin panel, with the
 // username of the consuming user joined in memory (same pattern as devices).
 type inviteOut struct {
@@ -85,7 +98,7 @@ func (a *API) handleAdminListInvites(w http.ResponseWriter, r *http.Request) {
 		if !id.isSuper() && inv.CreatedBy != id.userID {
 			continue
 		}
-		o := inviteOut{Invite: inv, Link: InviteLink(a.cfg.Domain, inv.Code)}
+		o := inviteOut{Invite: inv, Link: InviteShareLink(a.cfg.Domain, a.botName(), inv.Code)}
 		if inv.UsedBy != nil {
 			o.Username = names[*inv.UsedBy]
 		}
@@ -115,7 +128,7 @@ func (a *API) handleAdminCreateInvite(w http.ResponseWriter, r *http.Request) {
 		inv.Code = code
 		if err := a.store.CreateInvite(inv); err == nil {
 			a.log.Info("invite created", "code", inv.Code, "created_by", inv.CreatedBy)
-			writeJSON(w, http.StatusCreated, inviteOut{Invite: *inv, Link: InviteLink(a.cfg.Domain, inv.Code)})
+			writeJSON(w, http.StatusCreated, inviteOut{Invite: *inv, Link: InviteShareLink(a.cfg.Domain, a.botName(), inv.Code)})
 			return
 		}
 	}

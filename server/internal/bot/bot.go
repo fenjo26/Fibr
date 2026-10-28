@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"mime/multipart"
 	"net/http"
+	neturl "net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -132,11 +133,31 @@ func (b *Bot) handleUpdate(ctx context.Context, u tgUpdate) {
 		return
 	}
 	from := msg.From
-	// A t.me/<bot>?start=ref_CODE deep link arrives as "/start ref_CODE";
-	// the payload decides whether this is a referral arrival.
-	refCode := ""
+	// A t.me/<bot>?start=ref_CODE / ?start=inv_CODE deep link arrives as
+	// "/start ref_CODE" / "/start inv_CODE"; the payload decides whether this
+	// is a referral or an invite arrival.
+	refCode, inviteCode := "", ""
 	if cmd := firstWord(msg.Text); cmd == "/start" {
-		refCode = startReferralCode(msg.Text)
+		refCode, inviteCode = startPayload(msg.Text)
+	}
+	// Invite-only mode: the bot must NOT register strangers. Creating the
+	// account here let anyone skip the invite: send /start, then open the
+	// Mini App as an "existing" user (the gate only checks brand-new users).
+	// Unknown users get the app button carrying their invite/ref code and
+	// the Mini App sign-in enforces the gate and claims the one-time code.
+	if b.cfg.RequireInvite {
+		if _, err := b.store.GetUserByTelegramID(from.ID); err == store.ErrNotFound {
+			lang := pickLang(from.LanguageCode)
+			if inviteCode != "" || refCode != "" {
+				b.sendMessage(ctx, msg.Chat.ID, t(lang, "welcomeInvite"), b.miniAppKeyboard(lang, refCode, inviteCode))
+			} else {
+				b.sendMessage(ctx, msg.Chat.ID, t(lang, "inviteOnly"), nil)
+			}
+			return
+		} else if err != nil {
+			b.log.Error("bot: user lookup failed", "telegram_id", from.ID, "error", err)
+			return
+		}
 	}
 	user, err := b.upsertUser(from, refCode)
 	if err != nil {
@@ -157,9 +178,9 @@ func (b *Bot) handleUpdate(ctx context.Context, u tgUpdate) {
 	switch firstWord(msg.Text) {
 	case "/start":
 		if refCode != "" {
-			b.sendMessage(ctx, msg.Chat.ID, t(lang, "welcomeReferred"), b.miniAppKeyboard(lang, refCode))
+			b.sendMessage(ctx, msg.Chat.ID, t(lang, "welcomeReferred"), b.miniAppKeyboard(lang, refCode, ""))
 		} else {
-			b.sendMessage(ctx, msg.Chat.ID, t(lang, "welcome"), b.miniAppKeyboard(lang, ""))
+			b.sendMessage(ctx, msg.Chat.ID, t(lang, "welcome"), b.miniAppKeyboard(lang, "", ""))
 		}
 	case "/help":
 		b.sendMessage(ctx, msg.Chat.ID, t(lang, "help"), nil)
@@ -189,9 +210,9 @@ func (b *Bot) handleUpdate(ctx context.Context, u tgUpdate) {
 			b.sendMessage(ctx, msg.Chat.ID, t(lang, "inviteError"), nil)
 			return
 		}
-		b.sendMessage(ctx, msg.Chat.ID, t(lang, "inviteCreated", code, api.InviteLink(b.cfg.Domain, code)), nil)
+		b.sendMessage(ctx, msg.Chat.ID, t(lang, "inviteCreated", code, api.InviteShareLink(b.cfg.Domain, b.me, code)), nil)
 	case "/ref":
-		b.sendMessage(ctx, msg.Chat.ID, t(lang, "referralCard", user.ReferralCode, api.ReferralLink(b.cfg.Domain, user.ReferralCode)), nil)
+		b.sendMessage(ctx, msg.Chat.ID, t(lang, "referralCard", user.ReferralCode, api.ReferralShareLink(b.cfg.Domain, b.me, user.ReferralCode)), nil)
 	case "/app":
 		// Telegram-side APK delivery: in some regions (RU DPI) a direct
 		// browser download from the VPS times out, while Telegram file
@@ -218,19 +239,22 @@ func (b *Bot) handleUpdate(ctx context.Context, u tgUpdate) {
 	}
 }
 
-// startReferralCode extracts a referral code from a "/start ref_CODE"
-// message, or "" for a plain /start (any other payload is ignored — only
-// the "ref_" scheme exists on the bot surface).
-func startReferralCode(text string) string {
+// startPayload splits a "/start <payload>" message into a referral code
+// ("ref_CODE") or an invite code ("inv_CODE"); a plain /start or any other
+// payload yields two empty strings.
+func startPayload(text string) (refCode, inviteCode string) {
 	fields := strings.Fields(text)
 	if len(fields) < 2 {
-		return ""
+		return "", ""
 	}
 	payload := fields[1]
 	if rest, ok := strings.CutPrefix(payload, "ref_"); ok {
-		return rest
+		return rest, ""
 	}
-	return ""
+	if rest, ok := strings.CutPrefix(payload, "inv_"); ok {
+		return "", rest
+	}
+	return "", ""
 }
 
 // upsertUser mirrors the Mini App auth: FIBR_ADMIN_TELEGRAM_IDS entries are
@@ -298,16 +322,23 @@ func (b *Bot) userExpired(u *store.User) bool {
 }
 
 // miniAppKeyboard returns the inline button opening the Mini App. Web App
-// buttons require an https URL, so they are skipped in local dev. With a
-// referral code the button URL carries ?ref=CODE so the Mini App sign-in
-// attributes the newcomer even though bot deep links cannot set startapp.
-func (b *Bot) miniAppKeyboard(lang, refCode string) any {
+// buttons require an https URL, so they are skipped in local dev. A referral
+// or invite code rides in the button URL (?ref=CODE / ?invite=CODE) so the
+// Mini App sign-in sees it even though bot deep links cannot set startapp.
+func (b *Bot) miniAppKeyboard(lang, refCode, inviteCode string) any {
 	if b.cfg.Domain == "" || b.cfg.Domain == "localhost" || b.cfg.Domain == "127.0.0.1" {
 		return nil
 	}
-	url := "https://" + b.cfg.Domain + "/miniapp/"
+	q := neturl.Values{}
 	if refCode != "" {
-		url += "?ref=" + refCode
+		q.Set("ref", refCode)
+	}
+	if inviteCode != "" {
+		q.Set("invite", inviteCode)
+	}
+	url := "https://" + b.cfg.Domain + "/miniapp/"
+	if len(q) > 0 {
+		url += "?" + q.Encode()
 	}
 	return map[string]any{
 		"inline_keyboard": [][]map[string]any{{
@@ -453,6 +484,8 @@ var texts = map[string]map[string]string{
 		"inviteError":     "Не удалось создать приглашение, смотрите логи сервера.",
 		"referralCard":    "🎁 Реферальная программа\n\nВаш код: <code>%s</code>\nСсылка: %s\n\nОтправьте их другу — с каждого его пополнения вам идёт процент. Баланс и подробности — в приложении.",
 		"openApp":         "Открыть Fibr",
+		"welcomeInvite":   "👋 Добро пожаловать в <b>Fibr</b>!\n\nНажмите кнопку ниже — приложение откроется и активирует ваше приглашение.",
+		"inviteOnly":      "🔒 Регистрация в Fibr только по приглашению. Попросите ссылку-приглашение у того, кто вас позвал.",
 		"statsHeader":     "📊 <b>Статистика Fibr</b>",
 		"statsError":      "Не удалось собрать статистику, смотрите логи сервера.",
 		"users":           "Пользователей",
@@ -474,6 +507,8 @@ var texts = map[string]map[string]string{
 		"inviteError":     "Failed to create an invite, check server logs.",
 		"referralCard":    "🎁 Referral program\n\nYour code: <code>%s</code>\nLink: %s\n\nShare them with a friend — you earn a cut of every top-up they make. Balance and details are in the app.",
 		"openApp":         "Open Fibr",
+		"welcomeInvite":   "👋 Welcome to <b>Fibr</b>!\n\nTap the button below — the app opens and activates your invitation.",
+		"inviteOnly":      "🔒 Fibr is invite-only. Ask whoever told you about it for an invite link.",
 		"statsHeader":     "📊 <b>Fibr stats</b>",
 		"statsError":      "Failed to collect stats, check server logs.",
 		"users":           "Users",

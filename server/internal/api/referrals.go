@@ -32,6 +32,15 @@ func ReferralLink(domain, code string) string {
 	return "https://" + d + "/miniapp/?ref=" + code
 }
 
+// ReferralShareLink: the bot deep link t.me/<bot>?start=ref_CODE when the
+// bot username is known (see InviteShareLink for why), else ReferralLink.
+func ReferralShareLink(domain, botUsername, code string) string {
+	if b := strings.TrimPrefix(strings.TrimSpace(botUsername), "@"); b != "" {
+		return "https://t.me/" + b + "?start=ref_" + code
+	}
+	return ReferralLink(domain, code)
+}
+
 // handleMeReferrals serves the caller's referral card: code, share link,
 // program terms, aggregates and the invited accounts.
 func (a *API) handleMeReferrals(w http.ResponseWriter, r *http.Request) {
@@ -58,7 +67,7 @@ func (a *API) handleMeReferrals(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"code":         u.ReferralCode,
-		"link":         ReferralLink(a.cfg.Domain, u.ReferralCode),
+		"link":         ReferralShareLink(a.cfg.Domain, a.botName(), u.ReferralCode),
 		"enabled":      rs.Enabled,
 		"currency":     rs.Currency,
 		"percent_l1":   rs.PercentL1,

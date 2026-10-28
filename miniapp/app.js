@@ -39,6 +39,7 @@
       btnQR: 'QR-код', btnConfig: 'Конфиг', btnDelete: 'Удалить',
       confirmDelete: 'Удалить устройство {name}?',
       errNotTelegram: 'Откройте это окно из бота Fibr в Telegram.',
+      openInTelegram: 'Открыть в Telegram',
       errAuth: 'Не удалось войти через Telegram. Сообщите админу.',
       errDisabled: 'Ваш аккаунт отключён администратором.',
       errExpired: 'Подписка истекла. Свяжитесь с администратором, чтобы продлить.',
@@ -116,6 +117,7 @@
       btnQR: 'QR code', btnConfig: 'Config', btnDelete: 'Delete',
       confirmDelete: 'Delete device {name}?',
       errNotTelegram: 'Open this window from the Fibr bot in Telegram.',
+      openInTelegram: 'Open in Telegram',
       errAuth: 'Telegram sign-in failed. Contact the admin.',
       errDisabled: 'Your account is disabled by the administrator.',
       errExpired: 'Your subscription has expired. Contact the administrator to renew it.',
@@ -303,9 +305,34 @@
     return null;
   }
 
+  // Opened outside Telegram (a plain https link lands in a browser, so there
+  // is no initData): bounce to the bot deep link with the same invite/ref
+  // code. The bot answers with a Web App button that opens this page for
+  // real, inside Telegram. Old https://<domain>/miniapp/?invite=… links keep
+  // working this way.
+  function redirectToBot() {
+    var code = inviteCode();
+    var ref = referralCode();
+    var start = code ? 'inv_' + code : (ref ? 'ref_' + ref : '');
+    fetch('/api/public/info').then(function (res) { return res.json(); }).then(function (info) {
+      if (!info || !info.bot_username) return;
+      var link = 'https://t.me/' + encodeURIComponent(info.bot_username) +
+        (start ? '?start=' + encodeURIComponent(start) : '');
+      var a = document.createElement('a');
+      a.href = link;
+      a.className = 'btn';
+      a.textContent = t('openInTelegram');
+      a.style.marginTop = '16px';
+      a.style.display = 'inline-block';
+      el('error-text').parentNode.appendChild(a);
+      window.location.href = link;
+    }).catch(function () { /* keep the plain error */ });
+  }
+
   function signIn() {
     if (!tg || !tg.initData) {
       showError(t('errNotTelegram'));
+      redirectToBot();
       return;
     }
     var body = { init_data: tg.initData };

@@ -321,3 +321,18 @@ func TestInviteAdminCRUD(t *testing.T) {
 		t.Fatalf("non-admin list must be 403, got %d", rr.Code)
 	}
 }
+
+func TestInviteShareLink(t *testing.T) {
+	if got, want := InviteShareLink("vpn.example.com", "fibr_bot", "CODE"), "https://t.me/fibr_bot?start=inv_CODE"; got != want {
+		t.Errorf("with bot: %q, want %q", got, want)
+	}
+	if got, want := InviteShareLink("vpn.example.com", "@fibr_bot", "CODE"), "https://t.me/fibr_bot?start=inv_CODE"; got != want {
+		t.Errorf("with @bot: %q, want %q", got, want)
+	}
+	if got, want := InviteShareLink("vpn.example.com", "", "CODE"), "https://vpn.example.com/miniapp/?invite=CODE"; got != want {
+		t.Errorf("no bot: %q, want %q", got, want)
+	}
+	if got, want := ReferralShareLink("vpn.example.com", "fibr_bot", "R1"), "https://t.me/fibr_bot?start=ref_R1"; got != want {
+		t.Errorf("referral: %q, want %q", got, want)
+	}
+}
