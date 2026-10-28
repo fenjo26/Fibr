@@ -17,6 +17,7 @@ package api
 import (
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"net/http"
 	"strings"
 
@@ -41,6 +42,13 @@ func ConfFileName(deviceName, ext string) string {
 		stem = stem[:15]
 	}
 	stem = strings.TrimRight(stem, "-")
+	if stem == "fibr" {
+		// Nothing latin survived (e.g. a Cyrillic name): a short stable
+		// hash keeps different devices from importing as the same tunnel.
+		h := fnv.New32a()
+		h.Write([]byte(deviceName))
+		stem = fmt.Sprintf("fibr-%08x", h.Sum32())
+	}
 	return stem + "." + ext
 }
 

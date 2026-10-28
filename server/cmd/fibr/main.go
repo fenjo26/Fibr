@@ -191,12 +191,32 @@ func main() {
 
 	apiSrv := api.New(cfg, st, wgm, xm, log)
 
+	// "One VLESS link = one device": cut links used from too many IPs at
+	// once (internal/xray/limiter.go; FIBR_XRAY_IP_LIMIT=0 turns it off).
+	if xm != nil {
+		go xm.RunLimiter(ctx)
+	}
+
 	if cfg.TelegramBotToken != "" {
 		b := bot.New(cfg, st, apiSrv.BuildOverview, log)
 		// Config files through Telegram: /new in the bot and the Mini App
 		// "send file to Telegram" button (internal/api/deliver.go).
 		b.SetDeviceIssuer(apiSrv)
 		apiSrv.SetFileSender(b.SendFile)
+		if xm != nil {
+			// Sharing limiter cut a VLESS link: tell its owner and the admins.
+			xm.OnLimit(func(uuid string, ips []string) {
+				d, err := st.GetDeviceByKey(uuid)
+				if err != nil {
+					return
+				}
+				var chat int64
+				if u, err := st.GetUser(d.UserID); err == nil && u.TelegramID != nil {
+					chat = *u.TelegramID
+				}
+				b.NotifyLinkShared(chat, d.Name, len(ips), cfg.XrayBan)
+			})
+		}
 		if name, err := b.FetchMe(); err == nil {
 			apiSrv.SetBotUsername(name)
 		} else {

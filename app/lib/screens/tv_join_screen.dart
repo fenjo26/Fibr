@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -5,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../l10n/app_localizations.dart';
 import '../models/tunnel.dart';
 import '../services/join_service.dart';
+import '../services/pair_service.dart';
 import '../services/tunnel_service.dart';
 import '../services/wg_config_parser.dart';
 import '../theme/app_theme.dart';
@@ -19,8 +22,11 @@ import '../widgets/tv_keyboard.dart';
 /// for a wg-quick config (JoinService) and the tunnel lands in the engine
 /// — the AppRoot then swaps to the TV home screen by itself.
 ///
-/// The second TV path ("pair from the phone", stage 2.6) is NOT here —
-/// it needs a server-side pairing endpoint and is out of scope.
+/// The easier path sits on top: "pair from the phone". As soon as the
+/// server is known the screen asks it for a pairing code and shows the QR
+/// (internal/api/pair.go); the phone scans it, picks a device in the Mini
+/// App, and this screen picks the config up by polling — no typing with
+/// the remote at all.
 class TvJoinScreen extends StatefulWidget {
   const TvJoinScreen({super.key, this.initialJoinUrl});
 
@@ -42,6 +48,12 @@ class _TvJoinScreenState extends State<TvJoinScreen> {
   _TvInputTarget _target = _TvInputTarget.domain;
   bool _busy = false;
 
+  // Pairing from the phone.
+  PairSession? _pair;
+  Timer? _pairTimer;
+  bool _pairPolling = false;
+  bool _pairFailed = false;
+
   // Same pref as the phone join tab / login: the domain typed once is
   // reused everywhere.
   static const _serverPref = 'fibr.join.server';
@@ -54,9 +66,56 @@ class _TvJoinScreenState extends State<TvJoinScreen> {
     final link = widget.initialJoinUrl;
     if (link != null) {
       _prefillFromLink(link);
+      WidgetsBinding.instance.addPostFrameCallback((_) => _startPairing());
       return;
     }
     _loadSavedDomain();
+  }
+
+  /// Asks the server for a fresh pairing code + QR and starts polling.
+  Future<void> _startPairing() async {
+    _pairTimer?.cancel();
+    final server = _domain.trim();
+    if (server.isEmpty) return;
+    try {
+      final session = await PairService.create(server);
+      if (!mounted) return;
+      setState(() {
+        _pair = session;
+        _pairFailed = false;
+      });
+      _pairTimer?.cancel(); // a concurrent refresh may have started one
+      _pairTimer = Timer.periodic(const Duration(seconds: 3), (_) => _pollPair());
+    } catch (_) {
+      if (mounted) setState(() => _pairFailed = true);
+    }
+  }
+
+  Future<void> _pollPair() async {
+    final session = _pair;
+    if (session == null || _pairPolling || _busy || !mounted) return;
+    _pairPolling = true;
+    try {
+      if (DateTime.now().isAfter(session.expiresAt)) {
+        await _startPairing();
+        return;
+      }
+      final config = await PairService.poll(session);
+      if (config == null || !mounted) return;
+      _pairTimer?.cancel();
+      setState(() => _busy = true);
+      try {
+        await _saveConfig(config, _domain.trim());
+      } finally {
+        if (mounted) setState(() => _busy = false);
+      }
+    } on PairExpired {
+      await _startPairing();
+    } catch (_) {
+      // Network blip: the next tick retries.
+    } finally {
+      _pairPolling = false;
+    }
   }
 
   /// fibr://join/... or https://host/join/<code>: split it back into the
@@ -81,11 +140,13 @@ class _TvJoinScreenState extends State<TvJoinScreen> {
     final saved = prefs.getString(_serverPref);
     if (saved != null && saved.isNotEmpty && mounted) {
       setState(() => _domain = saved);
+      _startPairing();
     }
   }
 
   @override
   void dispose() {
+    _pairTimer?.cancel();
     _connectNode.dispose();
     super.dispose();
   }
@@ -126,30 +187,7 @@ class _TvJoinScreenState extends State<TvJoinScreen> {
     try {
       final config = await JoinService.exchange(_code.text, server: server);
       if (!mounted) return;
-      final parsed = WgConfigParser.tryParse(config);
-      if (parsed == null) {
-        // A vless:// link for an xray device — this client speaks WireGuard.
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(l10n.t('errJoinVless'))),
-        );
-        return;
-      }
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setString(_serverPref, server);
-      if (!mounted) return;
-      await context
-          .read<TunnelController>()
-          .addTunnel(Tunnel(
-            id: Tunnel.newId(),
-            name: WgConfigParser.suggestName(parsed),
-            config: config,
-          ));
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(l10n.t('tunnelAdded'))),
-      );
-      if (Navigator.of(context).canPop()) Navigator.of(context).pop();
-      // Not pushed (first TV launch): AppRoot swaps to the TV home itself.
+      await _saveConfig(config, server);
     } on JoinException catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -158,6 +196,34 @@ class _TvJoinScreenState extends State<TvJoinScreen> {
     } finally {
       if (mounted) setState(() => _busy = false);
     }
+  }
+
+  /// Lands a received config (join code or phone pairing) in the engine.
+  Future<void> _saveConfig(String config, String server) async {
+    final l10n = AppLocalizations.of(context);
+    final parsed = WgConfigParser.tryParse(config);
+    if (parsed == null) {
+      // A vless:// link for an xray device — this client speaks WireGuard.
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(l10n.t('errJoinVless'))),
+      );
+      return;
+    }
+    _pairTimer?.cancel();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_serverPref, server);
+    if (!mounted) return;
+    await context.read<TunnelController>().addTunnel(Tunnel(
+          id: Tunnel.newId(),
+          name: WgConfigParser.suggestName(parsed),
+          config: config,
+        ));
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(l10n.t('tunnelAdded'))),
+    );
+    if (Navigator.of(context).canPop()) Navigator.of(context).pop();
+    // Not pushed (first TV launch): AppRoot swaps to the TV home itself.
   }
 
   static String _joinErrorKey(JoinError e) {
@@ -193,6 +259,13 @@ class _TvJoinScreenState extends State<TvJoinScreen> {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                _PairCard(
+                  session: _pair,
+                  failed: _pairFailed,
+                  hasServer: _domain.trim().isNotEmpty,
+                  onRefresh: _startPairing,
+                ),
+                SizedBox(height: pad(20)),
                 Text(
                   l10n.t('tvJoinHint'),
                   style: TextStyle(
@@ -299,6 +372,103 @@ class _TvJoinScreenState extends State<TvJoinScreen> {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// "Connect from the phone": the server-rendered QR (t.me/<bot>?start=
+/// tv_CODE) and the short code to type in the Mini App instead.
+class _PairCard extends StatelessWidget {
+  const _PairCard({
+    required this.session,
+    required this.failed,
+    required this.hasServer,
+    required this.onRefresh,
+  });
+
+  final PairSession? session;
+  final bool failed;
+  final bool hasServer;
+  final VoidCallback onRefresh;
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
+    final c = FibrColors.of(context);
+    final s = session;
+    final Widget qr;
+    if (s != null) {
+      qr = Container(
+        width: 220,
+        height: 220,
+        padding: const EdgeInsets.all(8),
+        color: Colors.white,
+        child: Image.network(
+          s.qrUrl.toString(),
+          fit: BoxFit.contain,
+          errorBuilder: (context, error, stack) =>
+              const Icon(Icons.qr_code_2, size: 120),
+        ),
+      );
+    } else {
+      qr = SizedBox(
+        width: 220,
+        height: 220,
+        child: Center(
+          child: failed || !hasServer
+              ? Icon(Icons.qr_code_2, size: 120, color: c.faint)
+              : const CircularProgressIndicator(),
+        ),
+      );
+    }
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        qr,
+        SizedBox(width: AppTheme.tvPad(24)),
+        ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 420),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(l10n.t('tvPairTitle'),
+                  style: Theme.of(context).textTheme.titleLarge),
+              const SizedBox(height: 8),
+              Text(
+                !hasServer
+                    ? l10n.t('tvPairNeedServer')
+                    : failed
+                        ? l10n.t('tvPairFailed')
+                        : l10n.t('tvPairHint'),
+                style: TextStyle(color: c.muted, fontWeight: FontWeight.w600),
+              ),
+              if (s != null) ...[
+                const SizedBox(height: 12),
+                Text(
+                  s.code,
+                  style: TextStyle(
+                    fontFamily: 'monospace',
+                    fontFamilyFallback: const ['Courier New'],
+                    fontSize: 40,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 6,
+                    color: c.ink,
+                  ),
+                ),
+              ],
+              const SizedBox(height: 12),
+              if (hasServer)
+                OutlinedButton.icon(
+                  onPressed: onRefresh,
+                  icon: const Icon(Icons.refresh),
+                  label: Text(l10n.t('tvPairNew')),
+                ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 }

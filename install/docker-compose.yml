@@ -31,10 +31,10 @@ services:
   # Started only when the compose profile "xray" is active, i.e. when .env
   # sets COMPOSE_PROFILES=xray (install.sh does this for --xray installs).
   # fibr renders /data/xray/config.json on the shared fibr-data volume; this
-  # container just runs it. fibr deliberately has NO docker socket access, so
-  # after fibr rewrites the config (device added/removed/toggled) apply it
-  # manually on the host:
-  #   docker compose -f /opt/fibr/install/docker-compose.yml restart xray
+  # container just runs it. Device changes apply LIVE through xray's gRPC
+  # API (port 10085, compose network only — deliberately not published);
+  # the access log on the volume feeds the one-link-one-device limiter
+  # (docs/xray.md).
   xray:
     image: ghcr.io/xtls/xray-core:latest
     restart: unless-stopped

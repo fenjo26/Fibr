@@ -56,6 +56,12 @@ type Config struct {
 	XraySNI     string // FIBR_XRAY_SNI, camouflage domain, required when enabled
 	XrayDest    string // FIBR_XRAY_DEST, Reality fallback target, defaults to SNI:443
 	XrayShortID string // FIBR_XRAY_SHORT_ID, hex short id shared by all clients
+
+	// Live control + sharing limit (internal/xray/api.go, limiter.go).
+	XrayAPIAddr  string        // FIBR_XRAY_API: xray's gRPC API, default "xray:10085" (compose service); "off" disables
+	XrayIPLimit  int           // FIBR_XRAY_IP_LIMIT: distinct source IPs per VLESS link inside the window; 0 = no limit
+	XrayIPWindow time.Duration // FIBR_XRAY_IP_WINDOW: how long a seen IP counts (default 2m)
+	XrayBan      time.Duration // FIBR_XRAY_BAN: how long an over-limit link stays cut (default 10m)
 }
 
 // Load reads configuration from the environment and validates it.
@@ -124,6 +130,13 @@ func Load() (*Config, error) {
 	c.XraySNI = strings.TrimSpace(os.Getenv("FIBR_XRAY_SNI"))
 	c.XrayDest = strings.TrimSpace(os.Getenv("FIBR_XRAY_DEST"))
 	c.XrayShortID = strings.TrimSpace(os.Getenv("FIBR_XRAY_SHORT_ID"))
+	c.XrayAPIAddr = getenv("FIBR_XRAY_API", "xray:10085")
+	c.XrayIPLimit = getenvInt("FIBR_XRAY_IP_LIMIT", 2)
+	c.XrayIPWindow = getenvDuration("FIBR_XRAY_IP_WINDOW", 2*time.Minute)
+	c.XrayBan = getenvDuration("FIBR_XRAY_BAN", 10*time.Minute)
+	if c.XrayIPLimit < 0 {
+		c.XrayIPLimit = 0
+	}
 	if c.XrayPort < 1 || c.XrayPort > 65535 {
 		return nil, fmt.Errorf("FIBR_XRAY_PORT: %d out of range", c.XrayPort)
 	}

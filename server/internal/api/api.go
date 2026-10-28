@@ -33,6 +33,7 @@ type API struct {
 	botUsername atomic.Value // string, "" until the bot reports getMe
 	updaterURL  string       // opt-in update sidecar; "" = never configured
 	fileSender  FileSender   // Telegram document sender; nil without a bot
+	pairs       pairStore    // TV pairing codes (pair.go), in memory
 }
 
 // New creates the API.
@@ -85,6 +86,11 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("GET /api/me/devices/{id}/qr.png", a.auth(a.handleDeviceQR))
 	mux.HandleFunc("POST /api/me/devices/{id}/join", a.auth(a.handleMeJoinCode))
 	mux.HandleFunc("POST /api/me/devices/{id}/send", a.auth(a.handleMeSendDevice))
+	mux.HandleFunc("POST /api/me/pair/{code}", a.auth(a.handleMePair))
+	// TV pairing (pair.go): the TV shows a QR, the phone attaches a device.
+	mux.HandleFunc("POST /api/pair", a.handlePairCreate)
+	mux.HandleFunc("GET /api/pair/{code}", a.handlePairPoll)
+	mux.HandleFunc("GET /api/pair/{code}/qr.png", a.handlePairQR)
 
 	// App access key management (server login; see access_key.go). The
 	// plaintext key leaves the server only from the create/rotate handler.

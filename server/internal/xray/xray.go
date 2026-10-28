@@ -9,15 +9,21 @@
 //   - renders /data/xray/config.json on the shared docker volume, which the
 //     separate xray container (compose profile "xray") reads.
 //
-// IMPORTANT LIMITATION (by design): fibr has no access to the docker socket,
-// so it cannot restart the sibling xray container after rewriting the config.
-// Xray reads its config once at startup; applying device changes requires the
-// admin to run `docker compose restart xray` on the host. The config file is
-// still rewritten atomically on every device mutation so a plain restart is
-// always enough.
+// Applying changes: fibr has no access to the docker socket, so it cannot
+// restart the sibling xray container. Instead the rendered config enables
+// xray's gRPC API (HandlerService, port 10085, reachable only inside the
+// compose network) and SyncClients adds/removes users LIVE through it
+// (api.go). The config file is still rewritten atomically on every change,
+// so a restart of the xray container always lands on the same state.
+//
+// Sharing limit (limiter.go): xray writes an access log naming the link
+// (email = uuid) and the source IP of every connection; fibr counts
+// distinct IPs per link and cuts a link that is used from more places at
+// once than FIBR_XRAY_IP_LIMIT allows.
 package xray
 
 import (
+	"context"
 	"crypto/ecdh"
 	"crypto/rand"
 	"encoding/base64"
@@ -28,6 +34,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/fenjo26/Fibr/internal/config"
@@ -51,13 +58,25 @@ type Manager struct {
 	log       *slog.Logger
 	privB64   string // Reality private key (goes into config.json)
 	pubKeyB64 string // Reality public key (goes into vless:// links as pbk=)
+
+	api *APIClient // nil = live apply disabled (FIBR_XRAY_API=off)
+
+	mu      sync.Mutex
+	known   map[string]bool      // uuids ever pushed to xray (removal candidates)
+	banned  map[string]time.Time // uuid -> ban end (sharing limiter)
+	onLimit func(uuid string, ips []string)
 }
 
 // New creates the manager, loading or generating the Reality x25519 keypair.
 // The private key lives in the settings table; the public key is stored next
 // to it so restarts never need to re-derive it (and for cheap inspection).
 func New(cfg *config.Config, st *store.Store, log *slog.Logger) (*Manager, error) {
-	m := &Manager{cfg: cfg, store: st, log: log}
+	m := &Manager{
+		cfg: cfg, store: st, log: log,
+		api:    NewAPIClient(cfg.XrayAPIAddr),
+		known:  map[string]bool{},
+		banned: map[string]time.Time{},
+	}
 
 	privStr, err := st.GetSetting(settingPrivKey)
 	switch {
@@ -177,10 +196,14 @@ func (m *Manager) ClientLinkAt(d store.Device, ep node.Endpoint) string {
 
 /* ---------------------------- server config ---------------------------- */
 
-// clientEntry is one VLESS client in the inbound clients list.
+// clientEntry is one VLESS client in the inbound clients list. Email is the
+// uuid again: xray prints it in the access log ("email: <uuid>"), which is
+// how the sharing limiter knows which link a connection used, and it is the
+// key RemoveUser works with.
 type clientEntry struct {
-	ID   string `json:"id"`
-	Flow string `json:"flow"`
+	ID    string `json:"id"`
+	Flow  string `json:"flow"`
+	Email string `json:"email"`
 }
 
 type inboundSettings struct {
@@ -209,6 +232,7 @@ type sniffingSettings struct {
 }
 
 type inbound struct {
+	Tag            string           `json:"tag"`
 	Listen         string           `json:"listen"`
 	Port           int              `json:"port"`
 	Protocol       string           `json:"protocol"`
@@ -222,19 +246,30 @@ type outbound struct {
 	Tag      string `json:"tag"`
 }
 
+type apiSettings struct {
+	Tag      string   `json:"tag"`
+	Listen   string   `json:"listen"`
+	Services []string `json:"services"`
+}
+
 type serverConfig struct {
 	Log struct {
 		LogLevel string `json:"loglevel"`
+		Access   string `json:"access,omitempty"`
 	} `json:"log"`
-	Inbounds  []inbound  `json:"inbounds"`
-	Outbounds []outbound `json:"outbounds"`
+	API       *apiSettings `json:"api,omitempty"`
+	Inbounds  []inbound    `json:"inbounds"`
+	Outbounds []outbound   `json:"outbounds"`
 }
 
 // BuildServerConfig renders the xray-core config for the given client UUIDs:
 // one VLESS inbound with Reality over TCP, flow xtls-rprx-vision, using this
 // box's own key/port/camouflage settings.
+//
+// Unlike node configs it also turns on the access log and the gRPC API that
+// the control plane's live apply and sharing limiter use.
 func (m *Manager) BuildServerConfig(uuids []string) ([]byte, error) {
-	return BuildStandaloneConfig(m.cfg.XrayPort, m.cfg.XraySNI, m.cfg.XrayDest, m.privB64, m.cfg.XrayShortID, uuids)
+	return buildConfig(m.cfg.XrayPort, m.cfg.XraySNI, m.cfg.XrayDest, m.privB64, m.cfg.XrayShortID, uuids, true)
 }
 
 // BuildStandaloneConfig renders an xray-core config for an arbitrary Reality
@@ -242,13 +277,27 @@ func (m *Manager) BuildServerConfig(uuids []string) ([]byte, error) {
 // local files instead of the control plane's settings table, so they render
 // through this function with their own values.
 func BuildStandaloneConfig(listenPort int, sni, dest, privKeyB64, shortID string, uuids []string) ([]byte, error) {
+	return buildConfig(listenPort, sni, dest, privKeyB64, shortID, uuids, false)
+}
+
+// buildConfig renders the config; control adds the access log + gRPC API.
+func buildConfig(listenPort int, sni, dest, privKeyB64, shortID string, uuids []string, control bool) ([]byte, error) {
 	clients := make([]clientEntry, 0, len(uuids))
 	for _, id := range uuids {
-		clients = append(clients, clientEntry{ID: id, Flow: ClientFlow})
+		clients = append(clients, clientEntry{ID: id, Flow: ClientFlow, Email: id})
 	}
 	cfg := serverConfig{}
 	cfg.Log.LogLevel = "warning"
+	// Access log on the shared volume (the sharing limiter reads it) and the
+	// gRPC API for live user changes. The API listens on all interfaces of
+	// the xray CONTAINER, i.e. only the compose network: the port is not
+	// published to the host.
+	if control {
+		cfg.Log.Access = AccessLogPath
+		cfg.API = &apiSettings{Tag: "api", Listen: "0.0.0.0:10085", Services: []string{"HandlerService"}}
+	}
 	cfg.Inbounds = []inbound{{
+		Tag:      InboundTag,
 		Listen:   "0.0.0.0",
 		Port:     listenPort,
 		Protocol: "vless",
@@ -323,7 +372,59 @@ func (m *Manager) SyncClients() error {
 	if err := os.Rename(tmp, path); err != nil {
 		return err
 	}
-	m.log.Info("xray config written; restart the xray container to apply (docker compose restart xray)",
-		"path", path, "clients", len(uuids))
+	m.log.Info("xray config written", "path", path, "clients", len(uuids))
+	m.applyLive(uuids)
 	return nil
+}
+
+// AccessLogPath is where xray writes its access log (the /data volume is
+// shared by the fibr and xray containers).
+const AccessLogPath = "/data/xray/access.log"
+
+// applyLive pushes the client set to the running xray through its API:
+// adds every desired uuid that is not banned, removes the ones that are
+// gone (or banned). Best-effort: when the API is unreachable (old xray
+// container, FIBR_XRAY_API=off) a restart of the container still applies
+// the freshly written file.
+func (m *Manager) applyLive(uuids []string) {
+	if m.api == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	now := time.Now()
+	m.mu.Lock()
+	desired := make(map[string]bool, len(uuids))
+	for _, u := range uuids {
+		if end, ok := m.banned[u]; ok && now.Before(end) {
+			continue // cut by the sharing limiter until the ban ends
+		}
+		desired[u] = true
+	}
+	var add, remove []string
+	for u := range desired {
+		add = append(add, u)
+	}
+	for u := range m.known {
+		if !desired[u] {
+			remove = append(remove, u)
+		}
+	}
+	for _, u := range uuids {
+		m.known[u] = true
+	}
+	m.mu.Unlock()
+
+	for _, u := range remove {
+		if err := m.api.RemoveUser(ctx, u); err != nil {
+			m.log.Warn("xray live apply failed; restart the xray container to apply (docker compose restart xray)", "error", err)
+			return
+		}
+	}
+	for _, u := range add {
+		if err := m.api.AddUser(ctx, u); err != nil {
+			m.log.Warn("xray live apply failed; restart the xray container to apply (docker compose restart xray)", "error", err)
+			return
+		}
+	}
 }

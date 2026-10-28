@@ -67,6 +67,14 @@
       howFibr: 'Fibr: «Добавить» → «Вставить / файл»',
       howOneFile: 'Один файл — одно устройство. Для другого телефона создайте ещё одно устройство (или /new в боте).',
       inviteField: 'Код приглашения', inviteBtn: 'Войти по приглашению',
+      tvBtn: '📺 Подключить телевизор',
+      tvTitle: 'Подключить телевизор',
+      tvHint: 'Откройте Fibr на телевизоре — там будет QR-код и короткий код. Отсканируйте QR камерой телефона или введите код здесь.',
+      tvCodeField: 'Код с экрана ТВ', tvNew: 'Новое устройство для ТВ', tvNameDefault: 'TV',
+      tvExisting: 'Или отдать ТВ существующее устройство:', tvGo: 'Подключить',
+      tvDone: 'Готово ✅ Телевизор подключится в течение пары секунд.',
+      tvErrCode: 'Код не найден или устарел — на ТВ нажмите «Новый QR».',
+      tvErrBusy: 'Этот телевизор уже подключается.',
       codeTitle: 'Код быстрого подключения',
       codeHintClient: 'В приложении Fibr: «Добавить туннель» → «По коду» — введите код или отсканируйте QR.',
       codeHintLink: 'Или откройте ссылку — на странице будет кнопка «Открыть в приложении».',
@@ -153,6 +161,14 @@
       howFibr: 'Fibr: “Add” → “Paste / file”',
       howOneFile: 'One file = one device. For another phone create another device (or /new in the bot).',
       inviteField: 'Invite code', inviteBtn: 'Sign in with invite',
+      tvBtn: '📺 Connect a TV',
+      tvTitle: 'Connect a TV',
+      tvHint: 'Open Fibr on the TV — it shows a QR code and a short code. Scan the QR with your phone camera or type the code here.',
+      tvCodeField: 'Code from the TV screen', tvNew: 'New device for the TV', tvNameDefault: 'TV',
+      tvExisting: 'Or give the TV an existing device:', tvGo: 'Connect',
+      tvDone: 'Done ✅ The TV connects within a couple of seconds.',
+      tvErrCode: 'Code not found or expired — press “New QR” on the TV.',
+      tvErrBusy: 'This TV is already being connected.',
       codeTitle: 'Quick-connect code',
       codeHintClient: 'In the Fibr app: “Add tunnel” → “By code” — type the code or scan the QR.',
       codeHintLink: 'Or open the link — the page has an “Open in the app” button.',
@@ -332,7 +348,9 @@
   function redirectToBot() {
     var code = inviteCode();
     var ref = referralCode();
-    var start = code ? 'inv_' + code : (ref ? 'ref_' + ref : '');
+    var pair = null;
+    try { pair = new URLSearchParams(window.location.search).get('pair'); } catch (e) { /* ignore */ }
+    var start = pair ? 'tv_' + pair : (code ? 'inv_' + code : (ref ? 'ref_' + ref : ''));
     fetch('/api/public/info').then(function (res) { return res.json(); }).then(function (info) {
       if (!info || !info.bot_username) return;
       var link = 'https://t.me/' + encodeURIComponent(info.bot_username) +
@@ -438,6 +456,7 @@
       el('app-view').classList.remove('hidden');
       el('error-view').classList.add('hidden');
       render();
+      if (pendingPair) { var pc = pendingPair; pendingPair = null; tvModal(pc); }
       loadUsersSection();
       loadRefSection();
       loadKeySection();
@@ -538,6 +557,64 @@
         '</div></div></div>';
     }).join('');
   }
+
+  /* ---------- TV pairing (server: internal/api/pair.go) ---------- */
+
+  // ?pair=CODE (bot button after scanning the TV's QR) or a "tv_CODE"
+  // start_param; opened once after sign-in.
+  function pairCodeFromURL() {
+    try {
+      var p = new URLSearchParams(window.location.search).get('pair');
+      if (p) return p;
+    } catch (e) { /* ignore */ }
+    var sp = startParam();
+    if (sp && sp.indexOf('tv_') === 0) return sp.slice(3);
+    return null;
+  }
+  var pendingPair = pairCodeFromURL();
+
+  function tvModal(code) {
+    var wg = (me.devices || []).filter(function (d) { return d.protocol !== 'xray'; });
+    var existing = wg.length
+      ? '<p class="muted modal-sub">' + esc(t('tvExisting')) + '</p>' +
+        '<div class="tv-devices">' + wg.map(function (d) {
+          return '<button class="btn btn--tertiary btn--small" data-tvdev="' + d.id + '" style="margin:0 6px 6px 0">' + esc(d.name) + '</button>';
+        }).join('') + '</div>'
+      : '';
+    openModal('<h3>' + esc(t('tvTitle')) + '</h3>' +
+      '<p class="muted modal-sub">' + esc(t('tvHint')) + '</p>' +
+      '<input class="input mono" id="tv-code" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="12" placeholder="' + esc(t('tvCodeField')) + '" value="' + esc(code || '') + '" style="width:100%;margin-bottom:8px;text-transform:uppercase">' +
+      '<input class="input" id="tv-name" maxlength="32" value="' + esc(t('tvNameDefault')) + '" style="width:100%;margin-bottom:8px">' +
+      '<button class="btn" id="tv-new" style="width:100%;margin-bottom:12px">' + esc(t('tvNew')) + '</button>' +
+      existing +
+      '<p class="muted" id="tv-status"></p>' +
+      '<div class="modal-actions"><button class="btn btn--tertiary" id="tv-close">' + esc(t('close')) + '</button></div>');
+    function go(body) {
+      var c = (el('tv-code').value || '').trim();
+      if (!c) { el('tv-code').focus(); return; }
+      el('tv-status').textContent = '…';
+      api('/api/me/pair/' + encodeURIComponent(c), { method: 'POST', body: body }).then(function () {
+        el('tv-status').textContent = t('tvDone');
+        try { if (tg && tg.HapticFeedback) tg.HapticFeedback.notificationOccurred('success'); } catch (e) { /* ignore */ }
+        load();
+      }).catch(function (e) {
+        var msg = t('errGeneric');
+        if (e && e.status === 404) msg = t('tvErrCode');
+        else if (e && e.status === 409 && e.message === 'device limit reached') msg = t('deviceLimit');
+        else if (e && e.status === 409) msg = t('tvErrBusy');
+        else if (e && e.status === 403 && e.message === 'subscription expired') { showExpired(); return; }
+        el('tv-status').textContent = msg;
+      });
+    }
+    el('tv-new').addEventListener('click', function () { go({ name: (el('tv-name').value || '').trim() }); });
+    Array.prototype.forEach.call(document.querySelectorAll('[data-tvdev]'), function (b) {
+      b.addEventListener('click', function () { go({ device_id: Number(b.getAttribute('data-tvdev')) }); });
+    });
+    el('tv-close').addEventListener('click', closeModal);
+  }
+
+  el('tv-connect').textContent = t('tvBtn');
+  el('tv-connect').addEventListener('click', function () { tvModal(''); });
 
   el('add-device').addEventListener('click', function () {
     var name = el('new-name').value.trim();

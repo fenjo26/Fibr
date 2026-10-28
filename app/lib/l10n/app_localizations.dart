@@ -211,6 +211,11 @@ class AppLocalizations {
     'connectOnLaunchHint': 'Активное устройство поднимется сразу после запуска',
     // TV UI (feature 2)
     'tvJoinTitle': 'Подключение по коду',
+    'tvPairTitle': 'Подключить с телефона',
+    'tvPairHint': 'Отсканируйте QR камерой телефона — откроется бот Fibr. Или в приложении Fibr в Telegram нажмите «Подключить телевизор» и введите этот код.',
+    'tvPairNeedServer': 'Введите адрес сервера ниже один раз — и здесь появится QR для подключения с телефона.',
+    'tvPairFailed': 'Не удалось получить QR от сервера. Проверьте адрес сервера и нажмите «Новый QR».',
+    'tvPairNew': 'Новый QR',
     'tvJoinHint':
         'Возьмите код в мини-приложении (Устройства → Код) и введите его с пульта. '
         'Сначала — адрес сервера, затем код.',
@@ -406,6 +411,11 @@ class AppLocalizations {
     'connectOnLaunchHint': 'The active device comes up right after launch',
     // TV UI (feature 2)
     'tvJoinTitle': 'Connect with a code',
+    'tvPairTitle': 'Connect from your phone',
+    'tvPairHint': 'Scan the QR with your phone camera — the Fibr bot opens. Or in the Fibr app in Telegram tap “Connect a TV” and type this code.',
+    'tvPairNeedServer': 'Type the server address below once — a QR for connecting from your phone appears here.',
+    'tvPairFailed': 'Could not get a QR from the server. Check the server address and press “New QR”.',
+    'tvPairNew': 'New QR',
     'tvJoinHint':
         'Take the code from the Mini App (Devices → Code) and type it with the '
         'remote. First the server address, then the code.',

@@ -51,6 +51,24 @@ type DeviceIssuer interface {
 // SetDeviceIssuer enables /new and /devices (main.go wires the API).
 func (b *Bot) SetDeviceIssuer(d DeviceIssuer) { b.devices = d }
 
+// NotifyLinkShared tells the owner (and the admins from
+// FIBR_ADMIN_TELEGRAM_IDS) that one of their VLESS links was cut by the
+// sharing limiter (internal/xray/limiter.go).
+func (b *Bot) NotifyLinkShared(ownerChat int64, deviceName string, ips int, ban time.Duration) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	mins := int(ban.Minutes())
+	if ownerChat != 0 {
+		b.sendMessage(ctx, ownerChat, t("ru", "linkShared", deviceName, ips, mins), nil)
+	}
+	for _, id := range b.cfg.AdminTelegramIDs {
+		if id == ownerChat {
+			continue
+		}
+		b.sendMessage(ctx, id, t("ru", "linkSharedAdmin", deviceName, ips, mins), nil)
+	}
+}
+
 // SendFile delivers an in-memory document to a chat; the API uses it for
 // "send the config to Telegram" from the Mini App (api.FileSender).
 func (b *Bot) SendFile(chatID int64, filename string, data []byte, caption string) error {
@@ -156,9 +174,9 @@ func (b *Bot) handleUpdate(ctx context.Context, u tgUpdate) {
 	// A t.me/<bot>?start=ref_CODE / ?start=inv_CODE deep link arrives as
 	// "/start ref_CODE" / "/start inv_CODE"; the payload decides whether this
 	// is a referral or an invite arrival.
-	refCode, inviteCode := "", ""
+	refCode, inviteCode, pairCode := "", "", ""
 	if cmd := firstWord(msg.Text); cmd == "/start" {
-		refCode, inviteCode = startPayload(msg.Text)
+		refCode, inviteCode, pairCode = startPayload(msg.Text)
 	}
 	// Invite-only mode: the bot must NOT register strangers. Creating the
 	// account here let anyone skip the invite: send /start, then open the
@@ -169,7 +187,7 @@ func (b *Bot) handleUpdate(ctx context.Context, u tgUpdate) {
 		if _, err := b.store.GetUserByTelegramID(from.ID); err == store.ErrNotFound {
 			lang := pickLang(from.LanguageCode)
 			if inviteCode != "" || refCode != "" {
-				b.sendMessage(ctx, msg.Chat.ID, t(lang, "welcomeInvite"), b.miniAppKeyboard(lang, refCode, inviteCode))
+				b.sendMessage(ctx, msg.Chat.ID, t(lang, "welcomeInvite"), b.miniAppKeyboard(lang, appParams{ref: refCode, invite: inviteCode}))
 			} else {
 				b.sendMessage(ctx, msg.Chat.ID, t(lang, "inviteOnly"), nil)
 			}
@@ -197,10 +215,16 @@ func (b *Bot) handleUpdate(ctx context.Context, u tgUpdate) {
 
 	switch firstWord(msg.Text) {
 	case "/start":
+		if pairCode != "" {
+			// Scanned the QR on a TV: open the Mini App straight on the
+			// "connect this TV" sheet.
+			b.sendMessage(ctx, msg.Chat.ID, t(lang, "tvPair", pairCode), b.miniAppKeyboard(lang, appParams{pair: pairCode}))
+			return
+		}
 		if refCode != "" {
-			b.sendMessage(ctx, msg.Chat.ID, t(lang, "welcomeReferred"), b.miniAppKeyboard(lang, refCode, ""))
+			b.sendMessage(ctx, msg.Chat.ID, t(lang, "welcomeReferred"), b.miniAppKeyboard(lang, appParams{ref: refCode}))
 		} else {
-			b.sendMessage(ctx, msg.Chat.ID, t(lang, "welcome"), b.miniAppKeyboard(lang, "", ""))
+			b.sendMessage(ctx, msg.Chat.ID, t(lang, "welcome"), b.miniAppKeyboard(lang, appParams{}))
 		}
 	case "/help":
 		b.sendMessage(ctx, msg.Chat.ID, t(lang, "help"), nil)
@@ -290,7 +314,7 @@ func (b *Bot) handleUpdate(ctx context.Context, u tgUpdate) {
 			b.sendMessage(ctx, msg.Chat.ID, t(lang, "fileError"), nil)
 			return
 		}
-		b.sendMessage(ctx, msg.Chat.ID, t(lang, "deviceSlots", used, limit, limit-used), b.miniAppKeyboard(lang, "", ""))
+		b.sendMessage(ctx, msg.Chat.ID, t(lang, "deviceSlots", used, limit, limit-used), b.miniAppKeyboard(lang, appParams{}))
 	case "/id":
 		b.sendMessage(ctx, msg.Chat.ID, "Telegram ID: "+strconv.FormatInt(from.ID, 10), nil)
 	default:
@@ -299,21 +323,24 @@ func (b *Bot) handleUpdate(ctx context.Context, u tgUpdate) {
 }
 
 // startPayload splits a "/start <payload>" message into a referral code
-// ("ref_CODE") or an invite code ("inv_CODE"); a plain /start or any other
-// payload yields two empty strings.
-func startPayload(text string) (refCode, inviteCode string) {
+// ("ref_CODE"), an invite code ("inv_CODE") or a TV pairing code
+// ("tv_CODE"); a plain /start or any other payload yields empty strings.
+func startPayload(text string) (refCode, inviteCode, pairCode string) {
 	fields := strings.Fields(text)
 	if len(fields) < 2 {
-		return "", ""
+		return "", "", ""
 	}
 	payload := fields[1]
 	if rest, ok := strings.CutPrefix(payload, "ref_"); ok {
-		return rest, ""
+		return rest, "", ""
 	}
 	if rest, ok := strings.CutPrefix(payload, "inv_"); ok {
-		return "", rest
+		return "", rest, ""
 	}
-	return "", ""
+	if rest, ok := strings.CutPrefix(payload, "tv_"); ok {
+		return "", "", rest
+	}
+	return "", "", ""
 }
 
 // upsertUser mirrors the Mini App auth: FIBR_ADMIN_TELEGRAM_IDS entries are
@@ -380,20 +407,28 @@ func (b *Bot) userExpired(u *store.User) bool {
 	return store.ExpiredAt(store.EffectiveExpiry(u.ExpiresAt, ownerExp), time.Now())
 }
 
+// appParams are the codes carried into the Mini App button URL.
+type appParams struct {
+	ref, invite, pair string
+}
+
 // miniAppKeyboard returns the inline button opening the Mini App. Web App
 // buttons require an https URL, so they are skipped in local dev. A referral
 // or invite code rides in the button URL (?ref=CODE / ?invite=CODE) so the
 // Mini App sign-in sees it even though bot deep links cannot set startapp.
-func (b *Bot) miniAppKeyboard(lang, refCode, inviteCode string) any {
+func (b *Bot) miniAppKeyboard(lang string, p appParams) any {
 	if b.cfg.Domain == "" || b.cfg.Domain == "localhost" || b.cfg.Domain == "127.0.0.1" {
 		return nil
 	}
 	q := neturl.Values{}
-	if refCode != "" {
-		q.Set("ref", refCode)
+	if p.ref != "" {
+		q.Set("ref", p.ref)
 	}
-	if inviteCode != "" {
-		q.Set("invite", inviteCode)
+	if p.invite != "" {
+		q.Set("invite", p.invite)
+	}
+	if p.pair != "" {
+		q.Set("pair", p.pair)
 	}
 	url := "https://" + b.cfg.Domain + "/miniapp/"
 	if len(q) > 0 {
@@ -551,6 +586,9 @@ var texts = map[string]map[string]string{
 		"fileLimit":       "⛔ Лимит устройств: %d из %d. Удалите старое устройство в приложении (/start) и повторите /new.",
 		"fileError":       "Не удалось подготовить файл, попробуйте позже.",
 		"fileUnavailable": "Выдача файлов сейчас недоступна — откройте приложение: /start",
+		"tvPair":          "📺 Подключение телевизора (код <code>%s</code>)\n\nНажмите кнопку ниже и выберите устройство для ТВ — телевизор подключится сам.",
+		"linkShared":      "⚠️ Ссылка VLESS «%s» использовалась одновременно из %d разных сетей и отключена на %d мин.\n\nОдна ссылка — одно устройство. Для другого телефона создайте отдельное устройство в приложении (/start).",
+		"linkSharedAdmin": "🛡 Лимитер: ссылка «%s» — %d IP одновременно, отключена на %d мин.",
 		"deviceSlots":     "📱 Устройств: %d из %d (свободно %d).\nНовый файл подключения: /new или /new iPhone",
 		"welcomeInvite":   "👋 Добро пожаловать в <b>Fibr</b>!\n\nНажмите кнопку ниже — приложение откроется и активирует ваше приглашение.",
 		"inviteOnly":      "🔒 Регистрация в Fibr только по приглашению. Попросите ссылку-приглашение у того, кто вас позвал.",
@@ -579,6 +617,9 @@ var texts = map[string]map[string]string{
 		"fileLimit":       "⛔ Device limit: %d of %d. Delete an old device in the app (/start) and send /new again.",
 		"fileError":       "Could not prepare the file, try again later.",
 		"fileUnavailable": "File delivery is unavailable right now — open the app: /start",
+		"tvPair":          "📺 Connecting a TV (code <code>%s</code>)\n\nTap the button below and pick a device for the TV — it connects by itself.",
+		"linkShared":      "⚠️ VLESS link “%s” was used from %d different networks at once and is paused for %d min.\n\nOne link = one device. For another phone create a separate device in the app (/start).",
+		"linkSharedAdmin": "🛡 Limiter: link “%s” — %d IPs at once, paused for %d min.",
 		"deviceSlots":     "📱 Devices: %d of %d (%d free).\nNew connection file: /new or /new iPhone",
 		"welcomeInvite":   "👋 Welcome to <b>Fibr</b>!\n\nTap the button below — the app opens and activates your invitation.",
 		"inviteOnly":      "🔒 Fibr is invite-only. Ask whoever told you about it for an invite link.",
