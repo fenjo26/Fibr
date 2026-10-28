@@ -29,7 +29,10 @@
       deviceLimit: 'Достигнут лимит устройств',
       copy: 'Копировать', copied: 'Скопировано', download: 'Скачать .conf',
       qrTitle: 'QR-код конфигурации', qrHint: 'Отсканируйте в приложении WireGuard или в клиенте Fibr',
-      configTitle: 'Конфигурация устройства', noTG: '—'
+      configTitle: 'Конфигурация устройства', noTG: '—',
+      thProtocol: 'Протокол', protWG: 'WG', protXray: 'Xray',
+      addDevTitle: 'Новое устройство', fieldName: 'Название', fieldProtocol: 'Протокол',
+      btnCancel: 'Отмена', btnCreate: 'Создать', errXrayDisabled: 'Xray выключен на сервере'
     },
     en: {
       loginHint: 'Enter the admin token from /opt/fibr/install/.env (FIBR_ADMIN_TOKEN)',
@@ -57,7 +60,10 @@
       deviceLimit: 'Device limit reached',
       copy: 'Copy', copied: 'Copied', download: 'Download .conf',
       qrTitle: 'Configuration QR code', qrHint: 'Scan it in the WireGuard app or the Fibr client',
-      configTitle: 'Device configuration', noTG: '—'
+      configTitle: 'Device configuration', noTG: '—',
+      thProtocol: 'Protocol', protWG: 'WG', protXray: 'Xray',
+      addDevTitle: 'New device', fieldName: 'Name', fieldProtocol: 'Protocol',
+      btnCancel: 'Cancel', btnCreate: 'Create', errXrayDisabled: 'Xray is disabled on the server'
     }
   };
 
@@ -71,6 +77,7 @@
   var token = null;
   try { token = localStorage.getItem(TOKEN_KEY); } catch (e) { /* ignore */ }
   var api = window.Fibr.makeApi(function () { return token; });
+  var xrayEnabled = false; // refreshed from the overview on each users-tab load
 
   var el = function (id) { return document.getElementById(id); };
   var refreshTimer = null;
@@ -217,11 +224,18 @@
     return '<span class="pill ' + pill + '"><span class="dot ' + dot + '"></span>' + label + '</span>';
   }
 
+  function protoPill(p) {
+    return p === 'xray'
+      ? '<span class="pill pill--live">' + t('protXray') + '</span>'
+      : '<span class="pill pill--off">' + t('protWG') + '</span>';
+  }
+
   /* ---------- users ---------- */
 
   function loadUsers() {
-    Promise.all([api('/api/admin/users'), api('/api/admin/devices')]).then(function (res) {
+    Promise.all([api('/api/admin/users'), api('/api/admin/devices'), api('/api/admin/overview')]).then(function (res) {
       var users = res[0];
+      xrayEnabled = !!(res[2] && res[2].server && res[2].server.xray_enabled);
       var byUser = {};
       (res[1] || []).forEach(function (d) {
         byUser[d.user_id] = byUser[d.user_id] || [];
@@ -287,13 +301,37 @@
       api('/api/admin/users/' + id, { method: 'DELETE' })
         .then(function () { toast(t('userDeleted')); loadUsers(); }).catch(fail);
     } else if (act === 'adddev') {
-      var name = prompt(t('thDevice') + ':', 'device');
-      if (name === null) return;
-      api('/api/admin/users/' + id + '/devices', { method: 'POST', body: { name: name } })
-        .then(function (d) { toast(t('updated')); loadUsers(); showQR(d.id); })
-        .catch(fail);
+      showAddDevice(id);
     }
   });
+
+  /* Issue a device for a user: name + protocol, then jump straight to the QR. */
+  function showAddDevice(userId) {
+    var protoOptions = '<option value="wg">' + t('protWG') + ' — WireGuard</option>' +
+      (xrayEnabled ? '<option value="xray">' + t('protXray') + ' — VLESS/Reality</option>' : '');
+    openModal('<h3>' + esc(t('addDevTitle')) + '</h3>' +
+      '<p class="muted modal-sub">' + esc(t('fieldName')) + '</p>' +
+      '<input class="input" id="nd-name" maxlength="32" value="device">' +
+      '<p class="muted modal-sub" style="margin-top:12px">' + esc(t('fieldProtocol')) + '</p>' +
+      '<select class="input" id="nd-proto">' + protoOptions + '</select>' +
+      '<div class="modal-actions">' +
+      '<button class="btn btn--tertiary btn--small" id="nd-cancel">' + esc(t('btnCancel')) + '</button>' +
+      '<button class="btn btn--small" id="nd-create">' + esc(t('btnCreate')) + '</button></div>');
+    el('nd-cancel').addEventListener('click', closeModal);
+    el('nd-create').addEventListener('click', function () {
+      var proto = el('nd-proto').value;
+      if (proto === 'xray' && !xrayEnabled) { toast(t('errXrayDisabled'), true); return; }
+      api('/api/admin/users/' + userId + '/devices', {
+        method: 'POST',
+        body: { name: el('nd-name').value.trim(), protocol: proto }
+      }).then(function (d) {
+        closeModal();
+        toast(t('updated'));
+        loadUsers();
+        showQR(d.id);
+      }).catch(fail);
+    });
+  }
 
   /* ---------- devices ---------- */
 
@@ -301,6 +339,7 @@
     api('/api/admin/devices').then(function (devices) {
       el('devices-table').innerHTML =
         '<thead><tr><th>ID</th><th>' + t('thDevice') + '</th><th>' + t('thUser') + '</th>' +
+        '<th>' + t('thProtocol') + '</th>' +
         '<th>' + t('thIP') + '</th><th>' + t('thStatus') + '</th><th>' + t('thLastSeen') + '</th>' +
         '<th>' + t('thTraffic') + '</th><th></th></tr></thead><tbody>' +
         (devices || []).map(function (d) {
@@ -308,6 +347,7 @@
             '<td class="row-id mono">#' + d.id + '</td>' +
             '<td class="device-cell">' + esc(d.name) + '</td>' +
             '<td>' + esc(d.username || '#' + d.user_id) + '</td>' +
+            '<td>' + protoPill(d.protocol) + '</td>' +
             '<td class="mono">' + esc(d.ipv4) + '</td>' +
             '<td>' + deviceStatus(d) + '</td>' +
             '<td>' + (d.last_handshake ? (fmtAgo(d.last_handshake, t.lang) || '') : t('never')) + '</td>' +

@@ -65,8 +65,9 @@ app/      Flutter-клиент — этап 2
                       ┌──────────────────────────── VPS ────────────────────────────┐
  Telegram ⇄ бот (long polling)                                     │
  Mini App ⇄ Caddy ──TLS── /api/* ──► fibr-api (Go) ── wgctrl ──► wg0 (kernel)
- (https)         ├─ /admin/*  статика      │                        │ iptables NAT
-                 └─ /miniapp/, /shared/*   └── SQLite (/data)      ▼
+ (https)         ├─ /admin/*  статика      │                     │ iptables NAT
+                 └─ /miniapp/, /shared/*   ├── SQLite (/data)    ▼
+                                          └── /data/xray/config.json → xray (VLESS+Reality, opt-in)
                                                                 Интернет
 ```
 
@@ -126,7 +127,8 @@ make run     # локальный запуск в пассивном режим�
 
 - [x] Этап 1 — сервер, админка, бот, Mini App, WireGuard, QR, i18n (ru/en)
 - [ ] Этап 2 — Flutter-клиент (Android/iOS), QR-импорт, split tunneling
-- [ ] Этап 3 — AmneziaWG + Xray (VLESS-Reality) для DPI-устойчивости
+- [x] Xray (VLESS-Reality) как второй протокол устройств — [docs/xray.md](docs/xray.md)
+- [ ] AmneziaWG — обфусцированный WireGuard (тот же UX, что и обычный WG)
 - [ ] Этап 4 — OpenWrt/LuCI, self-enroll по ссылке, IPv6
 
 ## Лицензия

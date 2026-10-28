@@ -198,7 +198,7 @@ func (a *API) handleMe(w http.ResponseWriter, r *http.Request) {
 	for _, d := range devices {
 		out = append(out, newDeviceOut(d, u.Username))
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"user": u, "devices": out, "max_devices": a.cfg.MaxDevices})
+	writeJSON(w, http.StatusOK, map[string]any{"user": u, "devices": out, "max_devices": a.cfg.MaxDevices, "xray_enabled": a.cfg.XrayEnabled})
 }
 
 func (a *API) handleCreateDevice(w http.ResponseWriter, r *http.Request) {
@@ -272,13 +272,14 @@ func (a *API) handleDeviceQR(w http.ResponseWriter, r *http.Request) {
 // Overview is the aggregate snapshot used by the admin dashboard and /stats.
 type Overview struct {
 	Server struct {
-		PublicKey string   `json:"public_key"`
-		Port      int      `json:"port"`
-		Host      string   `json:"host"`
-		Subnet    string   `json:"subnet"`
-		DNS       []string `json:"dns"`
-		MTU       int      `json:"mtu"`
-		Passive   bool     `json:"passive"`
+		PublicKey   string   `json:"public_key"`
+		Port        int      `json:"port"`
+		Host        string   `json:"host"`
+		Subnet      string   `json:"subnet"`
+		DNS         []string `json:"dns"`
+		MTU         int      `json:"mtu"`
+		Passive     bool     `json:"passive"`
+		XrayEnabled bool     `json:"xray_enabled"`
 	} `json:"server"`
 	Totals struct {
 		Users   int   `json:"users"`
@@ -306,6 +307,7 @@ func (a *API) BuildOverview() (*Overview, error) {
 	ov.Server.DNS = a.cfg.DNS
 	ov.Server.MTU = a.cfg.MTU
 	ov.Server.Passive = a.wg.Passive()
+	ov.Server.XrayEnabled = a.cfg.XrayEnabled
 
 	users, err := a.store.ListUsers()
 	if err != nil {

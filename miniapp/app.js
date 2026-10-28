@@ -20,6 +20,7 @@
       empty: 'Пока нет устройств.\nДобавьте первое — и отсканируйте QR.',
       qrTitle: 'QR-код конфигурации',
       qrHint: 'Отсканируйте камерой телефона или приложением WireGuard (Импорт туннеля → из QR-кода)',
+      qrHintXray: 'Ссылка VLESS — отсканируйте в клиенте Xray (v2rayNG, Hiddify, Streisand)',
       configTitle: 'Конфигурация',
       copy: 'Копировать', copied: 'Скопировано', close: 'Закрыть',
       footHint: 'QR также совместим с официальным приложением WireGuard'
@@ -41,6 +42,7 @@
       empty: 'No devices yet.\nAdd one and scan the QR code.',
       qrTitle: 'Configuration QR code',
       qrHint: 'Scan with your phone camera or the WireGuard app (Import tunnel → from QR code)',
+      qrHintXray: 'VLESS link — scan it with an Xray client (v2rayNG, Hiddify, Streisand)',
       configTitle: 'Configuration',
       copy: 'Copy', copied: 'Copied', close: 'Close',
       footHint: 'The QR also works with the official WireGuard app'
@@ -136,6 +138,18 @@
   function load() {
     api('/api/me').then(function (data) {
       me = data;
+      // Xray option appears only when the server has the second protocol on.
+      var proto = document.getElementById('new-proto');
+      if (me.xray_enabled && !proto.querySelector('option[value="xray"]')) {
+        var opt = document.createElement('option');
+        opt.value = 'xray';
+        opt.textContent = 'Xray';
+        proto.appendChild(opt);
+      } else if (!me.xray_enabled) {
+        var x = proto.querySelector('option[value="xray"]');
+        if (x) x.remove();
+        proto.value = 'wg';
+      }
       var name = data.user.username || (tg && tg.initDataUnsafe && tg.initDataUnsafe.user && tg.initDataUnsafe.user.first_name) || '';
       el('greeting').textContent = t('greeting', { name: name });
       el('app-view').classList.remove('hidden');
@@ -164,11 +178,14 @@
       var label = d.enabled ? (d.online ? t('online') : t('offline')) : t('disabled');
       var ago = d.last_handshake ? fmtAgo(d.last_handshake, t.lang) : null;
       var seen = ago ? t('lastSeen', { ago: ago }) : t('never');
+      var proto = d.protocol === 'xray'
+        ? '<span class="pill pill--live proto-pill">Xray</span>'
+        : '<span class="pill pill--off proto-pill">WG</span>';
       return '<div class="card device">' +
         '<div class="device-top">' +
         '<span class="dot ' + (d.online ? 'dot--on' : 'dot--off') + '"></span>' +
         '<div class="grow"><h3>' + esc(d.name) + '</h3>' +
-        '<span class="ip mono">' + esc(d.ipv4) + '</span></div>' +
+        '<span class="ip mono">' + esc(d.ipv4) + '</span>' + proto + '</div>' +
         '<span class="pill ' + pill + '">' + label + '</span></div>' +
         '<div class="device-meta"><span>' + esc(seen) + '</span>' +
         '<span>' + t('rx', { v: fmtBytes(d.total_rx) }) + '</span>' +
@@ -183,10 +200,11 @@
 
   el('add-device').addEventListener('click', function () {
     var name = el('new-name').value.trim();
-    api('/api/me/devices', { method: 'POST', body: { name: name } }).then(function (d) {
+    var proto = el('new-proto').value || 'wg';
+    api('/api/me/devices', { method: 'POST', body: { name: name, protocol: proto } }).then(function (d) {
       el('new-name').value = '';
       load();
-      showQR(d.id);
+      showQR(d.id, d.protocol);
     }).catch(function (e) {
       if (e.status === 409) { alert(t('deviceLimit')); return; }
       fail(e);
@@ -198,7 +216,10 @@
     if (!btn) return;
     var id = btn.getAttribute('data-id');
     var act = btn.getAttribute('data-act');
-    if (act === 'qr') showQR(id);
+    if (act === 'qr') {
+      var dev = (me.devices || []).filter(function (x) { return String(x.id) === String(id); })[0];
+      showQR(id, dev && dev.protocol);
+    }
     else if (act === 'cfg') showConfig(id);
     else if (act === 'del') {
       if (!confirm(t('confirmDelete', { name: btn.getAttribute('data-name') }))) return;
@@ -208,7 +229,7 @@
 
   /* ---------- qr & config ---------- */
 
-  function showQR(id) {
+  function showQR(id, protocol) {
     fetch('/api/me/devices/' + id + '/qr.png', { headers: { Authorization: 'Bearer ' + token } })
       .then(function (res) {
         if (!res.ok) throw new Error('HTTP ' + res.status);
@@ -216,8 +237,9 @@
       })
       .then(function (blob) {
         var url = URL.createObjectURL(blob);
+        var hint = protocol === 'xray' ? t('qrHintXray') : t('qrHint');
         openModal('<h3>' + esc(t('qrTitle')) + '</h3>' +
-          '<p class="muted modal-sub">' + esc(t('qrHint')) + '</p>' +
+          '<p class="muted modal-sub">' + esc(hint) + '</p>' +
           '<div class="qr-wrap"><img src="' + url + '" alt="QR"></div>' +
           '<div class="modal-actions"><button class="btn" onclick="document.getElementById(\'modal\').classList.add(\'hidden\')">' + esc(t('close')) + '</button></div>');
       })

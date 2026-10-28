@@ -52,6 +52,15 @@
   flex: none;
 }
 
+.input--proto {
+  flex: none;
+  width: auto;
+}
+
+.proto-pill {
+  margin-left: 6px;
+}
+
 #devices {
   display: flex;
   flex-direction: column;
