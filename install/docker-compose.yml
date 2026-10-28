@@ -16,6 +16,9 @@ services:
       - "${FIBR_WG_PORT:-51820}:${FIBR_WG_PORT:-51820}/udp"
     volumes:
       - fibr-data:/data
+      # Client binaries for the bot's /app command (Telegram-side APK
+      # delivery); filled by install/sync-downloads.sh.
+      - ../download:/download:ro
     env_file: .env
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/api/health"]

@@ -324,7 +324,7 @@ class ServerAccountApi {
     }
   }
 
-  static HttpClientRequest _openRequest(
+  static Future<HttpClientRequest> _openRequest(
       HttpClient client, String method, Uri uri) {
     switch (method) {
       case 'POST':

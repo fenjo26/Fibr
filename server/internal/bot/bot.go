@@ -8,8 +8,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
+	"mime/multipart"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -188,6 +192,25 @@ func (b *Bot) handleUpdate(ctx context.Context, u tgUpdate) {
 		b.sendMessage(ctx, msg.Chat.ID, t(lang, "inviteCreated", code, api.InviteLink(b.cfg.Domain, code)), nil)
 	case "/ref":
 		b.sendMessage(ctx, msg.Chat.ID, t(lang, "referralCard", user.ReferralCode, api.ReferralLink(b.cfg.Domain, user.ReferralCode)), nil)
+	case "/app":
+		// Telegram-side APK delivery: in some regions (RU DPI) a direct
+		// browser download from the VPS times out, while Telegram file
+		// transfer is always fast. The slim arm64 build fits the 50MB bot
+		// upload limit; sync it with install/sync-downloads.sh.
+		dir := os.Getenv("FIBR_DOWNLOAD_DIR")
+		if dir == "" {
+			dir = "/download"
+		}
+		apk := filepath.Join(dir, "Fibr-Android.apk")
+		if fi, err := os.Stat(apk); err == nil && !fi.IsDir() {
+			b.sendMessage(ctx, msg.Chat.ID, t(lang, "appSending", fmt.Sprintf("%.0f", float64(fi.Size())/1048576)), nil)
+			if err := b.sendDocumentFile(ctx, msg.Chat.ID, apk, "Fibr"); err != nil {
+				b.log.Warn("bot: sendDocument failed", "error", err)
+				b.sendMessage(ctx, msg.Chat.ID, t(lang, "appLinks", "https://github.com/fenjo26/Fibr/releases/latest"), nil)
+			}
+		} else {
+			b.sendMessage(ctx, msg.Chat.ID, t(lang, "appLinks", "https://github.com/fenjo26/Fibr/releases/latest"), nil)
+		}
 	case "/id":
 		b.sendMessage(ctx, msg.Chat.ID, "Telegram ID: "+strconv.FormatInt(from.ID, 10), nil)
 	default:
@@ -357,6 +380,55 @@ func (b *Bot) call(ctx context.Context, method string, payload any) (json.RawMes
 	return out.Result, nil
 }
 
+// sendDocumentFile uploads a local file to a chat as a document (multipart).
+// Used by /app to deliver the client APK over Telegram — in some regions a
+// direct HTTPS download from the VPS is throttled, Telegram never is.
+func (b *Bot) sendDocumentFile(ctx context.Context, chatID int64, path, caption string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	body := &bytes.Buffer{}
+	w := multipart.NewWriter(body)
+	_ = w.WriteField("chat_id", strconv.FormatInt(chatID, 10))
+	_ = w.WriteField("caption", caption)
+	fw, err := w.CreateFormFile("document", filepath.Base(path))
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(fw, f); err != nil {
+		return err
+	}
+	if err := w.Close(); err != nil {
+		return err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		"https://api.telegram.org/bot"+b.token+"/sendDocument", body)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", w.FormDataContentType())
+	resp, err := b.http.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	var out struct {
+		OK          bool   `json:"ok"`
+		Description string `json:"description"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return err
+	}
+	if !out.OK {
+		return fmt.Errorf("sendDocument: %s", out.Description)
+	}
+	return nil
+}
+
 /* ------------------------- texts & formatting ------------------------- */
 
 func pickLang(code string) string {
@@ -372,9 +444,11 @@ var texts = map[string]map[string]string{
 	"ru": {
 		"welcome":         "👋 Добро пожаловать в <b>Fibr</b>!\n\nКнопкой ниже откройте приложение: там можно создать устройство, забрать QR-код конфигурации и посмотреть свою статистику.",
 		"welcomeReferred": "👋 Добро пожаловать в <b>Fibr</b>!\n\nВы пришли по приглашению — оно уже учтено ✅\nОткройте приложение кнопкой ниже: создайте устройство и заберите QR-код конфигурации.",
-		"help":            "Команды:\n/start — открыть приложение\n/help — справка\n/ref — реферальный код и ссылка\n/stats — статистика (только владелец)\n/invite — создать приглашение (только админ)\n/id — узнать свой Telegram ID",
+		"help":            "Команды:\n/start — открыть приложение\n/help — справка\n/app — получить приложение (APK файлом)\n/ref — реферальный код и ссылка\n/stats — статистика (только владелец)\n/invite — создать приглашение (только админ)\n/id — узнать свой Telegram ID",
 		"denied":          "⛔ Команда доступна только администраторам.",
 		"unknown":         "Не понял команду. /help — список команд.",
+		"appSending":      "📲 Отправляю приложение (~%s МБ)…",
+		"appLinks":        "Скачать приложение:\n— у бота: отправьте /app (приложение придёт файлом)\n— с сервера: https://<ваш-домен>/app.apk\n— с GitHub: %s/latest",
 		"inviteCreated":   "🎟 Одноразовое приглашение:\n\nКод: <code>%s</code>\nСсылка: %s\n\nОдин человек сможет зарегистрироваться, открыв ссылку в Telegram.",
 		"inviteError":     "Не удалось создать приглашение, смотрите логи сервера.",
 		"referralCard":    "🎁 Реферальная программа\n\nВаш код: <code>%s</code>\nСсылка: %s\n\nОтправьте их другу — с каждого его пополнения вам идёт процент. Баланс и подробности — в приложении.",
@@ -391,9 +465,11 @@ var texts = map[string]map[string]string{
 	"en": {
 		"welcome":         "👋 Welcome to <b>Fibr</b>!\n\nUse the button below to open the app: create a device, grab a QR config and check your traffic stats.",
 		"welcomeReferred": "👋 Welcome to <b>Fibr</b>!\n\nYou arrived via an invitation — it has been credited ✅\nOpen the app with the button below: create a device and grab a QR config.",
-		"help":            "Commands:\n/start — open the app\n/help — help\n/ref — your referral code and link\n/stats — stats (owner only)\n/invite — create an invite (admin only)\n/id — show your Telegram ID",
+		"help":            "Commands:\n/start — open the app\n/help — help\n/app — get the app (APK as a file)\n/ref — your referral code and link\n/stats — stats (owner only)\n/invite — create an invite (admin only)\n/id — show your Telegram ID",
 		"denied":          "⛔ This command is admin-only.",
 		"unknown":         "Unknown command. /help lists commands.",
+		"appSending":      "📲 Sending the app (~%s MB)…",
+		"appLinks":        "Get the app:\n— from this bot: send /app (comes as a file)\n— from the server: https://<your-domain>/app.apk\n— from GitHub: %s/latest",
 		"inviteCreated":   "🎟 One-time invite:\n\nCode: <code>%s</code>\nLink: %s\n\nOne person can register by opening the link in Telegram.",
 		"inviteError":     "Failed to create an invite, check server logs.",
 		"referralCard":    "🎁 Referral program\n\nYour code: <code>%s</code>\nLink: %s\n\nShare them with a friend — you earn a cut of every top-up they make. Balance and details are in the app.",
