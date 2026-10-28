@@ -13,6 +13,7 @@
       fPublicKey: 'Публичный ключ', fPort: 'Порт', fHost: 'Endpoint', fSubnet: 'Подсеть',
       fDNS: 'DNS', fMTU: 'MTU', fPassive: 'Режим', passiveOn: 'активный', passiveOff: 'только конфиги (нет kernel WG)',
       thUser: 'Пользователь', thTelegram: 'Telegram', thRole: 'Роль', thDevices: 'Устр-ва',
+      thOwner: 'Кто создал',
       thStatus: 'Статус', thTraffic: 'Трафик', thActions: 'Действия',
       thDevice: 'Устройство', thIP: 'IP', thLastSeen: 'Был(а)', thEnabled: 'Вкл',
       phTelegram: 'Telegram ID (необяз.)', phUsername: 'Имя пользователя',
@@ -49,6 +50,7 @@
       fPublicKey: 'Public key', fPort: 'Port', fHost: 'Endpoint', fSubnet: 'Subnet',
       fDNS: 'DNS', fMTU: 'MTU', fPassive: 'Mode', passiveOn: 'active', passiveOff: 'configs only (no kernel WG)',
       thUser: 'User', thTelegram: 'Telegram', thRole: 'Role', thDevices: 'Devices',
+      thOwner: 'Created by',
       thStatus: 'Status', thTraffic: 'Traffic', thActions: 'Actions',
       thDevice: 'Device', thIP: 'IP', thLastSeen: 'Last seen', thEnabled: 'On',
       phTelegram: 'Telegram ID (optional)', phUsername: 'Username',
@@ -240,12 +242,21 @@
       : '<span class="pill pill--off">' + t('protWG') + '</span>';
   }
 
+  // Role pill for the three-level model (see docs/roles.md).
+  function rolePill(role) {
+    if (role === 'superadmin') return '<span class="pill pill--live">superadmin</span>';
+    if (role === 'admin') return '<span class="pill pill--ok">admin</span>';
+    return '<span class="pill pill--off">user</span>';
+  }
+
   /* ---------- users ---------- */
 
   function loadUsers() {
     Promise.all([api('/api/admin/users'), api('/api/admin/devices'), api('/api/admin/overview'), api('/api/admin/invites')]).then(function (res) {
       var users = res[0];
       xrayEnabled = !!(res[2] && res[2].server && res[2].server.xray_enabled);
+      var byId = {};
+      users.forEach(function (u) { byId[u.id] = u; });
       var byUser = {};
       (res[1] || []).forEach(function (d) {
         byUser[d.user_id] = byUser[d.user_id] || [];
@@ -254,23 +265,35 @@
 
       el('users-table').innerHTML =
         '<thead><tr><th>ID</th><th>' + t('thUser') + '</th><th>' + t('thTelegram') + '</th>' +
-        '<th>' + t('thRole') + '</th><th>' + t('thDevices') + '</th><th>' + t('thTraffic') + '</th>' +
+        '<th>' + t('thRole') + '</th><th>' + t('thOwner') + '</th><th>' + t('thDevices') + '</th><th>' + t('thTraffic') + '</th>' +
         '<th>' + t('thStatus') + '</th><th></th></tr></thead><tbody>' +
         users.map(function (u) {
           var devs = byUser[u.id] || [];
           var rx = 0, tx = 0, online = 0;
           devs.forEach(function (d) { rx += d.total_rx; tx += d.total_tx; if (d.online) online++; });
-          var roleBtn = u.role === 'admin'
-            ? '<button class="btn btn--ghost btn--small" data-act="role" data-id="' + u.id + '" data-role="user">' + t('btnMakeUser') + '</button>'
-            : '<button class="btn btn--ghost btn--small" data-act="role" data-id="' + u.id + '" data-role="admin">' + t('btnMakeAdmin') + '</button>';
+          // Role buttons: the panel token is the superadmin, who may promote
+          // users to admins and demote admins back; superadmin accounts come
+          // from the env/static token and are not managed here.
+          var roleBtn = '';
+          if (u.role === 'user') {
+            roleBtn = '<button class="btn btn--ghost btn--small" data-act="role" data-id="' + u.id + '" data-role="admin">' + t('btnMakeAdmin') + '</button>';
+          } else if (u.role === 'admin') {
+            roleBtn = '<button class="btn btn--ghost btn--small" data-act="role" data-id="' + u.id + '" data-role="user">' + t('btnMakeUser') + '</button>';
+          }
           var disBtn = u.disabled
             ? '<button class="btn btn--ghost btn--small" data-act="undisable" data-id="' + u.id + '">' + t('btnEnable') + '</button>'
             : '<button class="btn btn--ghost btn--small" data-act="disable" data-id="' + u.id + '">' + t('btnDisable') + '</button>';
+          var owner = u.owner_id
+            ? (byId[u.owner_id]
+              ? esc(byId[u.owner_id].username || ('#' + u.owner_id))
+              : '<span class="mono muted">#' + u.owner_id + '</span>')
+            : '<span class="muted">—</span>';
           return '<tr>' +
             '<td class="row-id mono">#' + u.id + '</td>' +
             '<td class="user-cell">' + esc(u.username || '—') + '</td>' +
             '<td class="mono">' + (u.telegram_id || t('noTG')) + '</td>' +
-            '<td>' + (u.role === 'admin' ? '<span class="pill pill--live">admin</span>' : '<span class="pill pill--off">user</span>') + '</td>' +
+            '<td>' + rolePill(u.role) + '</td>' +
+            '<td>' + owner + '</td>' +
             '<td>' + devs.length + (online ? ' <span class="pill pill--ok">' + online + ' ' + t('online') + '</span>' : '') + '</td>' +
             '<td>↓ ' + fmtBytes(rx) + '<br>↑ ' + fmtBytes(tx) + '</td>' +
             '<td>' + (u.disabled ? '<span class="pill pill--danger">' + t('statusDisabled') + '</span>' : '<span class="pill pill--ok">' + t('statusActive') + '</span>') + '</td>' +

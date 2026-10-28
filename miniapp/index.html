@@ -37,6 +37,8 @@
         </div>
       </div>
 
+      <p class="muted sec-hint" id="devices-hint"></p>
+
       <div class="add-row">
         <input class="input" id="new-name" maxlength="32">
         <select class="input input--proto" id="new-proto" title="Protocol">
@@ -46,6 +48,18 @@
       </div>
 
       <div id="devices"></div>
+
+      <!-- reseller section: visible only to admins/superadmins -->
+      <section id="users-view" class="hidden">
+        <div class="sec-head">
+          <div>
+            <h2 id="users-title"></h2>
+            <p class="muted" id="users-hint"></p>
+          </div>
+          <button class="btn btn--tertiary btn--small" id="invite-create"></button>
+        </div>
+        <div id="users"></div>
+      </section>
 
       <p class="muted foot-hint" id="foot-hint"></p>
     </section>

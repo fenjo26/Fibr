@@ -15,6 +15,7 @@ Telegram-ботом и Telegram Mini App. Пользователь открыв�
 | [telegram-bot.md](telegram-bot.md) | Команды бота, роли и FIBR_ADMIN_TELEGRAM_IDS, как устроен Mini App |
 | [xray.md](xray.md) | Второй протокол VLESS/Reality для сетей с блокировкой WireGuard: включение, клиенты, ограничения |
 | [self-enroll.md](self-enroll.md) | Регистрация по приглашениям: ссылки, режим «только по invite», deep-link через бота |
+| [roles.md](roles.md) | Три роли: суперадмин, админ-реселлер и пользователь — кто кого видит и создаёт |
 | [awg.md](awg.md) | AmneziaWG — обфусцированный WireGuard: включение (--awg), клиенты AmneziaVPN, ограничения |
 | [faq.md](faq.md) | Скорость, смена порта, обновление, перенос на новый сервер, забытый токен, безопасность |
 

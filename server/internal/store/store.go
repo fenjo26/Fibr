@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite" // pure-Go SQLite driver
@@ -18,13 +19,23 @@ var ErrNotFound = errors.New("not found")
 // already been consumed (one-time use).
 var ErrInviteUsed = errors.New("invite already used")
 
+// Role values for User.Role.
+const (
+	RoleUser       = "user"
+	RoleAdmin      = "admin"
+	RoleSuperadmin = "superadmin"
+)
+
 // User is a Fibr account. Telegram-linked users are created lazily on first
 // Mini App open or /start; admins can also create manual (panel-only) users.
+// OwnerID records who created the account (an admin's or the superadmin's
+// user id); it is nil for self-registered and env-promoted accounts.
 type User struct {
 	ID         int64     `json:"id"`
 	TelegramID *int64    `json:"telegram_id"`
 	Username   string    `json:"username"`
-	Role       string    `json:"role"` // "user" | "admin"
+	Role       string    `json:"role"` // "user" | "admin" | "superadmin"
+	OwnerID    *int64    `json:"owner_id"`
 	Disabled   bool      `json:"disabled"`
 	CreatedAt  time.Time `json:"created_at"`
 }
@@ -89,7 +100,8 @@ CREATE TABLE IF NOT EXISTS users (
 	id          INTEGER PRIMARY KEY AUTOINCREMENT,
 	telegram_id INTEGER UNIQUE,
 	username    TEXT    NOT NULL DEFAULT '',
-	role        TEXT    NOT NULL DEFAULT 'user' CHECK (role IN ('user','admin')),
+	role        TEXT    NOT NULL DEFAULT 'user' CHECK (role IN ('user','admin','superadmin')),
+	owner_id    INTEGER REFERENCES users(id) ON DELETE SET NULL,
 	disabled    INTEGER NOT NULL DEFAULT 0,
 	created_at  INTEGER NOT NULL
 );
@@ -143,11 +155,122 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("migrate: %w", err)
 	}
+	if err := migrateUsersRoles(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate users roles: %w", err)
+	}
 	if err := migrateDevicesProtocol(db); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("migrate devices.protocol: %w", err)
 	}
 	return &Store{db: db}, nil
+}
+
+// migrateUsersRoles upgrades pre-reseller databases to the three-role model:
+// users.role gains the 'superadmin' value and users.owner_id is added
+// (who created the account). SQLite cannot ALTER a CHECK constraint on a
+// live table, so the users table is rebuilt:
+//
+//	PRAGMA foreign_keys=off (renames/drops would otherwise trip the
+//	devices.user_id and invites.used_by foreign keys)
+//	CREATE TABLE users_new (new schema)
+//	INSERT INTO users_new SELECT ... FROM users (ids preserved, owner NULL)
+//	DROP TABLE users
+//	ALTER TABLE users_new RENAME TO users
+//
+// The whole rebuild runs in one transaction; FK enforcement is restored
+// afterwards and verified with PRAGMA foreign_key_check. Idempotent: the gate
+// checks that users already has the owner_id column and the new CHECK
+// (via sqlite_master), so fresh databases and repeated Open() calls no-op.
+func migrateUsersRoles(db *sql.DB) error {
+	rows, err := db.Query(`pragma table_info(users)`)
+	if err != nil {
+		return err
+	}
+	hasOwner := false
+	for rows.Next() {
+		var cid int
+		var name, colType string
+		var notNull, pk int
+		var dflt any
+		if err := rows.Scan(&cid, &name, &colType, &notNull, &dflt, &pk); err != nil {
+			rows.Close()
+			return err
+		}
+		if name == "owner_id" {
+			hasOwner = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+
+	hasSuperCheck := false
+	if hasOwner {
+		var schemaSQL string
+		if err := db.QueryRow(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'users'`).Scan(&schemaSQL); err != nil {
+			return err
+		}
+		hasSuperCheck = strings.Contains(schemaSQL, "'superadmin'")
+		if hasSuperCheck {
+			return nil // already migrated (normal case on every start)
+		}
+	}
+	// Old (or hand-mangled) users table: rebuild it.
+
+	// FK enforcement must be off while the referenced table is swapped; the
+	// pragma is a no-op inside a transaction, so it runs before BEGIN.
+	if _, err := db.Exec(`pragma foreign_keys = off`); err != nil {
+		return err
+	}
+	defer func() {
+		_, _ = db.Exec(`pragma foreign_keys = on`)
+	}()
+
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	stmts := []string{
+		`CREATE TABLE users_new (
+			id          INTEGER PRIMARY KEY AUTOINCREMENT,
+			telegram_id INTEGER UNIQUE,
+			username    TEXT    NOT NULL DEFAULT '',
+			role        TEXT    NOT NULL DEFAULT 'user' CHECK (role IN ('user','admin','superadmin')),
+			owner_id    INTEGER REFERENCES users(id) ON DELETE SET NULL,
+			disabled    INTEGER NOT NULL DEFAULT 0,
+			created_at  INTEGER NOT NULL
+		)`,
+		`INSERT INTO users_new (id, telegram_id, username, role, owner_id, disabled, created_at)
+		 SELECT id, telegram_id, username, role, NULL, disabled, created_at FROM users`,
+		`DROP TABLE users`,
+		`ALTER TABLE users_new RENAME TO users`,
+	}
+	for _, q := range stmts {
+		if _, err := tx.Exec(q); err != nil {
+			return fmt.Errorf("%q: %w", q[:32], err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+
+	// Restore FK enforcement and prove nothing was orphaned by the swap.
+	if _, err := db.Exec(`pragma foreign_keys = on`); err != nil {
+		return err
+	}
+	chk, err := db.Query(`pragma foreign_key_check`)
+	if err != nil {
+		return err
+	}
+	defer chk.Close()
+	if chk.Next() {
+		return fmt.Errorf("foreign key check failed after users rebuild")
+	}
+	return chk.Err()
 }
 
 // migrateDevicesProtocol adds the devices.protocol column ("wg"|"xray") to
@@ -190,19 +313,25 @@ func (s *Store) Close() error { return s.db.Close() }
 
 /* ---------------------------- users ---------------------------- */
 
-// CreateUser inserts a user; ID and CreatedAt are filled in.
+const userCols = `id, telegram_id, username, role, owner_id, disabled, created_at`
+
+// CreateUser inserts a user; ID and CreatedAt are filled in. OwnerID (if
+// set) records who created the account.
 func (s *Store) CreateUser(u *User) error {
 	if u.Role == "" {
-		u.Role = "user"
+		u.Role = RoleUser
 	}
 	now := time.Now().Unix()
-	var tid any
+	var tid, oid any
 	if u.TelegramID != nil {
 		tid = *u.TelegramID
 	}
+	if u.OwnerID != nil {
+		oid = *u.OwnerID
+	}
 	res, err := s.db.Exec(
-		`INSERT INTO users (telegram_id, username, role, disabled, created_at) VALUES (?, ?, ?, ?, ?)`,
-		tid, u.Username, u.Role, b2i(u.Disabled), now,
+		`INSERT INTO users (telegram_id, username, role, owner_id, disabled, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
+		tid, u.Username, u.Role, oid, b2i(u.Disabled), now,
 	)
 	if err != nil {
 		return err
@@ -217,19 +346,20 @@ func (s *Store) CreateUser(u *User) error {
 
 // GetUser returns a user by id.
 func (s *Store) GetUser(id int64) (*User, error) {
-	row := s.db.QueryRow(`SELECT id, telegram_id, username, role, disabled, created_at FROM users WHERE id = ?`, id)
+	row := s.db.QueryRow(`SELECT `+userCols+` FROM users WHERE id = ?`, id)
 	return scanUser(row)
 }
 
 // GetUserByTelegramID returns a user by telegram id, or ErrNotFound.
 func (s *Store) GetUserByTelegramID(tid int64) (*User, error) {
-	row := s.db.QueryRow(`SELECT id, telegram_id, username, role, disabled, created_at FROM users WHERE telegram_id = ?`, tid)
+	row := s.db.QueryRow(`SELECT `+userCols+` FROM users WHERE telegram_id = ?`, tid)
 	return scanUser(row)
 }
 
-// ListUsers returns all users ordered by id.
+// ListUsers returns all users ordered by id. Scoping by role/ownership is
+// done by the API layer.
 func (s *Store) ListUsers() ([]User, error) {
-	rows, err := s.db.Query(`SELECT id, telegram_id, username, role, disabled, created_at FROM users ORDER BY id`)
+	rows, err := s.db.Query(`SELECT ` + userCols + ` FROM users ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}
@@ -245,9 +375,39 @@ func (s *Store) ListUsers() ([]User, error) {
 	return out, rows.Err()
 }
 
-// SetUserRole sets the role ("user" or "admin").
+// ListUserIDsByOwner returns the ids of all accounts created by owner (the
+// admin's reseller subtree, one level: admins can only create plain users).
+func (s *Store) ListUserIDsByOwner(owner int64) ([]int64, error) {
+	rows, err := s.db.Query(`SELECT id FROM users WHERE owner_id = ? ORDER BY id`, owner)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
+// SetUserRole sets the role ("user", "admin" or "superadmin").
 func (s *Store) SetUserRole(id int64, role string) error {
 	res, err := s.db.Exec(`UPDATE users SET role = ? WHERE id = ?`, role, id)
+	return touched(res, err)
+}
+
+// SetUserOwner records who created (or now owns) the account; owner 0 clears
+// the link (owner_id -> NULL).
+func (s *Store) SetUserOwner(id, owner int64) error {
+	var oid any
+	if owner > 0 {
+		oid = owner
+	}
+	res, err := s.db.Exec(`UPDATE users SET owner_id = ? WHERE id = ?`, oid, id)
 	return touched(res, err)
 }
 
@@ -265,18 +425,23 @@ func (s *Store) SetUsername(id int64, username string) error {
 }
 
 // DeleteUser removes a user; their devices are removed by cascade. The caller
-// is responsible for syncing WireGuard peers afterwards.
+// is responsible for syncing WireGuard peers afterwards. Invites the user
+// consumed keep their "used" state but lose the reference (invites.used_by
+// has no ON DELETE clause), so deletion never trips the foreign key.
 func (s *Store) DeleteUser(id int64) error {
+	if _, err := s.db.Exec(`UPDATE invites SET used_by = NULL WHERE used_by = ?`, id); err != nil {
+		return err
+	}
 	res, err := s.db.Exec(`DELETE FROM users WHERE id = ?`, id)
 	return touched(res, err)
 }
 
 func scanUser(r interface{ Scan(...any) error }) (*User, error) {
 	var u User
-	var tid sql.NullInt64
+	var tid, oid sql.NullInt64
 	var disabled int
 	var created int64
-	if err := r.Scan(&u.ID, &tid, &u.Username, &u.Role, &disabled, &created); err != nil {
+	if err := r.Scan(&u.ID, &tid, &u.Username, &u.Role, &oid, &disabled, &created); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
@@ -285,6 +450,10 @@ func scanUser(r interface{ Scan(...any) error }) (*User, error) {
 	if tid.Valid {
 		t := tid.Int64
 		u.TelegramID = &t
+	}
+	if oid.Valid {
+		o := oid.Int64
+		u.OwnerID = &o
 	}
 	u.Disabled = disabled != 0
 	u.CreatedAt = time.Unix(created, 0)

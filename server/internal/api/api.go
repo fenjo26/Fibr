@@ -72,10 +72,24 @@ func (a *API) Handler() http.Handler {
 
 /* ------------------------- auth plumbing ------------------------- */
 
+// identity is the resolved caller. The static admin token maps to the
+// superadmin role with userID 0; session tokens carry the user's own role
+// ("user", "admin" or "superadmin" — see docs/roles.md).
 type identity struct {
-	userID  int64 // 0 when identified by the admin token
-	isAdmin bool
+	userID int64  // 0 when identified by the admin token
+	role   string // store.RoleUser | store.RoleAdmin | store.RoleSuperadmin
 }
+
+// isAdmin reports whether the caller may use the /api/admin/* surface at all
+// (admins and superadmins; scope differences are enforced per handler).
+func (id identity) isAdmin() bool {
+	return id.role == store.RoleAdmin || id.role == store.RoleSuperadmin
+}
+
+// isSuper reports whether the caller is the installation owner: the static
+// admin token or a user with role superadmin. Superadmins see and manage
+// every account; admins only their own subtree.
+func (id identity) isSuper() bool { return id.role == store.RoleSuperadmin }
 
 type ctxKeyType struct{}
 
@@ -89,7 +103,7 @@ func (a *API) identify(r *http.Request) (identity, bool) {
 		return identity{}, false
 	}
 	if token == a.cfg.AdminToken {
-		return identity{isAdmin: true}, true
+		return identity{role: store.RoleSuperadmin}, true
 	}
 	uid, ok := a.parseSessionToken(token)
 	if !ok {
@@ -99,7 +113,7 @@ func (a *API) identify(r *http.Request) (identity, bool) {
 	if err != nil || u.Disabled {
 		return identity{}, false
 	}
-	return identity{userID: u.ID, isAdmin: u.Role == "admin"}, true
+	return identity{userID: u.ID, role: u.Role}, true
 }
 
 func (a *API) auth(next http.HandlerFunc) http.HandlerFunc {
@@ -116,7 +130,7 @@ func (a *API) auth(next http.HandlerFunc) http.HandlerFunc {
 func (a *API) admin(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id, ok := a.identify(r)
-		if !ok || !id.isAdmin {
+		if !ok || !id.isAdmin() {
 			a.errJSON(w, http.StatusForbidden, "admin only")
 			return
 		}
@@ -153,15 +167,17 @@ func (a *API) handleAuthTelegram(w http.ResponseWriter, r *http.Request) {
 	u, err := a.store.GetUserByTelegramID(tu.ID)
 	switch {
 	case err == nil:
-		// Refresh the stored username; upgrade to admin if listed in env.
+		// Refresh the stored username; upgrade to superadmin if listed in env
+		// (covers accounts promoted to plain admin before the three-role
+		// model existed).
 		name := displayName(tu)
 		if name != "" && name != u.Username {
 			_ = a.store.SetUsername(u.ID, name)
 			u.Username = name
 		}
-		if u.Role != "admin" && containsInt64(a.cfg.AdminTelegramIDs, tu.ID) {
-			_ = a.store.SetUserRole(u.ID, "admin")
-			u.Role = "admin"
+		if u.Role != store.RoleSuperadmin && containsInt64(a.cfg.AdminTelegramIDs, tu.ID) {
+			_ = a.store.SetUserRole(u.ID, store.RoleSuperadmin)
+			u.Role = store.RoleSuperadmin
 		}
 	case errors.Is(err, store.ErrNotFound):
 		// Self-enroll gate: in invite-only mode a brand-new user must present
@@ -178,9 +194,9 @@ func (a *API) handleAuthTelegram(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		role := "user"
+		role := store.RoleUser
 		if containsInt64(a.cfg.AdminTelegramIDs, tu.ID) {
-			role = "admin"
+			role = store.RoleSuperadmin
 		}
 		tid := tu.ID
 		u = &store.User{TelegramID: &tid, Username: displayName(tu), Role: role}
@@ -383,6 +399,12 @@ func (a *API) BuildOverview() (*Overview, error) {
 }
 
 func (a *API) handleAdminOverview(w http.ResponseWriter, r *http.Request) {
+	// Installation-wide metrics are the owner's alone: a reseller must not
+	// learn how big the whole platform is.
+	if !ident(r).isSuper() {
+		a.errJSON(w, http.StatusForbidden, "superadmin only")
+		return
+	}
 	ov, err := a.BuildOverview()
 	if err != nil {
 		a.errJSON(w, http.StatusInternalServerError, "cannot build overview")
@@ -400,10 +422,23 @@ type userOut struct {
 }
 
 func (a *API) handleAdminListUsers(w http.ResponseWriter, r *http.Request) {
+	id := ident(r)
 	users, err := a.store.ListUsers()
 	if err != nil {
 		a.errJSON(w, http.StatusInternalServerError, "storage error")
 		return
+	}
+	// Scope: the superadmin sees every account; an admin sees only the users
+	// they created (owner_id = their id). The admin themself is NOT included —
+	// their own devices live in /api/me.
+	if !id.isSuper() {
+		scoped := make([]store.User, 0, len(users))
+		for _, u := range users {
+			if u.OwnerID != nil && *u.OwnerID == id.userID {
+				scoped = append(scoped, u)
+			}
+		}
+		users = scoped
 	}
 	devices, err := a.store.ListDevices(0)
 	if err != nil {
@@ -431,6 +466,7 @@ func (a *API) handleAdminListUsers(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) handleAdminCreateUser(w http.ResponseWriter, r *http.Request) {
+	id := ident(r)
 	var body struct {
 		TelegramID *int64 `json:"telegram_id"`
 		Username   string `json:"username"`
@@ -440,22 +476,63 @@ func (a *API) handleAdminCreateUser(w http.ResponseWriter, r *http.Request) {
 		a.errJSON(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if body.Role != "" && body.Role != "user" && body.Role != "admin" {
-		a.errJSON(w, http.StatusBadRequest, "role must be user or admin")
-		return
+	role := body.Role
+	owner := id.userID // 0 = the static token: no owner to record
+	switch {
+	case id.isSuper():
+		// The superadmin may found resellers: user or admin, never another
+		// superadmin by hand (that role belongs to the env/static token).
+		if role != "" && role != store.RoleUser && role != store.RoleAdmin {
+			a.errJSON(w, http.StatusBadRequest, "role must be user or admin")
+			return
+		}
+	default:
+		// An admin may only create plain users, always owned by themself.
+		if role != "" && role != store.RoleUser {
+			a.errJSON(w, http.StatusBadRequest, "role must be user or admin")
+			return
+		}
+		role = store.RoleUser
+		o := id.userID
+		owner = o
 	}
-	u := &store.User{TelegramID: body.TelegramID, Username: sanitizeName(body.Username, ""), Role: body.Role}
+	u := &store.User{TelegramID: body.TelegramID, Username: sanitizeName(body.Username, ""), Role: role}
+	if owner > 0 {
+		u.OwnerID = &owner
+	}
 	if err := a.store.CreateUser(u); err != nil {
 		a.errJSON(w, http.StatusConflict, "user already exists")
 		return
 	}
+	a.log.Info("user created", "user_id", u.ID, "role", u.Role, "owner_id", owner, "by", id.userID)
 	writeJSON(w, http.StatusCreated, u)
 }
 
-func (a *API) handleAdminUpdateUser(w http.ResponseWriter, r *http.Request) {
+// fetchManagedUser loads the target user and enforces the reseller scope.
+// Foreign (or own) accounts are reported as 404 so an admin cannot even
+// probe which ids exist; role changes are the superadmin's alone.
+func (a *API) fetchManagedUser(w http.ResponseWriter, r *http.Request) (*store.User, identity, bool) {
+	caller := ident(r)
 	id, err := pathID(r)
 	if err != nil {
 		a.errJSON(w, http.StatusBadRequest, "bad id")
+		return nil, caller, false
+	}
+	u, err := a.store.GetUser(id)
+	if err != nil {
+		a.errJSON(w, http.StatusNotFound, "user not found")
+		return nil, caller, false
+	}
+	if !caller.isSuper() && (u.OwnerID == nil || *u.OwnerID != caller.userID) {
+		a.errJSON(w, http.StatusNotFound, "user not found")
+		return nil, caller, false
+	}
+	return u, caller, true
+}
+
+func (a *API) handleAdminUpdateUser(w http.ResponseWriter, r *http.Request) {
+	u, caller, ok := a.fetchManagedUser(w, r)
+	if !ok {
 		return
 	}
 	var body struct {
@@ -466,23 +543,27 @@ func (a *API) handleAdminUpdateUser(w http.ResponseWriter, r *http.Request) {
 		a.errJSON(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if body.Role != nil && *body.Role != "user" && *body.Role != "admin" {
-		a.errJSON(w, http.StatusBadRequest, "role must be user or admin")
-		return
-	}
 	if body.Role != nil {
-		if err := a.store.SetUserRole(id, *body.Role); err != nil {
+		if !caller.isSuper() {
+			a.errJSON(w, http.StatusForbidden, "superadmin only")
+			return
+		}
+		if *body.Role != store.RoleUser && *body.Role != store.RoleAdmin && *body.Role != store.RoleSuperadmin {
+			a.errJSON(w, http.StatusBadRequest, "role must be user, admin or superadmin")
+			return
+		}
+		if err := a.store.SetUserRole(u.ID, *body.Role); err != nil {
 			a.errJSON(w, http.StatusNotFound, "user not found")
 			return
 		}
 	}
 	if body.Disabled != nil {
-		if err := a.store.SetUserDisabled(id, *body.Disabled); err != nil {
+		if err := a.store.SetUserDisabled(u.ID, *body.Disabled); err != nil {
 			a.errJSON(w, http.StatusNotFound, "user not found")
 			return
 		}
 	}
-	u, err := a.store.GetUser(id)
+	u, err := a.store.GetUser(u.ID)
 	if err != nil {
 		a.errJSON(w, http.StatusInternalServerError, "storage error")
 		return
@@ -491,12 +572,11 @@ func (a *API) handleAdminUpdateUser(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) handleAdminDeleteUser(w http.ResponseWriter, r *http.Request) {
-	id, err := pathID(r)
-	if err != nil {
-		a.errJSON(w, http.StatusBadRequest, "bad id")
+	u, _, ok := a.fetchManagedUser(w, r)
+	if !ok {
 		return
 	}
-	if err := a.store.DeleteUser(id); err != nil {
+	if err := a.store.DeleteUser(u.ID); err != nil {
 		a.errJSON(w, http.StatusNotFound, "user not found")
 		return
 	}
@@ -506,17 +586,14 @@ func (a *API) handleAdminDeleteUser(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleAdminCreateDevice provisions a device for any user (works for manual
-// panel-created users who cannot use the Mini App login).
+// panel-created users who cannot use the Mini App login). Admins may only
+// issue devices to their own users.
 func (a *API) handleAdminCreateDevice(w http.ResponseWriter, r *http.Request) {
-	uid, err := pathID(r)
-	if err != nil {
-		a.errJSON(w, http.StatusBadRequest, "bad id")
+	u, _, ok := a.fetchManagedUser(w, r)
+	if !ok {
 		return
 	}
-	if _, err := a.store.GetUser(uid); err != nil {
-		a.errJSON(w, http.StatusNotFound, "user not found")
-		return
-	}
+	uid := u.ID
 	existing, err := a.store.ListDevices(uid)
 	if err != nil {
 		a.errJSON(w, http.StatusInternalServerError, "storage error")
@@ -611,6 +688,7 @@ func (a *API) provisionDevice(userID int64, name, protocol string) (*store.Devic
 }
 
 func (a *API) handleAdminDevices(w http.ResponseWriter, r *http.Request) {
+	id := ident(r)
 	users, err := a.store.ListUsers()
 	if err != nil {
 		a.errJSON(w, http.StatusInternalServerError, "storage error")
@@ -621,19 +699,36 @@ func (a *API) handleAdminDevices(w http.ResponseWriter, r *http.Request) {
 		a.errJSON(w, http.StatusInternalServerError, "storage error")
 		return
 	}
+	// Reseller scope: an admin only sees devices of their subtree (themself
+	// and the users they created); the superadmin sees everything.
+	var visible map[int64]bool
+	if !id.isSuper() {
+		ids, err := a.visibleUserIDs(id)
+		if err != nil {
+			a.errJSON(w, http.StatusInternalServerError, "storage error")
+			return
+		}
+		visible = make(map[int64]bool, len(ids))
+		for _, uid := range ids {
+			visible[uid] = true
+		}
+	}
 	names := make(map[int64]string, len(users))
 	for _, u := range users {
 		names[u.ID] = u.Username
 	}
 	out := make([]deviceOut, 0, len(devices))
 	for _, d := range devices {
+		if visible != nil && !visible[d.UserID] {
+			continue
+		}
 		out = append(out, newDeviceOut(d, names[d.UserID]))
 	}
 	writeJSON(w, http.StatusOK, out)
 }
 
 func (a *API) handleAdminDeviceConfig(w http.ResponseWriter, r *http.Request) {
-	d, ok := a.anyDevice(w, r)
+	d, ok := a.scopedDevice(w, r)
 	if !ok {
 		return
 	}
@@ -641,7 +736,7 @@ func (a *API) handleAdminDeviceConfig(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) handleAdminDeviceQR(w http.ResponseWriter, r *http.Request) {
-	d, ok := a.anyDevice(w, r)
+	d, ok := a.scopedDevice(w, r)
 	if !ok {
 		return
 	}
@@ -649,11 +744,11 @@ func (a *API) handleAdminDeviceQR(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) handleAdminUpdateDevice(w http.ResponseWriter, r *http.Request) {
-	id, err := pathID(r)
-	if err != nil {
-		a.errJSON(w, http.StatusBadRequest, "bad id")
+	d, ok := a.scopedDevice(w, r)
+	if !ok {
 		return
 	}
+	id := d.ID
 	var body struct {
 		Enabled *bool `json:"enabled"`
 	}
@@ -678,12 +773,11 @@ func (a *API) handleAdminUpdateDevice(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) handleAdminDeleteDevice(w http.ResponseWriter, r *http.Request) {
-	id, err := pathID(r)
-	if err != nil {
-		a.errJSON(w, http.StatusBadRequest, "bad id")
+	d, ok := a.scopedDevice(w, r)
+	if !ok {
 		return
 	}
-	if err := a.store.DeleteDevice(id); err != nil {
+	if err := a.store.DeleteDevice(d.ID); err != nil {
 		a.errJSON(w, http.StatusNotFound, "device not found")
 		return
 	}
@@ -747,16 +841,32 @@ func (a *API) ownedDevice(w http.ResponseWriter, r *http.Request, userID int64) 
 	return d, true
 }
 
-func (a *API) anyDevice(w http.ResponseWriter, r *http.Request) (*store.Device, bool) {
-	id, err := pathID(r)
+// scopedDevice loads a device for the admin config/QR/update/delete
+// endpoints. The superadmin may touch any device; an admin only devices
+// belonging to their subtree (themself or their users) — everything else
+// reads as 404, same as a non-owner sees on /api/me.
+func (a *API) scopedDevice(w http.ResponseWriter, r *http.Request) (*store.Device, bool) {
+	id := ident(r)
+	did, err := pathID(r)
 	if err != nil {
 		a.errJSON(w, http.StatusBadRequest, "bad id")
 		return nil, false
 	}
-	d, err := a.store.GetDevice(id)
+	d, err := a.store.GetDevice(did)
 	if err != nil {
 		a.errJSON(w, http.StatusNotFound, "device not found")
 		return nil, false
+	}
+	if !id.isSuper() {
+		ids, err := a.visibleUserIDs(id)
+		if err != nil {
+			a.errJSON(w, http.StatusInternalServerError, "storage error")
+			return nil, false
+		}
+		if !containsInt64(ids, d.UserID) {
+			a.errJSON(w, http.StatusNotFound, "device not found")
+			return nil, false
+		}
 	}
 	return d, true
 }

@@ -133,7 +133,7 @@ func (b *Bot) handleUpdate(ctx context.Context, u tgUpdate) {
 	case "/help":
 		b.sendMessage(ctx, msg.Chat.ID, t(lang, "help"), nil)
 	case "/stats":
-		if user.Role != "admin" {
+		if user.Role != "superadmin" {
 			b.sendMessage(ctx, msg.Chat.ID, t(lang, "denied"), nil)
 			return
 		}
@@ -144,7 +144,7 @@ func (b *Bot) handleUpdate(ctx context.Context, u tgUpdate) {
 		}
 		b.sendMessage(ctx, msg.Chat.ID, formatStats(lang, ov), nil)
 	case "/invite":
-		if user.Role != "admin" {
+		if user.Role != "admin" && user.Role != "superadmin" {
 			b.sendMessage(ctx, msg.Chat.ID, t(lang, "denied"), nil)
 			return
 		}
@@ -166,11 +166,14 @@ func (b *Bot) handleUpdate(ctx context.Context, u tgUpdate) {
 	}
 }
 
+// upsertUser mirrors the Mini App auth: FIBR_ADMIN_TELEGRAM_IDS entries are
+// (re)promoted to superadmin on every message, everyone else registers as a
+// plain user.
 func (b *Bot) upsertUser(from *tgUser) (*store.User, error) {
 	if u, err := b.store.GetUserByTelegramID(from.ID); err == nil {
-		if u.Role != "admin" && b.isAdminID(from.ID) {
-			_ = b.store.SetUserRole(u.ID, "admin")
-			u.Role = "admin"
+		if u.Role != "superadmin" && b.isAdminID(from.ID) {
+			_ = b.store.SetUserRole(u.ID, "superadmin")
+			u.Role = "superadmin"
 		}
 		return u, nil
 	} else if err != store.ErrNotFound {
@@ -178,7 +181,7 @@ func (b *Bot) upsertUser(from *tgUser) (*store.User, error) {
 	}
 	role := "user"
 	if b.isAdminID(from.ID) {
-		role = "admin"
+		role = "superadmin"
 	}
 	tid := from.ID
 	name := from.Username
@@ -293,7 +296,7 @@ func pickLang(code string) string {
 var texts = map[string]map[string]string{
 	"ru": {
 		"welcome":       "👋 Добро пожаловать в <b>Fibr</b>!\n\nКнопкой ниже откройте приложение: там можно создать устройство, забрать QR-код конфигурации и посмотреть свою статистику.",
-		"help":          "Команды:\n/start — открыть приложение\n/help — справка\n/stats — статистика (только админ)\n/invite — создать приглашение (только админ)\n/id — узнать свой Telegram ID",
+		"help":          "Команды:\n/start — открыть приложение\n/help — справка\n/stats — статистика (только владелец)\n/invite — создать приглашение (только админ)\n/id — узнать свой Telegram ID",
 		"denied":        "⛔ Команда доступна только администраторам.",
 		"unknown":       "Не понял команду. /help — список команд.",
 		"inviteCreated": "🎟 Одноразовое приглашение:\n\nКод: <code>%s</code>\nСсылка: %s\n\nОдин человек сможет зарегистрироваться, открыв ссылку в Telegram.",
@@ -308,7 +311,7 @@ var texts = map[string]map[string]string{
 	},
 	"en": {
 		"welcome":       "👋 Welcome to <b>Fibr</b>!\n\nUse the button below to open the app: create a device, grab a QR config and check your traffic stats.",
-		"help":          "Commands:\n/start — open the app\n/help — help\n/stats — stats (admin only)\n/invite — create an invite (admin only)\n/id — show your Telegram ID",
+		"help":          "Commands:\n/start — open the app\n/help — help\n/stats — stats (owner only)\n/invite — create an invite (admin only)\n/id — show your Telegram ID",
 		"denied":        "⛔ This command is admin-only.",
 		"unknown":       "Unknown command. /help lists commands.",
 		"inviteCreated": "🎟 One-time invite:\n\nCode: <code>%s</code>\nLink: %s\n\nOne person can register by opening the link in Telegram.",

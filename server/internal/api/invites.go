@@ -62,6 +62,7 @@ type inviteOut struct {
 }
 
 func (a *API) handleAdminListInvites(w http.ResponseWriter, r *http.Request) {
+	id := ident(r)
 	invites, err := a.store.ListInvites()
 	if err != nil {
 		a.errJSON(w, http.StatusInternalServerError, "storage error")
@@ -78,6 +79,12 @@ func (a *API) handleAdminListInvites(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]inviteOut, 0, len(invites))
 	for _, inv := range invites {
+		// Reseller scope: an admin only sees invites they generated
+		// (created_by = their id); the superadmin sees all, including the
+		// ones minted with the static token (created_by = 0).
+		if !id.isSuper() && inv.CreatedBy != id.userID {
+			continue
+		}
 		o := inviteOut{Invite: inv, Link: InviteLink(a.cfg.Domain, inv.Code)}
 		if inv.UsedBy != nil {
 			o.Username = names[*inv.UsedBy]
@@ -120,6 +127,16 @@ func (a *API) handleAdminDeleteInvite(w http.ResponseWriter, r *http.Request) {
 	if code == "" {
 		a.errJSON(w, http.StatusBadRequest, "bad code")
 		return
+	}
+	id := ident(r)
+	if !id.isSuper() {
+		// An admin may only delete their own invites; foreign codes read as
+		// 404 so ids cannot be probed.
+		inv, err := a.store.GetInvite(code)
+		if err != nil || inv.CreatedBy != id.userID {
+			a.errJSON(w, http.StatusNotFound, "invite not found")
+			return
+		}
 	}
 	if err := a.store.DeleteInvite(code); err != nil {
 		a.errJSON(w, http.StatusNotFound, "invite not found")
