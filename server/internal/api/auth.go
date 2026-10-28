@@ -55,8 +55,8 @@ func ValidateInitData(initData, botToken string) (InitUser, error) {
 	// joined as "key=value" with newline separators.
 	keys := make([]string, 0, len(vals))
 	for k := range vals {
-		if k == "hash" || k == "signature" {
-			continue
+		if k == "hash" {
+			continue // the ONLY field excluded from the check string
 		}
 		keys = append(keys, k)
 	}

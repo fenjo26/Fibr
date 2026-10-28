@@ -188,3 +188,24 @@ func TestValidateLoginWidget(t *testing.T) {
 		}
 	})
 }
+
+// Real Telegram initData includes a `signature` field alongside `hash`; it
+// participates in the data-check-string like any other field (only hash is
+// excluded). This test locks that in — excluding signature was the bug that
+// broke every real Mini App login with "invalid initData signature".
+func TestInitDataSignatureFieldIncluded(t *testing.T) {
+	const botToken = "7000000003:SIG-TOKEN"
+	params := map[string]string{
+		"auth_date": strconv.FormatInt(time.Now().Unix(), 10),
+		"query_id":  "AAFrealworldLikeQuery",
+		"signature": "AbCdEf0123456789+/==",
+		"user":      `{"id":99,"first_name":"Real","username":"real_user"}`,
+	}
+	u, err := ValidateInitData(signInitData(botToken, params), botToken)
+	if err != nil {
+		t.Fatalf("real-shape initData must validate, got: %v", err)
+	}
+	if u.ID != 99 || u.Username != "real_user" {
+		t.Fatalf("user mismatch: %+v", u)
+	}
+}
