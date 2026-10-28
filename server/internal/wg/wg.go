@@ -533,6 +533,25 @@ func (m *Manager) ClientConfigGameAt(d store.Device, ep node.Endpoint, cidrs []s
 	return m.clientConfig(d, ep, allowed)
 }
 
+// ClientConfigGameWireSockAt renders the game-tunnel config for WireSock /
+// TunnlTo on Windows. WireSock filters traffic by process name instead of
+// relying solely on IP ranges: AllowedApps specifies which executables route
+// through the tunnel (e.g. cs2.exe), while AllowedIPs routes all destinations
+// for those apps. The #@ws: prefix is recognized by WireSock while safely
+// ignored by the official WireGuard client as a comment.
+func (m *Manager) ClientConfigGameWireSockAt(d store.Device, ep node.Endpoint, apps []string, cidrs []string) string {
+	allowed := "0.0.0.0/0, ::/0"
+	if len(cidrs) > 0 {
+		allowed = strings.Join(cidrs, ", ")
+	}
+	base := m.clientConfig(d, ep, allowed)
+	if len(apps) > 0 {
+		appStr := strings.Join(apps, ", ")
+		base += fmt.Sprintf("\n# WireSock / TunnlTo process split-tunneling:\n#@ws:AllowedApps = %s\nAllowedApps = %s\n", appStr, appStr)
+	}
+	return base
+}
+
 func (m *Manager) clientConfig(d store.Device, ep node.Endpoint, allowedIPs string) string {
 	awgBlock := "\n"
 	if m.awg != nil {

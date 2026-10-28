@@ -13,6 +13,7 @@ type Game struct {
 	ID        string    `json:"id"`
 	Name      string    `json:"name"`
 	NameRu    string    `json:"name_ru"`
+	Processes []string  `json:"processes,omitempty"`
 	CIDRs     []string  `json:"cidrs,omitempty"`
 	CIDRCount int       `json:"cidr_count"`
 	Updated   time.Time `json:"updated"`

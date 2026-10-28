@@ -146,6 +146,7 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("GET /api/me/devices/{id}/game-qr.png", a.auth(a.handleMeGameQR))
 	mux.HandleFunc("GET /api/games", a.handleGames)
 	mux.HandleFunc("GET /api/games/routes", a.handleGameRoutes)
+	mux.HandleFunc("GET /api/games/diagnostics", a.handleGameDiagnostics)
 
 	// Admin invite endpoints (self-enrollment links; see docs/self-enroll.md).
 	mux.HandleFunc("GET /api/admin/invites", a.admin(a.handleAdminListInvites))

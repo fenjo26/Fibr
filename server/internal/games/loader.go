@@ -43,6 +43,7 @@ type Source struct {
 	Name       string   `json:"name"`
 	GameName   string   `json:"game_name"`
 	GameNameRu string   `json:"game_name_ru"`
+	Processes  []string `json:"processes,omitempty"`
 	URLs       []string `json:"urls"`
 	Format     string   `json:"format"`
 }
@@ -58,9 +59,9 @@ type Options struct {
 }
 
 // DefaultSources returns the refresh sources matching the builtin snapshot:
-// Valve matchmaking ranges for cs2/dota2 (two community mirrors of the same
-// data, cross-checked against AS32590 when the snapshot was generated) and
-// Riot's AS6507 announcements for lol/valorant.
+// Valve matchmaking ranges for cs2/dota2, Riot's AS6507 for lol/valorant,
+// EA AS17260 for apex, Blizzard AS39651, Ubisoft AS39414, Facepunch AS43515,
+// and G-Core AS199524 for standoff2.
 func DefaultSources() []Source {
 	valve := []string{
 		"https://raw.githubusercontent.com/denniskupec/valve-matchmaking-ip-ranges/master/old%20list.md",
@@ -69,11 +70,35 @@ func DefaultSources() []Source {
 	riot := []string{
 		"https://stat.ripe.net/data/announced-prefixes/data.json?resource=AS6507",
 	}
+	ea := []string{
+		"https://stat.ripe.net/data/announced-prefixes/data.json?resource=AS17260",
+	}
+	blizzard := []string{
+		"https://stat.ripe.net/data/announced-prefixes/data.json?resource=AS39651",
+	}
+	ubisoft := []string{
+		"https://stat.ripe.net/data/announced-prefixes/data.json?resource=AS39414",
+	}
+	facepunch := []string{
+		"https://stat.ripe.net/data/announced-prefixes/data.json?resource=AS43515",
+	}
+	gcore := []string{
+		"https://stat.ripe.net/data/announced-prefixes/data.json?resource=AS199524",
+	}
+	pubg := []string{
+		"https://raw.githubusercontent.com/FQrabbit/SSTap-Rule/master/rules/PUBG-INT.rules",
+	}
 	return []Source{
-		{Name: "cs2", GameName: "Counter-Strike 2", GameNameRu: "Counter-Strike 2", URLs: valve, Format: FormatPlain},
-		{Name: "dota2", GameName: "Dota 2", GameNameRu: "Dota 2", URLs: valve, Format: FormatPlain},
-		{Name: "lol", GameName: "League of Legends", GameNameRu: "League of Legends", URLs: riot, Format: FormatRIPEstat},
-		{Name: "valorant", GameName: "Valorant", GameNameRu: "Valorant", URLs: riot, Format: FormatRIPEstat},
+		{Name: "cs2", GameName: "Counter-Strike 2", GameNameRu: "Counter-Strike 2", Processes: []string{"cs2.exe", "cs2"}, URLs: valve, Format: FormatPlain},
+		{Name: "dota2", GameName: "Dota 2", GameNameRu: "Dota 2", Processes: []string{"dota2.exe", "dota2"}, URLs: valve, Format: FormatPlain},
+		{Name: "lol", GameName: "League of Legends", GameNameRu: "League of Legends", Processes: []string{"LeagueClient.exe", "League of Legends.exe"}, URLs: riot, Format: FormatRIPEstat},
+		{Name: "valorant", GameName: "Valorant", GameNameRu: "Valorant", Processes: []string{"VALORANT-Win64-Shipping.exe", "VALORANT.exe", "RiotClientServices.exe"}, URLs: riot, Format: FormatRIPEstat},
+		{Name: "apex", GameName: "Apex Legends", GameNameRu: "Apex Legends", Processes: []string{"r5apex.exe", "r5apex_dx12.exe"}, URLs: ea, Format: FormatRIPEstat},
+		{Name: "blizzard", GameName: "Blizzard / Overwatch 2", GameNameRu: "Blizzard / Overwatch 2", Processes: []string{"Overwatch.exe", "Battle.net.exe"}, URLs: blizzard, Format: FormatRIPEstat},
+		{Name: "pubg", GameName: "PUBG: Battlegrounds", GameNameRu: "PUBG: Battlegrounds", Processes: []string{"TslGame.exe", "TslGame_UC.exe"}, URLs: pubg, Format: FormatPlain},
+		{Name: "r6", GameName: "Rainbow Six Siege", GameNameRu: "Rainbow Six Siege", Processes: []string{"RainbowSix.exe", "RainbowSix_Vulkan.exe"}, URLs: ubisoft, Format: FormatRIPEstat},
+		{Name: "rust", GameName: "Rust", GameNameRu: "Rust", Processes: []string{"RustClient.exe"}, URLs: facepunch, Format: FormatRIPEstat},
+		{Name: "standoff2", GameName: "Standoff 2", GameNameRu: "Standoff 2", Processes: []string{"Standoff2.exe", "com.axlebolt.standoff2"}, URLs: gcore, Format: FormatRIPEstat},
 	}
 }
 
@@ -133,6 +158,30 @@ func (c *Catalog) Routes(ids []string) map[string][]string {
 			cidrs := make([]string, len(g.CIDRs))
 			copy(cidrs, g.CIDRs)
 			out[id] = cidrs
+		}
+	}
+	return out
+}
+
+// Processes returns deduplicated executable process names for the named games
+// (used by WireSock and TunnlTo split-tunneling configs).
+func (c *Catalog) Processes(ids []string) []string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	seen := make(map[string]bool)
+	var out []string
+	for _, id := range ids {
+		for _, g := range c.games {
+			if g.ID != id {
+				continue
+			}
+			for _, p := range g.Processes {
+				p = strings.TrimSpace(p)
+				if p != "" && !seen[p] {
+					seen[p] = true
+					out = append(out, p)
+				}
+			}
 		}
 	}
 	return out
@@ -215,6 +264,7 @@ func refreshGame(ctx context.Context, src Source) (Game, int, error) {
 			ID:        src.Name,
 			Name:      src.GameName,
 			NameRu:    src.GameNameRu,
+			Processes: src.Processes,
 			CIDRs:     cidrs,
 			CIDRCount: len(cidrs),
 			Updated:   time.Now().UTC(),

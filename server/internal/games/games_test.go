@@ -134,7 +134,10 @@ func TestNormalize(t *testing.T) {
 }
 
 func TestBuiltinSnapshot(t *testing.T) {
-	wantCounts := map[string]int{"cs2": 47, "dota2": 47, "lol": 15, "valorant": 15}
+	wantCounts := map[string]int{
+		"cs2": 47, "dota2": 47, "lol": 15, "valorant": 15,
+		"apex": 3, "blizzard": 6, "pubg": 3, "r6": 3, "rust": 3, "standoff2": 3,
+	}
 	if len(builtinSnapshot) != len(wantCounts) {
 		t.Fatalf("snapshot has %d games, want %d", len(builtinSnapshot), len(wantCounts))
 	}
@@ -434,5 +437,14 @@ func TestRun(t *testing.T) {
 	case <-done:
 	case <-time.After(2 * time.Second):
 		t.Fatal("Run did not return after cancel")
+	}
+}
+
+func TestCatalogProcesses(t *testing.T) {
+	cat := NewCatalog(Options{})
+	procs := cat.Processes([]string{"cs2", "apex", "unknown"})
+	want := []string{"cs2.exe", "cs2", "r5apex.exe", "r5apex_dx12.exe"}
+	if !reflect.DeepEqual(procs, want) {
+		t.Fatalf("processes = %v, want %v", procs, want)
 	}
 }

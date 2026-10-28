@@ -12,9 +12,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/fenjo26/Fibr/internal/dns"
@@ -463,5 +465,100 @@ func (a *API) renderGameCredential(w http.ResponseWriter, r *http.Request) (cont
 		m = a.awgm
 	}
 	a.touchConfigFetched(d.ID)
+	format := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("format")))
+	if format == "wiresock" || format == "pc" || format == "tunnlto" {
+		var apps []string
+		if a.gamesCat != nil {
+			apps = a.gamesCat.Processes(strings.Split(r.URL.Query().Get("games"), ","))
+		}
+		return m.ClientConfigGameWireSockAt(*d, ep, apps, cidrs), ConfFileName(d.Name+"-wiresock-game", "conf"), 0, nil
+	}
 	return m.ClientConfigGameAt(*d, ep, cidrs), ConfFileName(d.Name+"-game", "conf"), 0, nil
+}
+
+// GameHubDiagnostic represents latency from this Fibr server to a regional gaming hub.
+type GameHubDiagnostic struct {
+	ID     string `json:"id"`
+	City   string `json:"city"`
+	Region string `json:"region"`
+	RTTMs  int    `json:"rtt_ms"`
+	Status string `json:"status"` // "excellent", "good", "fair", "unreachable"
+}
+
+// DiagnosticsResponse is the payload for GET /api/games/diagnostics.
+type DiagnosticsResponse struct {
+	Timestamp time.Time           `json:"timestamp"`
+	Hubs      []GameHubDiagnostic `json:"hubs"`
+}
+
+var (
+	diagMu    sync.Mutex
+	diagCache *DiagnosticsResponse
+	diagTime  time.Time
+)
+
+// handleGameDiagnostics measures and returns server-to-hub network latency.
+func (a *API) handleGameDiagnostics(w http.ResponseWriter, r *http.Request) {
+	diagMu.Lock()
+	defer diagMu.Unlock()
+
+	if diagCache != nil && time.Since(diagTime) < 30*time.Second {
+		writeJSON(w, http.StatusOK, diagCache)
+		return
+	}
+
+	targets := []struct {
+		id, city, region, addr string
+	}{
+		{"fra", "Frankfurt", "EU West", "162.249.72.1:27015"},
+		{"sto", "Stockholm", "EU North", "155.133.252.1:27015"},
+		{"ams", "Amsterdam", "EU Central", "185.60.112.157:1119"},
+		{"waw", "Warsaw", "EU East", "155.133.230.1:27015"},
+	}
+
+	hubs := make([]GameHubDiagnostic, len(targets))
+	var wg sync.WaitGroup
+	for i, t := range targets {
+		wg.Add(1)
+		go func(idx int, id, city, region, addr string) {
+			defer wg.Done()
+			start := time.Now()
+			conn, err := net.DialTimeout("tcp", addr, 350*time.Millisecond)
+			dur := time.Since(start)
+			rtt := int(dur / time.Millisecond)
+			if conn != nil {
+				conn.Close()
+			}
+			reachable := err == nil || strings.Contains(err.Error(), "connection refused") || strings.Contains(err.Error(), "reset")
+			status := "unreachable"
+			if reachable {
+				if rtt <= 25 {
+					status = "excellent"
+				} else if rtt <= 60 {
+					status = "good"
+				} else {
+					status = "fair"
+				}
+			} else {
+				rtt = -1
+			}
+			hubs[idx] = GameHubDiagnostic{
+				ID:     id,
+				City:   city,
+				Region: region,
+				RTTMs:  rtt,
+				Status: status,
+			}
+		}(i, t.id, t.city, t.region, t.addr)
+	}
+	wg.Wait()
+
+	resp := &DiagnosticsResponse{
+		Timestamp: time.Now().UTC(),
+		Hubs:      hubs,
+	}
+	diagCache = resp
+	diagTime = time.Now()
+
+	writeJSON(w, http.StatusOK, resp)
 }

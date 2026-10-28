@@ -138,6 +138,29 @@ func TestDNSGamesEndpoints(t *testing.T) {
 		t.Fatalf("game config without games: %d", rec.Code)
 	}
 
+	// Game tunnel with format=wiresock contains AllowedApps process directives.
+	rec = call(http.MethodGet, "/api/me/devices/1/game-config?games=cs2&format=wiresock", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("wiresock config: %d %s", rec.Code, rec.Body.String())
+	}
+	if body := rec.Body.String(); !strings.Contains(body, "#@ws:AllowedApps = cs2.exe") {
+		t.Fatalf("wiresock config missing AllowedApps directive:\n%s", body)
+	}
+
+	// Diagnostics endpoint.
+	rec = httptest.NewRecorder()
+	a.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/games/diagnostics", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("diagnostics: %d", rec.Code)
+	}
+	var diag DiagnosticsResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &diag); err != nil {
+		t.Fatalf("unmarshal diagnostics: %v", err)
+	}
+	if len(diag.Hubs) == 0 {
+		t.Fatalf("expected hubs in diagnostics response: %s", rec.Body.String())
+	}
+
 	// Invalid profile and invalid schedule are rejected.
 	if rec := call(http.MethodPut, "/api/me/devices/1/dns", `{"profile":"strict"}`); rec.Code != http.StatusBadRequest {
 		t.Fatalf("invalid profile: %d", rec.Code)

@@ -81,22 +81,24 @@ action ∈ allow|block|safesearch|schedule); prune раз в час, retention 7
 ## 2. Игровой режим
 
 Через туннель — ТОЛЬКО игровой трафик: второй WireGuard-туннель из того же
-пира, AllowedIPs = CIDR выбранных игр. Серверная часть — `internal/games`.
+пира, AllowedIPs = CIDR выбранных игр, либо перехват по процессам для ПК
+(WireSock / TunnlTo с директивой `#@ws:AllowedApps`). Серверная часть — `internal/games`.
 
-Снапшот (2026-10-28): cs2 31 + dota2 31 (Valve: denniskupec `old%20list.md` —
-прежде mm-range.txt, 404; + ryad-lindner; кросс-чек AS32590; Steam-CDN
-205.196.6.0/24, 208.64.200.0–203.0/24 исключены), lol 15 + valorant 15
-(Riot AS6507 через RIPEstat). Fortnite/Minecraft не включены (Fortnite —
-широкие AWS-блоки = пол-интернета в туннеле; у Minecraft нет фиксированных
-серверов). Обновление с GitHub раз в 24ч, failover источников, кэш
-`/data/games.json`, форматы plain-CIDR / SSTap / markdown-списки.
+Снапшот: cs2, dota2, lol, valorant, apex, blizzard (Overwatch 2 / Battle.net),
+pubg, r6 (Rainbow Six Siege), rust, standoff2.
+Каждая игра содержит список исполняемых файлов (`processes`, например `cs2.exe`,
+`r5apex.exe`, `Overwatch.exe`, `com.axlebolt.standoff2`).
+Обновление раз в 24ч (RIPEstat BGP announcements, Valve / SSTap списки),
+failover источников, кэш `/data/games.json`.
 
 ## 3. API
 
-Публичные (как /api/health): `GET /api/dns/status` →
-`{"enabled":true,"default_profile":"adblock"}`; `GET /api/games` →
-`[{id,name,name_ru,cidr_count,updated}]`; `GET /api/games/routes?ids=` →
-`{game_id: [cidr...]}`.
+Публичные (как /api/health):
+- `GET /api/dns/status` → `{"enabled":true,"default_profile":"adblock"}`;
+- `GET /api/games` → `[{id,name,name_ru,processes,cidr_count,updated}]`;
+- `GET /api/games/routes?ids=` → `{game_id: [cidr...]}`;
+- `GET /api/games/diagnostics` → замер RTT от VPS до европейских игровых хабов
+  (Франкфурт, Стокгольм, Амстердам, Варшава).
 
 Авторизованные (после ролевой сессии): `GET /api/dns/stats`,
 `GET /api/dns/querylog`, `PUT /api/me/devices/{id}/dns`
@@ -104,11 +106,10 @@ action ∈ allow|block|safesearch|schedule); prune раз в час, retention 7
 `allow` — личный никогда-не-блокировать список устройства, до 64 доменов,
 приоритетнее любых серверных списков), управление списками
 (`GET/POST/DELETE /api/dns/lists`, `PATCH /api/dns/lists/{name}`,
-`POST /api/dns/lists/refresh`), игровой туннель
-`GET /api/me/devices/{id}/game-config?games=` и
-`GET /api/me/devices/{id}/game-qr.png?games=` (второй конфиг того же пира
-с AllowedIPs выбранных игр). В WG-конфиге при `profile != off`:
-`DNS = <шлюз>`.
+`POST /api/dns/lists/refresh`), игровой туннель:
+- `GET /api/me/devices/{id}/game-config?games=&format=` (`format=wiresock`
+  добавляет директивы `#@ws:AllowedApps` для клиентов WireSock / TunnlTo на Windows);
+- `GET /api/me/devices/{id}/game-qr.png?games=`.
 
 ## 4. Env
 

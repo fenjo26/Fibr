@@ -87,7 +87,11 @@ class _GameModeScreenState extends State<GameModeScreen> {
                   CheckboxListTile(
                     value: _selected.contains(game.id),
                     title: Text(game.displayName(l10n.langCode)),
-                    subtitle: Text(l10n.t('gameCidrCount', {'n': game.cidrCount})),
+                    subtitle: Text(
+                      game.processes.isNotEmpty
+                          ? '${l10n.t('gameCidrCount', {'n': game.cidrCount})} • ${game.processes.first}'
+                          : l10n.t('gameCidrCount', {'n': game.cidrCount}),
+                    ),
                     dense: true,
                     onChanged: _creating
                         ? null

@@ -81,6 +81,15 @@
       gamesNeed: 'Выберите хотя бы одну игру',
       gamesImport: 'Отсканируйте QR в приложении WireGuard или AmneziaVPN как ВТОРОЙ туннель — основной конфиг остаётся как есть. Игровой режим включается, когда оба туннеля включены.',
       gamesNone: 'Добавьте устройство WireGuard, чтобы включить игровой режим.',
+      gamesDlConf: 'Скачать .conf',
+      gamesDlPC: '🚀 Для ПК (WireSock / TunnlTo)',
+      gamesPCHint: 'Конфиг для Windows (WireSock / TunnlTo): туннелирует только выбранную игру по имени процесса (.exe).',
+      gamesDiagTitle: 'Диагностика задержки (Ping)',
+      gamesDiagPCtoVPS: 'Ваш ПК ➔ Fibr',
+      gamesDiagVPStoHub: 'Fibr ➔ Серверы игр',
+      gamesDiagTotal: 'Расчётный пинг',
+      gamesDiagOptimal: 'Оптимальный маршрут',
+      gamesDiagGood: 'Рабочий маршрут',
       btnSendTg: 'Файл в Telegram', sentTg: 'Файл отправлен в чат с ботом ✅',
       errSendTg: 'Не удалось отправить. Откройте чат с ботом, нажмите «Старт» и повторите.',
       howToTitle: 'Как подключить файлом',
@@ -197,6 +206,15 @@
       gamesNeed: 'Pick at least one game',
       gamesImport: 'Scan the QR in WireGuard or AmneziaVPN as a SECOND tunnel — the main config stays as is. Game mode is on when both tunnels are up.',
       gamesNone: 'Add a WireGuard device to use game mode.',
+      gamesDlConf: 'Download .conf',
+      gamesDlPC: '🚀 For PC (WireSock / TunnlTo)',
+      gamesPCHint: 'Config for Windows (WireSock / TunnlTo): tunnels game traffic by process name (.exe).',
+      gamesDiagTitle: 'Latency diagnostics (Ping)',
+      gamesDiagPCtoVPS: 'Your PC ➔ Fibr',
+      gamesDiagVPStoHub: 'Fibr ➔ Game servers',
+      gamesDiagTotal: 'Estimated ping',
+      gamesDiagOptimal: 'Optimal route',
+      gamesDiagGood: 'Good route',
       btnSendTg: 'File to Telegram', sentTg: 'The file is in your chat with the bot ✅',
       errSendTg: 'Could not send. Open the bot chat, press Start and try again.',
       howToTitle: 'Connect with a file',
@@ -654,8 +672,53 @@
       '<select class="input" id="game-dev">' + devs.map(function (d) {
         return '<option value="' + d.id + '">' + esc(d.name) + '</option>';
       }).join('') + '</select></label>' +
-      '<div class="modal-actions" style="margin-top:10px"><button class="btn" id="game-qr">' + esc(t('gamesQR')) + '</button></div>' +
+      '<div class="modal-actions" style="margin-top:12px;display:flex;flex-wrap:wrap;gap:8px">' +
+      '<button class="btn" id="game-qr">' + esc(t('gamesQR')) + '</button>' +
+      '<button class="btn btn-secondary" id="game-dl">' + esc(t('gamesDlConf')) + '</button>' +
+      '<button class="btn btn-secondary" id="game-pc">' + esc(t('gamesDlPC')) + '</button>' +
+      '</div>' +
+      '<p class="muted" style="margin-top:8px;font-size:12px">' + esc(t('gamesPCHint')) + '</p>' +
+      '<div id="game-diag" style="margin-top:12px;padding:10px 12px;border:1px solid var(--hairline);border-radius:var(--r-md);background:var(--surface);font-size:12px;display:none"></div>' +
       '</div>';
+
+    function downloadGameConf(devId, gameIds, format) {
+      var url = '/api/me/devices/' + devId + '/game-config?games=' + encodeURIComponent(gameIds.join(','));
+      if (format) url += '&format=' + encodeURIComponent(format);
+      fetch(url, { headers: { Authorization: 'Bearer ' + token } })
+        .then(function (res) {
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          var cd = res.headers.get('Content-Disposition') || '';
+          var m = cd.match(/filename="?([^"]+)"?/);
+          return res.text().then(function (text) { return { text: text, name: m ? m[1] : 'fibr-game.conf' }; });
+        })
+        .then(function (f) {
+          var a = document.createElement('a');
+          a.href = URL.createObjectURL(new Blob([f.text], { type: 'application/octet-stream' }));
+          a.download = f.name;
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+        })
+        .catch(fail);
+    }
+
+    var t0 = Date.now();
+    fetch('/api/dns/status').then(function () {
+      var clientPing = Date.now() - t0;
+      fetch('/api/games/diagnostics').then(function (r) { return r.json(); }).then(function (diag) {
+        var dbox = el('game-diag');
+        if (!dbox || !diag || !diag.hubs || !diag.hubs.length) return;
+        var validHubs = diag.hubs.filter(function (h) { return h.rtt_ms >= 0; });
+        var best = validHubs.sort(function (a, b) { return a.rtt_ms - b.rtt_ms; })[0];
+        var totalEst = best ? (clientPing + best.rtt_ms) : clientPing;
+        var badge = totalEst <= 45 ? '🟢 ' + esc(t('gamesDiagOptimal')) : '🟡 ' + esc(t('gamesDiagGood'));
+        dbox.style.display = 'block';
+        dbox.innerHTML = '<div style="font-weight:700;margin-bottom:4px">⚡ ' + esc(t('gamesDiagTitle')) + ' — ' + badge + '</div>' +
+          '<div style="color:var(--muted)">' + esc(t('gamesDiagPCtoVPS')) + ': <b>' + clientPing + ' ms</b> | ' +
+          esc(t('gamesDiagVPStoHub')) + ' (' + (best ? esc(best.city) : 'EU') + '): <b>' + (best ? best.rtt_ms : '~5') + ' ms</b></div>' +
+          '<div style="margin-top:4px">' + esc(t('gamesDiagTotal')) + ': <b style="color:var(--accent,#4da6ff)">~' + totalEst + ' ms</b></div>';
+      }).catch(function () {});
+    }).catch(function () {});
 
     el('game-qr').addEventListener('click', function () {
       var ids = [];
@@ -675,6 +738,22 @@
             '<div class="qr-wrap"><img src="' + url + '" alt="QR"></div>');
         })
         .catch(fail);
+    });
+
+    el('game-dl').addEventListener('click', function () {
+      var ids = [];
+      Array.prototype.forEach.call(document.querySelectorAll('.game-chk:checked'), function (c) { ids.push(c.value); });
+      if (!ids.length) { alert(t('gamesNeed')); return; }
+      var dev = el('game-dev').value;
+      downloadGameConf(dev, ids, '');
+    });
+
+    el('game-pc').addEventListener('click', function () {
+      var ids = [];
+      Array.prototype.forEach.call(document.querySelectorAll('.game-chk:checked'), function (c) { ids.push(c.value); });
+      if (!ids.length) { alert(t('gamesNeed')); return; }
+      var dev = el('game-dev').value;
+      downloadGameConf(dev, ids, 'wiresock');
     });
   }
 
