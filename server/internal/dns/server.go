@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/AdguardTeam/dnsproxy/proxy"
@@ -201,6 +202,16 @@ func (s *Server) filterRequest(ctx context.Context, next proxy.Handler, p *proxy
 		}
 	}
 
+	// 3.5 Personal never-block list (the owner's own exceptions): overrides
+	// every block set — including lists the admin enabled — but never the
+	// canary, the schedule or SafeSearch.
+	if s.allowlisted(clientIP, qname) {
+		err := next.ServeDNS(ctx, p, dctx)
+		entry.Action, entry.List = ActionAllow, "personal-allow"
+		s.qlog.Log(entry)
+		return err
+	}
+
 	// 4. Profile block sets (off matches nothing, not even DoH).
 	if blocked, list := s.filter.Match(profileSets(profile), qname); blocked {
 		dctx.Res = blockResp(dctx.Req)
@@ -214,6 +225,24 @@ func (s *Server) filterRequest(ctx context.Context, next proxy.Handler, p *proxy
 	entry.Action = ActionAllow
 	s.qlog.Log(entry)
 	return err
+}
+
+// allowlisted reports whether the client's personal exceptions cover the
+// query: an entry "example.com" also covers every subdomain.
+func (s *Server) allowlisted(clientIP net.IP, qname string) bool {
+	if s.cfg.AllowlistLookup == nil {
+		return false
+	}
+	for _, d := range s.cfg.AllowlistLookup(clientIP) {
+		d = normalizeDomain(d)
+		if d == "" {
+			continue
+		}
+		if qname == d || strings.HasSuffix(qname, "."+d) {
+			return true
+		}
+	}
+	return false
 }
 
 // profileSets maps a profile to the block sets it consults. Custom lists act

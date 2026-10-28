@@ -108,6 +108,18 @@ type Device struct {
 	// "this credential was never fetched after the endpoint moved" apart
 	// from "the user re-downloaded after the switch". nil = never fetched.
 	ConfigFetchedAt *time.Time `json:"config_fetched_at"`
+	// DNS filtering profile of the protected resolver (docs/dns-games.md §1):
+	// "", "off", "adblock" or "family". Empty means the server default
+	// applies (NULL row = never touched by the owner).
+	DNSProfile string `json:"dns_profile"`
+	// DNSSchedule is the family-profile parental window as raw JSON
+	// ({"days":[1..5],"start":"07:00","end":"22:00","tz":"Europe/Berlin"});
+	// empty = no schedule.
+	DNSSchedule string `json:"dns_schedule"`
+	// DNSAllowlist is the owner's personal never-block list as raw JSON
+	// (["example.com", ...]) — overrides every server blocklist for this
+	// device (docs/dns-games.md §1 "allowlist"). Empty = no exceptions.
+	DNSAllowlist string `json:"-"`
 }
 
 // Invite is a one-time self-enrollment code (stage 4). The admin generates
@@ -288,6 +300,10 @@ func Open(path string) (*Store, error) {
 	if err := migrateDevicesProtocolAWG(db); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("migrate devices.protocol awg: %w", err)
+	}
+	if err := migrateDevicesDNS(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate devices dns: %w", err)
 	}
 	if err := migrateUsersLogin(db); err != nil {
 		db.Close()
@@ -545,6 +561,59 @@ func migrateDevicesConfigFetched(db *sql.DB) error {
 	}
 	_, err = db.Exec(`ALTER TABLE devices ADD COLUMN config_fetched_at INTEGER`)
 	return err
+}
+
+// migrateDevicesDNS adds the protected-DNS columns (docs/dns-games.md §5):
+// devices.dns_profile ("", off, adblock, family; NULL = server default),
+// devices.dns_schedule (family-profile JSON window; NULL = no schedule) and
+// devices.dns_allowlist (the owner's personal never-block JSON array).
+// All are plain nullable TEXT columns — pragma-gated ALTER TABLE is enough
+// and existing rows read back as NULL, which means "default profile, no
+// schedule": filtering behaviour on upgrade is decided by the server's
+// FIBR_DNS_PROFILE_DEFAULT, not per device.
+func migrateDevicesDNS(db *sql.DB) error {
+	rows, err := db.Query(`pragma table_info(devices)`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	hasProfile, hasSchedule, hasAllow := false, false, false
+	for rows.Next() {
+		var cid int
+		var name, colType string
+		var notNull, pk int
+		var dflt any
+		if err := rows.Scan(&cid, &name, &colType, &notNull, &dflt, &pk); err != nil {
+			return err
+		}
+		switch name {
+		case "dns_profile":
+			hasProfile = true
+		case "dns_schedule":
+			hasSchedule = true
+		case "dns_allowlist":
+			hasAllow = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if !hasProfile {
+		if _, err := db.Exec(`ALTER TABLE devices ADD COLUMN dns_profile TEXT CHECK (dns_profile IN ('off','adblock','family'))`); err != nil {
+			return err
+		}
+	}
+	if !hasSchedule {
+		if _, err := db.Exec(`ALTER TABLE devices ADD COLUMN dns_schedule TEXT`); err != nil {
+			return err
+		}
+	}
+	if !hasAllow {
+		if _, err := db.Exec(`ALTER TABLE devices ADD COLUMN dns_allowlist TEXT`); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // migrateUsersReferrals adds the referral-program columns (see docs/
@@ -957,7 +1026,7 @@ func (s *Store) CreateDevice(d *Device) error {
 	return nil
 }
 
-const deviceCols = `id, user_id, name, protocol, public_key, private_key, preshared_key, ipv4, enabled, created_at, last_handshake, last_rx, last_tx, total_rx, total_tx, config_fetched_at`
+const deviceCols = `id, user_id, name, protocol, public_key, private_key, preshared_key, ipv4, enabled, created_at, last_handshake, last_rx, last_tx, total_rx, total_tx, config_fetched_at, dns_profile, dns_schedule, dns_allowlist`
 
 // GetDevice returns a device by id.
 func (s *Store) GetDevice(id int64) (*Device, error) {
@@ -1012,7 +1081,8 @@ func (s *Store) SetDeviceEnabled(id int64, enabled bool) error {
 // protocol filter on top.
 func (s *Store) ListActiveDevices(now time.Time) ([]Device, error) {
 	rows, err := s.db.Query(`SELECT d.id, d.user_id, d.name, d.protocol, d.public_key, d.private_key, d.preshared_key, d.ipv4,
-		d.enabled, d.created_at, d.last_handshake, d.last_rx, d.last_tx, d.total_rx, d.total_tx, d.config_fetched_at
+		d.enabled, d.created_at, d.last_handshake, d.last_rx, d.last_tx, d.total_rx, d.total_tx, d.config_fetched_at,
+		d.dns_profile, d.dns_schedule, d.dns_allowlist
 		FROM devices d
 		JOIN users u ON u.id = d.user_id
 		LEFT JOIN users o ON o.id = u.owner_id
@@ -1090,13 +1160,70 @@ func (s *Store) TouchDeviceConfigFetched(id int64, now time.Time) error {
 	return touched(res, err)
 }
 
+// SetDeviceDNS stores a device's filtering profile, its family-schedule
+// JSON and the owner's never-block JSON array (docs/dns-games.md §5).
+// profile is one of off/adblock/family; schedule may be empty (no window).
+// allowlist is a *string so callers choose "leave untouched" (nil) apart
+// from "clear" ("") — the admin profile PATCH must not clobber a user's
+// personal exceptions.
+func (s *Store) SetDeviceDNS(id int64, profile, schedule string, allowlist *string) error {
+	// "" means "follow the server default" — stored as NULL (the CHECK
+	// constraint only admits the three named profiles). allowlist is a
+	// *string so callers choose "leave untouched" (nil) apart from "clear"
+	// (""): the admin profile PATCH must not clobber a user's personal
+	// exceptions, so the column is simply left out of the UPDATE then.
+	var p, sc, al any
+	if profile != "" {
+		p = profile
+	}
+	if schedule != "" {
+		sc = schedule
+	}
+	if allowlist != nil && *allowlist != "" {
+		al = *allowlist
+	}
+	q := `UPDATE devices SET dns_profile = ?, dns_schedule = ?`
+	args := []any{p, sc}
+	if allowlist != nil {
+		q += `, dns_allowlist = ?`
+		args = append(args, al)
+	}
+	q += ` WHERE id = ?`
+	args = append(args, id)
+	res, err := s.db.Exec(q, args...)
+	return touched(res, err)
+}
+
+// DeviceDNSProfile resolves a tunnel IP to its stored profile, schedule
+// JSON and allowlist JSON — the dns.Config ProfileLookup/AllowlistLookup
+// callbacks (docs/dns-games.md §1). ok is false when no device holds that
+// IP; the resolver then falls back to the server default profile.
+func (s *Store) DeviceDNSProfile(clientIP string) (profile, schedule, allowlist string, ok bool) {
+	var p, sc, al sql.NullString
+	err := s.db.QueryRow(`SELECT dns_profile, dns_schedule, dns_allowlist FROM devices WHERE ipv4 = ?`, clientIP).Scan(&p, &sc, &al)
+	if err != nil {
+		return "", "", "", false
+	}
+	if p.Valid {
+		profile = p.String
+	}
+	if sc.Valid {
+		schedule = sc.String
+	}
+	if al.Valid {
+		allowlist = al.String
+	}
+	return profile, schedule, allowlist, true
+}
+
 func scanDevice(r interface{ Scan(...any) error }) (*Device, error) {
 	var d Device
 	var enabled int
 	var created, hs int64
 	var fetched sql.NullInt64
+	var dnsProfile, dnsSchedule, dnsAllow sql.NullString
 	if err := r.Scan(&d.ID, &d.UserID, &d.Name, &d.Protocol, &d.PublicKey, &d.PrivateKey, &d.PresharedKey, &d.IPv4,
-		&enabled, &created, &hs, &d.LastRx, &d.LastTx, &d.TotalRx, &d.TotalTx, &fetched); err != nil {
+		&enabled, &created, &hs, &d.LastRx, &d.LastTx, &d.TotalRx, &d.TotalTx, &fetched, &dnsProfile, &dnsSchedule, &dnsAllow); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
@@ -1113,6 +1240,15 @@ func scanDevice(r interface{ Scan(...any) error }) (*Device, error) {
 	if fetched.Valid && fetched.Int64 > 0 {
 		t := time.Unix(fetched.Int64, 0)
 		d.ConfigFetchedAt = &t
+	}
+	if dnsProfile.Valid {
+		d.DNSProfile = dnsProfile.String
+	}
+	if dnsSchedule.Valid {
+		d.DNSSchedule = dnsSchedule.String
+	}
+	if dnsAllow.Valid {
+		d.DNSAllowlist = dnsAllow.String
 	}
 	return &d, nil
 }

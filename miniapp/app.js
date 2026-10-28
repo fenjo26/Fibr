@@ -63,6 +63,24 @@
       protoAWG: 'AmneziaWG — для AmneziaVPN', protoAWGOff: 'AmneziaWG (выключен на сервере)',
       qrHintAWG: 'Конфиг AmneziaWG — отсканируйте в приложении AmneziaVPN («QR-код») или скачайте файл',
       protoHint: 'WireGuard — обычный и самый быстрый (WireGuard, AmneziaVPN, Fibr). VLESS — если WireGuard блокируют (v2rayNG, Hiddify, AmneziaVPN). AmneziaWG — WireGuard с маскировкой, только для AmneziaVPN.',
+      dnsBtn: '🛡 Защита',
+      dnsTitle: 'Защита DNS',
+      dnsOff: 'Выключена',
+      dnsAdblock: 'Блокировать рекламу',
+      dnsFamily: 'Семейный: реклама + взрослые сайты + расписание',
+      dnsFrom: 'Работает с', dnsTo: 'до', dnsEveryday: 'каждый день', dnsWeekdays: 'по будням (Пн–Пт)',
+      dnsHintFamily: 'Вне расписания интернет на этом устройстве отключается.',
+      dnsSave: 'Сохранить', dnsSaved: 'Профиль обновлён. Скачайте конфиг заново — кнопка «QR» на устройстве.',
+      dnsHintStale: 'После смены профиля в старом конфиге реклама не блокируется, пока вы не скачаете его заново.',
+      dnsAllow: 'Никогда не блокировать (ваши сайты)',
+      dnsAllowPh: 'example.com, site.ru — через запятую',
+      dnsAllowHint: 'Эти сайты открываются всегда — что бы ни включил администратор сервера.',
+      gamesTitle: '🎮 Игровой режим',
+      gamesHint: 'Отдельный туннель только для игрового трафика: маршрут до игровых серверов идёт через VPN и пинг в играх стабильнее, а весь остальной интернет летит напрямую, как без VPN.',
+      gamesDevice: 'Устройство', gamesPick: 'Выберите игры', gamesQR: 'QR игрового туннеля',
+      gamesNeed: 'Выберите хотя бы одну игру',
+      gamesImport: 'Отсканируйте QR в приложении WireGuard или AmneziaVPN как ВТОРОЙ туннель — основной конфиг остаётся как есть. Игровой режим включается, когда оба туннеля включены.',
+      gamesNone: 'Добавьте устройство WireGuard, чтобы включить игровой режим.',
       btnSendTg: 'Файл в Telegram', sentTg: 'Файл отправлен в чат с ботом ✅',
       errSendTg: 'Не удалось отправить. Откройте чат с ботом, нажмите «Старт» и повторите.',
       howToTitle: 'Как подключить файлом',
@@ -161,6 +179,24 @@
       protoAWG: 'AmneziaWG — for AmneziaVPN', protoAWGOff: 'AmneziaWG (off on this server)',
       qrHintAWG: 'AmneziaWG config — scan it in the AmneziaVPN app (“QR code”) or download the file',
       protoHint: 'WireGuard is the normal, fastest one (WireGuard, AmneziaVPN, Fibr apps). VLESS is for networks that block WireGuard (v2rayNG, Hiddify, AmneziaVPN). AmneziaWG is masked WireGuard, AmneziaVPN only.',
+      dnsBtn: '🛡 Protection',
+      dnsTitle: 'DNS protection',
+      dnsOff: 'Off',
+      dnsAdblock: 'Block ads and trackers',
+      dnsFamily: 'Family: ads + adult sites + schedule',
+      dnsFrom: 'Allowed from', dnsTo: 'to', dnsEveryday: 'every day', dnsWeekdays: 'weekdays (Mon–Fri)',
+      dnsHintFamily: 'Outside the schedule the internet on this device turns off.',
+      dnsSave: 'Save', dnsSaved: 'Profile updated. Re-download the config — the “QR” button on the device.',
+      dnsHintStale: 'After changing the profile the old config keeps ads until you re-download it.',
+      dnsAllow: 'Never block (your sites)',
+      dnsAllowPh: 'example.com, site.ru — comma separated',
+      dnsAllowHint: 'These sites always open — no matter what the server administrator enables.',
+      gamesTitle: '🎮 Game mode',
+      gamesHint: 'A separate tunnel for game traffic only: the route to the game servers goes through the VPN, keeping in-game ping stable, while everything else flows directly, as without a VPN.',
+      gamesDevice: 'Device', gamesPick: 'Pick games', gamesQR: 'Game tunnel QR',
+      gamesNeed: 'Pick at least one game',
+      gamesImport: 'Scan the QR in WireGuard or AmneziaVPN as a SECOND tunnel — the main config stays as is. Game mode is on when both tunnels are up.',
+      gamesNone: 'Add a WireGuard device to use game mode.',
       btnSendTg: 'File to Telegram', sentTg: 'The file is in your chat with the bot ✅',
       errSendTg: 'Could not send. Open the bot chat, press Start and try again.',
       howToTitle: 'Connect with a file',
@@ -559,6 +595,11 @@
       var stale = isStale(d)
         ? '<button class="pill pill--warn stale-pill" data-act="qr" data-id="' + d.id + '">' + esc(t('staleConfig')) + '</button>'
         : '';
+      // DNS protection switch: WireGuard-family devices only (VLESS links
+      // carry no DNS setting), and only while the server runs the resolver.
+      var dnsBtn = (me.dns_enabled && d.protocol !== 'xray')
+        ? '<button class="btn btn--secondary btn--small" data-act="dns" data-id="' + d.id + '">' + t('dnsBtn') + '</button>'
+        : '';
       return '<div class="card device">' +
         '<div class="device-top">' +
         '<span class="dot ' + (d.online ? 'dot--on' : 'dot--off') + '"></span>' +
@@ -572,10 +613,154 @@
         '<button class="btn btn--secondary btn--small" data-act="qr" data-id="' + d.id + '">' + t('btnQR') + '</button>' +
         '<button class="btn btn--secondary btn--small" data-act="code" data-id="' + d.id + '">' + t('btnCode') + '</button>' +
         '<button class="btn btn--secondary btn--small" data-act="send" data-id="' + d.id + '">' + t('btnSendTg') + '</button>' +
+        dnsBtn +
         '<button class="btn btn--tertiary btn--small" data-act="cfg" data-id="' + d.id + '">' + t('btnConfig') + '</button>' +
         '<button class="btn btn--danger-ghost btn--small" data-act="del" data-id="' + d.id + '" data-name="' + esc(d.name) + '">' + t('btnDelete') + '</button>' +
         '</div></div></div>';
     }).join('');
+    renderGamesCard();
+  }
+
+  /* ---------- game mode (server: internal/api/dnsgames.go) ---------- */
+
+  // renderGamesCard shows the game-mode card: pick games, pick a wg/awg
+  // device, get a QR of a SECOND tunnel whose AllowedIPs are the selected
+  // games' CIDRs (docs/dns-games.md §2). Hidden while the catalog is off or
+  // the account holds no wireguard-family device.
+  var gamesCatalog = null;
+
+  function renderGamesCard() {
+    var box = el('games-section');
+    if (!me || !me.games_enabled) { box.innerHTML = ''; return; }
+    var devs = (me.devices || []).filter(function (d) { return d.protocol !== 'xray'; });
+    if (!devs.length) { box.innerHTML = ''; return; }
+    if (!gamesCatalog) {
+      fetch('/api/games').then(function (r) { return r.json(); }).then(function (list) {
+        gamesCatalog = list || [];
+        renderGamesCard();
+      }).catch(function () { box.innerHTML = ''; });
+      return;
+    }
+    if (!gamesCatalog.length) { box.innerHTML = ''; return; }
+    var name = function (g) { return (t.lang === 'ru' && g.name_ru) ? g.name_ru : g.name; };
+    box.innerHTML = '<div class="card">' +
+      '<h3>' + esc(t('gamesTitle')) + '</h3>' +
+      '<p class="muted">' + esc(t('gamesHint')) + '</p>' +
+      '<p class="muted" style="margin-top:8px">' + esc(t('gamesPick')) + '</p>' +
+      '<div class="dns-opts">' + gamesCatalog.map(function (g) {
+        return '<label class="dns-opt"><input type="checkbox" class="game-chk" value="' + esc(g.id) + '"> <span>' + esc(name(g)) + '</span></label>';
+      }).join('') + '</div>' +
+      '<label class="dns-times" style="margin-top:6px"><span>' + esc(t('gamesDevice')) + '</span>' +
+      '<select class="input" id="game-dev">' + devs.map(function (d) {
+        return '<option value="' + d.id + '">' + esc(d.name) + '</option>';
+      }).join('') + '</select></label>' +
+      '<div class="modal-actions" style="margin-top:10px"><button class="btn" id="game-qr">' + esc(t('gamesQR')) + '</button></div>' +
+      '</div>';
+
+    el('game-qr').addEventListener('click', function () {
+      var ids = [];
+      Array.prototype.forEach.call(document.querySelectorAll('.game-chk:checked'), function (c) { ids.push(c.value); });
+      if (!ids.length) { alert(t('gamesNeed')); return; }
+      var dev = el('game-dev').value;
+      fetch('/api/me/devices/' + dev + '/game-qr.png?games=' + encodeURIComponent(ids.join(',')),
+        { headers: { Authorization: 'Bearer ' + token } })
+        .then(function (res) {
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          return res.blob();
+        })
+        .then(function (blob) {
+          var url = URL.createObjectURL(blob);
+          openModal('<h3>' + esc(t('gamesTitle')) + '</h3>' +
+            '<p class="muted modal-sub">' + esc(t('gamesImport')) + '</p>' +
+            '<div class="qr-wrap"><img src="' + url + '" alt="QR"></div>');
+        })
+        .catch(fail);
+    });
+  }
+
+  /* ---------- DNS protection (server: internal/api/dnsgames.go) ---------- */
+
+  // tzGuess feeds the family schedule's timezone (IANA from the browser).
+  function tzGuess() {
+    try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'; }
+    catch (e) { return 'UTC'; }
+  }
+
+  // dnsModal is the per-device filter switch: off / adblock / family with a
+  // schedule. A profile change re-renders the config on the next download,
+  // so after saving the modal points at the QR button (the old config keeps
+  // its old DNS line until then).
+  function dnsModal(d) {
+    var cur = d.dns_profile || me.dns_default_profile || 'adblock';
+    var sched = { start: '07:00', end: '22:00', days: [] };
+    try {
+      if (d.dns_schedule) {
+        var s = JSON.parse(d.dns_schedule);
+        if (s.start) sched.start = s.start;
+        if (s.end) sched.end = s.end;
+        if (s.days && s.days.length) sched.days = s.days;
+      }
+    } catch (e) { /* keep defaults */ }
+    var opt = function (v, label) {
+      return '<label class="dns-opt"><input type="radio" name="dns-prof" value="' + v + '"' +
+        (cur === v ? ' checked' : '') + '> <span>' + esc(label) + '</span></label>';
+    };
+    var weekdays = sched.days.join(',') === '1,2,3,4,5';
+    openModal('<h3>' + esc(t('dnsTitle')) + ' — ' + esc(d.name) + '</h3>' +
+      '<div class="dns-opts">' +
+      opt('off', t('dnsOff')) +
+      opt('adblock', t('dnsAdblock')) +
+      opt('family', t('dnsFamily')) +
+      '</div>' +
+      '<div id="dns-sched" class="dns-sched' + (cur === 'family' ? '' : ' hidden') + '">' +
+      '<div class="dns-times">' +
+      '<label>' + esc(t('dnsFrom')) + ' <input class="input" type="time" id="dns-start" value="' + esc(sched.start) + '"></label>' +
+      '<label>' + esc(t('dnsTo')) + ' <input class="input" type="time" id="dns-end" value="' + esc(sched.end) + '"></label>' +
+      '</div>' +
+      '<label class="dns-opt"><input type="checkbox" id="dns-weekdays"' + (weekdays ? ' checked' : '') + '> <span>' + esc(t('dnsWeekdays')) + '</span></label>' +
+      '<p class="muted">' + esc(t('dnsEveryday')) + '. ' + esc(t('dnsHintFamily')) + '</p>' +
+      '</div>' +
+      '<label class="dns-times" style="margin-top:6px"><span>' + esc(t('dnsAllow')) + '</span>' +
+      '<input class="input" id="dns-allow" placeholder="' + esc(t('dnsAllowPh')) + '" value="' + esc((d.dns_allowlist || []).join(', ')) + '"></label>' +
+      '<p class="muted">' + esc(t('dnsAllowHint')) + '</p>' +
+      '<p class="muted modal-sub">' + esc(t('dnsHintStale')) + '</p>' +
+      '<div class="modal-actions"><button class="btn" id="dns-save">' + esc(t('dnsSave')) + '</button></div>');
+
+    var root = el('modal-body');
+    Array.prototype.forEach.call(root.querySelectorAll('input[name="dns-prof"]'), function (r) {
+      r.addEventListener('change', function () {
+        var sel = root.querySelector('input[name="dns-prof"]:checked');
+        el('dns-sched').classList.toggle('hidden', !sel || sel.value !== 'family');
+      });
+    });
+    el('dns-save').addEventListener('click', function () {
+      var sel = root.querySelector('input[name="dns-prof"]:checked');
+      var prof = sel ? sel.value : 'adblock';
+      var body = { profile: prof };
+      if (prof === 'family') {
+        body.schedule = {
+          days: el('dns-weekdays').checked ? [1, 2, 3, 4, 5] : [],
+          start: el('dns-start').value || '07:00',
+          end: el('dns-end').value || '22:00',
+          tz: tzGuess()
+        };
+      }
+      // Personal never-block list: split on commas/newlines/spaces; the
+      // server validates each entry.
+      body.allow = el('dns-allow').value
+        .split(/[\s,]+/)
+        .filter(function (x) { return x; });
+      api('/api/me/devices/' + d.id + '/dns', { method: 'PUT', body: body }).then(function () {
+        openModal('<h3>' + esc(t('dnsTitle')) + '</h3>' +
+          '<p class="muted modal-sub">' + esc(t('dnsSaved')) + '</p>' +
+          '<div class="modal-actions"><button class="btn" id="dns-qr">' + esc(t('btnQR')) + '</button></div>');
+        el('dns-qr').addEventListener('click', function () {
+          closeModal();
+          showQR(d.id, d.protocol);
+        });
+        load().catch(fail);
+      }).catch(fail);
+    });
   }
 
   /* ---------- TV pairing (server: internal/api/pair.go) ---------- */
@@ -671,6 +856,10 @@
     else if (act === 'cfg') showConfig(id);
     else if (act === 'code') showJoinCode(id);
     else if (act === 'send') sendToTelegram(id, btn);
+    else if (act === 'dns') {
+      var dd = (me.devices || []).filter(function (x) { return String(x.id) === String(id); })[0];
+      if (dd) dnsModal(dd);
+    }
     else if (act === 'del') {
       if (!confirm(t('confirmDelete', { name: btn.getAttribute('data-name') }))) return;
       api('/api/me/devices/' + id, { method: 'DELETE' }).then(load).catch(fail);

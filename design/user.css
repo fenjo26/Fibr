@@ -566,3 +566,21 @@
 .guide-sec[open] > summary::after { content: '▴'; }
 .guide-sec .qr-steps { margin: 0 12px 12px; }
 .guide-btn { margin: 4px 0 12px; }
+
+/* ---------- DNS protection modal (shared by miniapp + cabinet) ---------- */
+.dns-opts { display: flex; flex-direction: column; gap: 6px; margin: 10px 0; }
+.dns-opt {
+  display: flex; align-items: flex-start; gap: 10px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  padding: 10px 12px;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1.35;
+}
+.dns-opt input { margin-top: 2px; }
+.dns-sched { display: flex; flex-direction: column; gap: 8px; margin: 4px 0 10px; }
+.dns-times { display: flex; gap: 10px; }
+.dns-times label { flex: 1; display: flex; flex-direction: column; gap: 4px; font-size: 13px; opacity: .8; }
+.dns-times input { width: 100%; }

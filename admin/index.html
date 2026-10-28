@@ -53,6 +53,7 @@
     <button class="tab active" data-tab="dashboard" data-i18n="tabDash"></button>
     <button class="tab" data-tab="users" data-i18n="tabUsers"></button>
     <button class="tab" data-tab="devices" data-i18n="tabDevices"></button>
+    <button class="tab" data-tab="dns" data-i18n="tabDNS"></button>
     <button class="tab" data-tab="nodes" data-i18n="tabNodes"></button>
     <button class="tab" data-tab="referrals" data-i18n="tabReferrals"></button>
     <button class="tab" data-tab="settings" data-i18n="tabSettings"></button>
@@ -118,6 +119,51 @@
       <div class="card">
         <div class="table-scroll">
           <table class="table table-cards" id="devices-table"></table>
+        </div>
+      </div>
+    </section>
+
+    <!-- DNS protection (docs/dns-games.md): stats, per-device profiles,
+         blocklists and the query log. -->
+    <section id="tab-dns" class="page hidden">
+      <div class="card hidden" id="dns-off-card"><p class="muted" id="dns-off-badge"></p></div>
+      <div id="dns-content" class="hidden">
+        <div class="card">
+          <h3 data-i18n="dnsStatsTitle"></h3>
+          <div class="stat-grid">
+            <div class="card stat"><span class="muted" data-i18n="dnsQueries"></span><b id="dns-st-total">—</b></div>
+            <div class="card stat"><span class="muted" data-i18n="dnsBlocked"></span><b id="dns-st-blocked">—</b></div>
+            <div class="card stat"><span class="muted" data-i18n="dnsSafesearch"></span><b id="dns-st-safesearch">—</b></div>
+          </div>
+          <p class="muted" data-i18n="dnsTopBlocked"></p>
+          <div class="table-scroll">
+            <table class="table table-cards" id="dns-top-table"></table>
+          </div>
+        </div>
+        <div class="card">
+          <h3 data-i18n="dnsDevicesTitle"></h3>
+          <p class="muted" id="dns-devices-hint"></p>
+          <div class="table-scroll">
+            <table class="table table-cards" id="dns-devices-table"></table>
+          </div>
+        </div>
+        <div class="card">
+          <h3 data-i18n="dnsListsTitle"></h3>
+          <div class="dns-toolbar">
+            <input class="input" id="dns-list-name" data-i18n-ph="dnsListName" maxlength="32">
+            <input class="input grow" id="dns-list-url" data-i18n-ph="dnsListURL" maxlength="512">
+            <button class="btn" id="dns-list-add" data-i18n="dnsAddList"></button>
+            <button class="btn btn--secondary" id="dns-lists-refresh" data-i18n="dnsRefresh"></button>
+          </div>
+          <div class="table-scroll">
+            <table class="table table-cards" id="dns-lists-table"></table>
+          </div>
+        </div>
+        <div class="card">
+          <h3 data-i18n="dnsLogTitle"></h3>
+          <div class="table-scroll">
+            <table class="table table-cards" id="dns-log-table"></table>
+          </div>
         </div>
       </div>
     </section>

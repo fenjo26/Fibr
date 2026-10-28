@@ -99,10 +99,16 @@ action ∈ allow|block|safesearch|schedule); prune раз в час, retention 7
 `{game_id: [cidr...]}`.
 
 Авторизованные (после ролевой сессии): `GET /api/dns/stats`,
-`GET /api/dns/querylog`, `PUT /api/devices/{id}/dns`
-(`{"profile":"family","schedule":{...}|null}`), управление списками
-(`GET/POST/DELETE /api/dns/lists`, `POST /api/dns/lists/refresh`),
-в WG-конфиге при `profile != off`: `DNS = <шлюз>`.
+`GET /api/dns/querylog`, `PUT /api/me/devices/{id}/dns`
+(`{"profile":"family","schedule":{...}|null,"allow":["example.com"]}`,
+`allow` — личный никогда-не-блокировать список устройства, до 64 доменов,
+приоритетнее любых серверных списков), управление списками
+(`GET/POST/DELETE /api/dns/lists`, `PATCH /api/dns/lists/{name}`,
+`POST /api/dns/lists/refresh`), игровой туннель
+`GET /api/me/devices/{id}/game-config?games=` и
+`GET /api/me/devices/{id}/game-qr.png?games=` (второй конфиг того же пира
+с AllowedIPs выбранных игр). В WG-конфиге при `profile != off`:
+`DNS = <шлюз>`.
 
 ## 4. Env
 
@@ -115,23 +121,29 @@ action ∈ allow|block|safesearch|schedule); prune раз в час, retention 7
 | `FIBR_DNS_LISTS_ADULT` | URL StevenBlack porn | override BuiltIn-списка |
 | `FIBR_GAMES_ENABLED` | `true` | каталог игр активен |
 
-## 5. Store-модель (миграция — после ролевой сессии)
+## 5. Store-модель
 
-`devices.dns_profile TEXT NULL`, `devices.dns_schedule TEXT NULL` (JSON);
-`ProfileLookup` пакета dns читает их по туннельному IP устройства.
+`devices.dns_profile TEXT NULL`, `devices.dns_schedule TEXT NULL` (JSON),
+`devices.dns_allowlist TEXT NULL` (JSON-массив личных исключений);
+`ProfileLookup` и `AllowlistLookup` пакета dns читают их по туннельному IP
+устройства.
 
-## 6. Интеграция (остаток, после пуша ролевой сессии)
+## 6. Интеграция — ВЫПОЛНЕНА
 
-1. `cmd/fibr/main.go`: `dns.NewServer(...)` (пример в `internal/dns/doc.go`)
-   + `games.NewCatalog(...)` + `go cat.Run(ctx)` (`internal/games/doc.go`);
-2. `internal/config`: env §4;
-3. `internal/api`: публичные ручки §3 + авторизованные + списки;
-4. `internal/store`: миграция §5 + проводка ProfileLookup;
-5. `admin/`: страница «DNS» — статистика, лог, профили устройств,
+1. ✅ `cmd/fibr/main.go`: `dns.NewServer` + `games.NewCatalog` + `go cat.Run(ctx)`
+   (+ anti-leak для подсети AmneziaWG);
+2. ✅ `internal/config`: env §4;
+3. ✅ `internal/api`: публичные и авторизованные ручки §3 + списки +
+   игровой туннель (`internal/api/dnsgames.go`);
+4. ✅ `internal/store`: миграция §5 + ProfileLookup/AllowlistLookup;
+5. ✅ `admin/`: вкладка «DNS» — статистика, лог, профили устройств,
    управление списками (добавить URL / вкл-выкл / кнопка «Обновить»);
-6. `miniapp/`: переключатель профиля устройства + расписание;
-7. `install/install.sh`: новые env в генерацию `.env`;
-8. WG-конфиг при `profile != off`: `DNS = <шлюз>`.
+6. ✅ `miniapp/` + `cabinet/`: кнопка «🛡 Защита» на устройстве — профиль
+   (off/adblock/family + расписание) и личные исключения; карточка
+   «🎮 Игровой режим» с QR второго туннеля;
+7. ✅ `install/install.sh`: env в генерацию `.env` (апгрейд-путь);
+8. ✅ WG-конфиг при `profile != off`: `DNS = <шлюз>` (`wg.Manager.DNSLine`,
+   включается только после успешного старта резолвера — `SetDNSResolver`).
 
 Клиент (`app/`) готов: DNS-карточка статуса в туннеле + экран игрового
 режима (каталог с сервера + fallback-снапшот, создание игрового туннеля,

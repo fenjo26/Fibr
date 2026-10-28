@@ -76,6 +76,29 @@
       promptLimit: 'Лимит устройств для {u} (целое число ≥ 0):',
       errBadLimit: 'Лимит должен быть целым числом ≥ 0',
       confirmLimitReset: 'Сбросить личный лимит устройств (вернуть лимит по умолчанию)?',
+      /* DNS protection (docs/dns-games.md) */
+      tabDNS: 'DNS',
+      dnsOffBadge: 'DNS-защита выключена на этом сервере (FIBR_DNS_ENABLED=false или ошибка запуска).',
+      dnsStatsTitle: 'За 24 часа',
+      dnsQueries: 'Запросов',
+      dnsBlocked: 'Заблокировано',
+      dnsSafesearch: 'SafeSearch',
+      dnsTopBlocked: 'Топ заблокированных доменов',
+      dnsDevicesTitle: 'Профили устройств',
+      dnsDevicesHint: '«По умолчанию» — настройка сервера (сейчас: {profile}). После смены профиля пользователю нужно скачать конфиг заново.',
+      dnsDefault: 'По умолчанию',
+      dnsPoff: 'Выключен', dnsPadblock: 'Реклама', dnsPfamily: 'Семейный',
+      dnsListsTitle: 'Чёрные списки',
+      dnsAddList: 'Добавить список',
+      dnsListName: 'Название', dnsListURL: 'URL (hosts/adblock-формат)',
+      dnsRefresh: 'Обновить сейчас',
+      dnsRefreshed: 'Списки обновлены',
+      dnsLastOK: 'Обновлён', dnsNever: 'никогда', dnsBuiltin: 'встроенный',
+      dnsRules: 'правил',
+      dnsLogTitle: 'Журнал запросов',
+      dnsLogDevice: 'Устройство', dnsLogDomain: 'Домен', dnsLogAction: 'Действие',
+      dnsActionAllow: 'пропущен', dnsActionBlock: 'блок', dnsActionSafesearch: 'safesearch', dnsActionSchedule: 'расписание',
+      dnsErrListFields: 'Название и URL обязательны',
       /* multi-node (docs/multinode.md) */
       tabNodes: 'Ноды',
       nodesHint: 'Активная нода одна — её адрес попадает во все новые конфиги и QR.',
@@ -183,6 +206,29 @@
       promptLimit: 'Device limit for {u} (integer ≥ 0):',
       errBadLimit: 'The limit must be an integer ≥ 0',
       confirmLimitReset: 'Reset the personal device limit (back to the default)?',
+      /* DNS protection (docs/dns-games.md) */
+      tabDNS: 'DNS',
+      dnsOffBadge: 'DNS protection is off on this server (FIBR_DNS_ENABLED=false or a startup failure).',
+      dnsStatsTitle: 'Last 24 hours',
+      dnsQueries: 'Queries',
+      dnsBlocked: 'Blocked',
+      dnsSafesearch: 'SafeSearch',
+      dnsTopBlocked: 'Top blocked domains',
+      dnsDevicesTitle: 'Device profiles',
+      dnsDevicesHint: '“Default” is the server-wide setting (currently: {profile}). After a change the user must re-download the config.',
+      dnsDefault: 'Default',
+      dnsPoff: 'Off', dnsPadblock: 'Ads', dnsPfamily: 'Family',
+      dnsListsTitle: 'Blocklists',
+      dnsAddList: 'Add list',
+      dnsListName: 'Name', dnsListURL: 'URL (hosts/adblock format)',
+      dnsRefresh: 'Refresh now',
+      dnsRefreshed: 'Lists refreshed',
+      dnsLastOK: 'Updated', dnsNever: 'never', dnsBuiltin: 'built-in',
+      dnsRules: 'rules',
+      dnsLogTitle: 'Query log',
+      dnsLogDevice: 'Device', dnsLogDomain: 'Domain', dnsLogAction: 'Action',
+      dnsActionAllow: 'allowed', dnsActionBlock: 'blocked', dnsActionSafesearch: 'safesearch', dnsActionSchedule: 'schedule',
+      dnsErrListFields: 'Name and URL are required',
       /* multi-node (docs/multinode.md) */
       tabNodes: 'Nodes',
       nodesHint: 'Exactly one node is active — its endpoint goes into every newly downloaded config and QR.',
@@ -378,6 +424,7 @@
       if (name === 'dashboard') startAutoRefresh(); else stopAutoRefresh();
       if (name === 'users') loadUsers();
       if (name === 'devices') loadDevices();
+      if (name === 'dns') loadDNS();
       if (name === 'referrals') loadReferrals();
       if (name === 'settings') loadSettings();
       if (name === 'nodes') loadNodes();
@@ -1043,6 +1090,142 @@
       api('/api/admin/devices/' + id, { method: 'DELETE' })
         .then(function () { toast(t('deviceDeleted')); loadDevices(); }).catch(fail);
     }
+  });
+
+  /* ---------- DNS protection (docs/dns-games.md) ---------- */
+
+  var dnsProfileLabels = function () {
+    return { '': t('dnsDefault'), off: t('dnsPoff'), adblock: t('dnsPadblock'), family: t('dnsPfamily') };
+  };
+
+  // loadDNS renders the whole tab: 24h stats, per-device profiles, the
+  // blocklists and the query log. Everything hides behind the off-badge
+  // when the resolver is not running (503 from the admin endpoints).
+  function loadDNS() {
+    el('dns-off-card').classList.add('hidden');
+    el('dns-content').classList.add('hidden');
+    api('/api/dns/stats').then(function (stats) {
+      el('dns-content').classList.remove('hidden');
+      el('dns-st-total').textContent = stats.total != null ? stats.total : '—';
+      var blocked = (stats.by_action && stats.by_action.block) || 0;
+      var safe = (stats.by_action && stats.by_action.safesearch) || 0;
+      el('dns-st-blocked').textContent = blocked;
+      el('dns-st-safesearch').textContent = safe;
+      var rows = (stats.top_blocked || []).map(function (d) {
+        return '<tr><td class="mono">' + esc(d.domain) + '</td><td>' + d.count + '</td></tr>';
+      }).join('');
+      el('dns-top-table').innerHTML = rows
+        ? '<thead><tr><th></th><th></th></tr></thead><tbody>' + rows + '</tbody>'
+        : '<tbody><tr><td class="muted">—</td></tr></tbody>';
+    }).catch(function (e) {
+      el('dns-off-card').classList.remove('hidden');
+      el('dns-off-badge').textContent = t('dnsOffBadge');
+      if (e.status !== 503) fail(e);
+      return; // stats drive the visibility; nothing else to load
+    });
+
+    // Device profiles: wg/awg devices only — VLESS links carry no DNS.
+    api('/api/dns/status').then(function (st) {
+      api('/api/admin/devices').then(function (devices) {
+        var labels = dnsProfileLabels();
+        el('dns-devices-hint').textContent = t('dnsDevicesHint', { profile: st.default_profile || 'adblock' });
+        var wg = (devices || []).filter(function (d) { return d.protocol !== 'xray'; });
+        if (!wg.length) {
+          el('dns-devices-table').innerHTML = '<tbody><tr><td class="muted">—</td></tr></tbody>';
+          return;
+        }
+        var opt = function (v) {
+          return '<option value="' + v + '">' + labels[v] + '</option>';
+        };
+        el('dns-devices-table').innerHTML =
+          '<thead><tr><th>' + t('thDevice') + '</th><th>' + t('thUser') + '</th><th>' + t('thIP') + '</th><th>' + t('thStatus') + '</th></tr></thead><tbody>' +
+          wg.map(function (d) {
+            var cur = d.dns_profile || '';
+            return '<tr>' +
+              '<td class="device-cell">' + esc(d.name) + '<small class="row-sub mono">#' + d.id + '</small></td>' +
+              '<td>' + esc(d.username || '#' + d.user_id) + '</td>' +
+              '<td class="mono">' + esc(d.ipv4) + '</td>' +
+              '<td><select class="input" data-dnsdev="' + d.id + '">' +
+              ['', 'off', 'adblock', 'family'].map(function (x) {
+                return '<option value="' + x + '"' + (x === cur ? ' selected' : '') + '>' + labels[x] + '</option>';
+              }).join('') +
+              '</select></td></tr>';
+          }).join('') + '</tbody>';
+      }).catch(fail);
+    }).catch(fail);
+
+    // Blocklists.
+    api('/api/dns/lists').then(function (lists) {
+      el('dns-lists-table').innerHTML =
+        '<thead><tr><th>' + t('dnsListName') + '</th><th>URL</th><th></th><th>' + t('dnsLastOK') + '</th></tr></thead><tbody>' +
+        (lists || []).map(function (l) {
+          return '<tr>' +
+            '<td>' + esc(l.name) + (l.builtin ? ' <small class="row-sub">' + esc(t('dnsBuiltin')) + '</small>' : '') + '</td>' +
+            '<td class="mono row-sub">' + esc(l.url) + '</td>' +
+            '<td><label><input type="checkbox" data-dnslist="' + esc(l.name) + '"' + (l.enabled ? ' checked' : '') + '></label></td>' +
+            '<td>' + (l.last_ok && l.last_ok.indexOf('0001') !== 0 ? fmtAgo(l.last_ok, t.lang) : t('dnsNever')) + '</td>' +
+            '</tr>';
+        }).join('') + '</tbody>';
+    }).catch(fail);
+
+    // Query log (most recent first; the API caps at 500).
+    api('/api/dns/querylog?limit=100').then(function (entries) {
+      var actions = {
+        allow: t('dnsActionAllow'),
+        block: t('dnsActionBlock'),
+        safesearch: t('dnsActionSafesearch'),
+        schedule: t('dnsActionSchedule')
+      };
+      el('dns-log-table').innerHTML =
+        '<thead><tr><th></th><th>' + t('dnsLogDevice') + '</th><th>' + t('dnsLogDomain') + '</th><th>' + t('dnsLogAction') + '</th></tr></thead><tbody>' +
+        (entries || []).map(function (q) {
+          return '<tr>' +
+            '<td class="muted small-text">' + esc(fmtAgo(q.ts, t.lang) || '') + '</td>' +
+            '<td class="mono row-sub">' + esc(q.device_ip) + '</td>' +
+            '<td class="mono row-sub">' + esc(q.qname) + '</td>' +
+            '<td>' + esc(actions[q.action] || q.action) + '</td></tr>';
+        }).join('') + '</tbody>';
+    }).catch(fail);
+  }
+
+  // Device profile changes: PATCH the device, reload the table.
+  el('dns-devices-table').addEventListener('change', function (e) {
+    var sel = e.target.closest('select[data-dnsdev]');
+    if (!sel) return;
+    api('/api/admin/devices/' + sel.getAttribute('data-dnsdev'),
+      { method: 'PATCH', body: { dns_profile: sel.value } })
+      .then(function () { toast('OK'); }).catch(fail);
+  });
+
+  // Blocklist toggle / add / remove / refresh.
+  el('dns-lists-table').addEventListener('change', function (e) {
+    var cb = e.target.closest('input[data-dnslist]');
+    if (!cb) return;
+    api('/api/dns/lists/' + encodeURIComponent(cb.getAttribute('data-dnslist')),
+      { method: 'PATCH', body: { enabled: cb.checked } })
+      .then(function () { loadDNS(); }).catch(fail);
+  });
+
+  el('dns-list-add').addEventListener('click', function () {
+    var name = el('dns-list-name').value.trim();
+    var url = el('dns-list-url').value.trim();
+    if (!name || !url) { toast(t('dnsErrListFields'), true); return; }
+    api('/api/dns/lists', { method: 'POST', body: { name: name, url: url } })
+      .then(function () {
+        el('dns-list-name').value = '';
+        el('dns-list-url').value = '';
+        loadDNS();
+      }).catch(fail);
+  });
+
+  el('dns-lists-refresh').addEventListener('click', function () {
+    var btn = el('dns-lists-refresh');
+    btn.disabled = true;
+    api('/api/dns/lists/refresh', { method: 'POST' }).then(function (res) {
+      btn.disabled = false;
+      toast(t('dnsRefreshed') + (res && res.sets ? ' (' + Object.keys(res.sets).map(function (k) { return k + ': ' + res.sets[k]; }).join(', ') + ')' : ''));
+      loadDNS();
+    }).catch(function (e) { btn.disabled = false; fail(e); });
   });
 
   /* ---------- qr & config ---------- */

@@ -740,3 +740,64 @@ func sha256Hex(s string) string {
 	sum := sha256.Sum256([]byte(s))
 	return hex.EncodeToString(sum[:])
 }
+
+// TestDeviceDNSProfile covers the protected-DNS columns (docs/dns-games.md
+// §5): the migration adds them, SetDeviceDNS persists profile+schedule and
+// DeviceDNSProfile resolves them by tunnel IP for the resolver's lookup
+// callback (empty profile = NULL = server default).
+func TestDeviceDNSProfile(t *testing.T) {
+	s := openTestStore(t)
+	u := &User{Username: "dns-owner"}
+	if err := s.CreateUser(u); err != nil {
+		t.Fatal(err)
+	}
+	d := &Device{UserID: u.ID, Name: "kids-tablet", PublicKey: "pub-dns", PrivateKey: "priv", IPv4: "10.8.0.7", Enabled: true}
+	if err := s.CreateDevice(d); err != nil {
+		t.Fatal(err)
+	}
+
+	// Fresh device: no stored profile (server default applies).
+	if p, sched, allow, ok := s.DeviceDNSProfile("10.8.0.7"); !ok || p != "" || sched != "" || allow != "" {
+		t.Fatalf("fresh device: profile=%q sched=%q allow=%q ok=%v", p, sched, allow, ok)
+	}
+
+	// Family with a schedule and personal never-block domains.
+	schedJSON := `{"days":[1,2,3,4,5],"start":"07:00","end":"22:00","tz":"Europe/Berlin"}`
+	allowJSON := `["example.com","shop.example.com"]`
+	if err := s.SetDeviceDNS(d.ID, "family", schedJSON, &allowJSON); err != nil {
+		t.Fatalf("set family: %v", err)
+	}
+	got, err := s.GetDevice(d.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.DNSProfile != "family" || got.DNSSchedule != schedJSON || got.DNSAllowlist != allowJSON {
+		t.Fatalf("round-trip: %+v", got)
+	}
+	if p, sched, allow, ok := s.DeviceDNSProfile("10.8.0.7"); !ok || p != "family" || sched != schedJSON || allow != allowJSON {
+		t.Fatalf("lookup: profile=%q sched=%q allow=%q ok=%v", p, sched, allow, ok)
+	}
+
+	// Back to default with allowlist=nil: the personal list survives an
+	// admin profile change (nil means "keep the stored one").
+	if err := s.SetDeviceDNS(d.ID, "", "", nil); err != nil {
+		t.Fatalf("reset: %v", err)
+	}
+	if p, _, allow, ok := s.DeviceDNSProfile("10.8.0.7"); !ok || p != "" || allow != allowJSON {
+		t.Fatalf("reset lookup: profile=%q allow=%q ok=%v", p, allow, ok)
+	}
+
+	// An empty allowlist pointer clears the exceptions.
+	empty := ""
+	if err := s.SetDeviceDNS(d.ID, "adblock", "", &empty); err != nil {
+		t.Fatalf("clear allow: %v", err)
+	}
+	if _, _, allow, _ := s.DeviceDNSProfile("10.8.0.7"); allow != "" {
+		t.Fatalf("cleared allow: %q", allow)
+	}
+
+	// Unknown IP falls through (resolver then uses the server default).
+	if _, _, _, ok := s.DeviceDNSProfile("10.8.0.99"); ok {
+		t.Fatal("unknown ip must not resolve")
+	}
+}

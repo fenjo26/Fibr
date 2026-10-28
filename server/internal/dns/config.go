@@ -55,6 +55,11 @@ type Config struct {
 	// ProfileLookup resolves a client's tunnel IP to its profile and
 	// schedule. Nil or !ok falls back to DefaultProfile.
 	ProfileLookup func(clientIP net.IP) (Profile, Schedule, bool)
+	// AllowlistLookup resolves a client's personal never-block domains
+	// (docs/dns-games.md §1 "allowlist"): they override every block set —
+	// including the admin's lists — but not SafeSearch, the schedule or the
+	// DoH canary. Nil or an empty result disables per-device exceptions.
+	AllowlistLookup func(clientIP net.IP) []string
 }
 
 // DefaultConfig returns the production defaults (env plumbing lives in

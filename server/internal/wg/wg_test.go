@@ -18,16 +18,17 @@ func newTestManager(t *testing.T) (*Manager, *store.Store) {
 	}
 	t.Cleanup(func() { st.Close() })
 	cfg := &config.Config{
-		Domain:      "vpn.example.com",
-		WGHost:      "vpn.example.com",
-		WGPort:      51820,
-		WGInterface: "wg0",
-		Subnet:      "10.8.0.0/24",
-		ServerIP:    "10.8.0.1",
-		Subnet6:     "fd42:f1b2::/64",
-		ServerIP6:   "fd42:f1b2::1",
-		DNS:         []string{"1.1.1.1", "1.0.0.1"},
-		MTU:         1420,
+		Domain:            "vpn.example.com",
+		WGHost:            "vpn.example.com",
+		WGPort:            51820,
+		WGInterface:       "wg0",
+		Subnet:            "10.8.0.0/24",
+		ServerIP:          "10.8.0.1",
+		Subnet6:           "fd42:f1b2::/64",
+		ServerIP6:         "fd42:f1b2::1",
+		DNS:               []string{"1.1.1.1", "1.0.0.1"},
+		DNSDefaultProfile: "adblock",
+		MTU:               1420,
 	}
 	return newTestManagerCfg(t, cfg, st), st
 }
@@ -199,5 +200,49 @@ func TestClientConfigAt(t *testing.T) {
 	local := m.ClientConfig(d)
 	if !strings.Contains(local, "Endpoint = vpn.example.com:51820") || !strings.Contains(local, m.PublicKey()) {
 		t.Errorf("local rendering broken:\n%s", local)
+	}
+}
+
+// TestClientConfigDNSProfile: while the protected resolver runs, configs of
+// devices with a filtering profile point DNS at the tunnel gateway; "off"
+// and a stopped resolver keep the plain public resolvers (docs/dns-games.md
+// §6.8). An empty profile follows the server default.
+func TestClientConfigDNSProfile(t *testing.T) {
+	m, st := newTestManager(t)
+	u := &store.User{Username: "dnsuser"}
+	if err := st.CreateUser(u); err != nil {
+		t.Fatalf("user: %v", err)
+	}
+	d := store.Device{UserID: u.ID, Name: "phone", PublicKey: "pub-dns", PrivateKey: "PRIVKEY", PresharedKey: "PSK", IPv4: "10.8.0.9", Enabled: true}
+
+	// Resolver off: every profile keeps the public resolvers.
+	m.SetDNSResolver(false)
+	d.DNSProfile = "adblock"
+	if got := m.DNSLine(d); got != "1.1.1.1, 1.0.0.1" {
+		t.Fatalf("resolver off: DNS = %q", got)
+	}
+
+	// Resolver on: empty profile (server default adblock) and family point
+	// at the gateway; "off" keeps the public resolvers.
+	m.SetDNSResolver(true)
+	if got := m.DNSLine(d); got != "10.8.0.1" {
+		t.Fatalf("adblock profile: DNS = %q", got)
+	}
+	d.DNSProfile = ""
+	if got := m.DNSLine(d); got != "10.8.0.1" {
+		t.Fatalf("default profile: DNS = %q", got)
+	}
+	d.DNSProfile = "off"
+	if got := m.DNSLine(d); got != "1.1.1.1, 1.0.0.1" {
+		t.Fatalf("off profile: DNS = %q", got)
+	}
+	conf := m.ClientConfig(d)
+	if !strings.Contains(conf, "DNS = 1.1.1.1, 1.0.0.1") {
+		t.Fatalf("off profile config:\n%s", conf)
+	}
+	d.DNSProfile = "family"
+	conf = m.ClientConfig(d)
+	if !strings.Contains(conf, "DNS = 10.8.0.1") {
+		t.Fatalf("family profile config:\n%s", conf)
 	}
 }

@@ -257,6 +257,19 @@ FIBR_XRAY_SHORT_ID=
 XEOF
     info "appended default xray settings to existing .env"
   fi
+  # Upgrade path: DNS protection and the game catalog run with code
+  # defaults (enabled) even without these keys; writing them keeps the
+  # knobs visible to the operator.
+  if ! grep -q '^FIBR_DNS_ENABLED=' "$ENV_FILE"; then
+    cat >> "$ENV_FILE" <<'DEOF'
+
+# Protected DNS + game catalog — added by installer upgrade; see docs/dns-games.md.
+FIBR_DNS_ENABLED=true
+FIBR_DNS_PROFILE_DEFAULT=adblock
+FIBR_GAMES_ENABLED=true
+DEOF
+    info "appended default dns/games settings to existing .env"
+  fi
   # --xray explicitly enables/updates xray on an existing install too.
   # Without the flag, manual xray edits in .env are left untouched.
   if [[ $XRAY -eq 1 ]]; then

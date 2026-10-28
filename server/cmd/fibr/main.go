@@ -4,9 +4,11 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -18,6 +20,8 @@ import (
 	"github.com/fenjo26/Fibr/internal/awg"
 	"github.com/fenjo26/Fibr/internal/bot"
 	"github.com/fenjo26/Fibr/internal/config"
+	"github.com/fenjo26/Fibr/internal/dns"
+	"github.com/fenjo26/Fibr/internal/games"
 	"github.com/fenjo26/Fibr/internal/store"
 	"github.com/fenjo26/Fibr/internal/wg"
 	"github.com/fenjo26/Fibr/internal/xray"
@@ -169,6 +173,87 @@ func main() {
 		log.Info("FIBR_XRAY_ENABLED not set, xray protocol disabled")
 	}
 
+	// Protected DNS resolver (internal/dns; docs/dns-games.md §1): listens
+	// on :53 inside the container, per-device profiles come from the store.
+	// Failure is not fatal — the VPN keeps working; client configs then keep
+	// the plain FIBR_DNS resolvers (renderCredential checks dnssrv).
+	var dnsSrv *dns.Server
+	var awgLeak *dns.AntiLeak
+	if cfg.DNSEnabled {
+		dcfg := dns.DefaultConfig()
+		dcfg.DataDir = filepath.Join(cfg.DataDir, "dns")
+		dcfg.Upstreams = cfg.DNSUpstreams
+		dcfg.DefaultProfile = dns.Profile(cfg.DNSDefaultProfile)
+		dcfg.ListsAdblockURL = cfg.DNSListsAdblock
+		dcfg.ListsAdultURL = cfg.DNSListsAdult
+		if _, tunnelNet, err := net.ParseCIDR(cfg.Subnet); err == nil {
+			dcfg.Subnet = *tunnelNet
+		}
+		dcfg.ProfileLookup = func(clientIP net.IP) (dns.Profile, dns.Schedule, bool) {
+			profile, schedJSON, _, ok := st.DeviceDNSProfile(clientIP.String())
+			var sched dns.Schedule
+			if schedJSON != "" {
+				_ = json.Unmarshal([]byte(schedJSON), &sched)
+			}
+			return dns.Profile(profile), sched, ok
+		}
+		dcfg.AllowlistLookup = func(clientIP net.IP) []string {
+			_, _, allowJSON, ok := st.DeviceDNSProfile(clientIP.String())
+			if !ok || allowJSON == "" {
+				return nil
+			}
+			var domains []string
+			if json.Unmarshal([]byte(allowJSON), &domains) != nil {
+				return nil
+			}
+			return domains
+		}
+		srv, err := dns.NewServer(dcfg, log)
+		if err != nil {
+			log.Error("dns resolver init failed; dns protection stays off (vpn continues)", "error", err)
+		} else if err := srv.Start(ctx); err != nil {
+			log.Error("dns resolver start failed; dns protection stays off (vpn continues)", "error", err)
+		} else {
+			dnsSrv = srv
+			defer srv.Stop()
+			// Client configs switch their DNS line to the tunnel gateway
+			// only now that the resolver actually answers (wg.go DNSLine).
+			wgm.SetDNSResolver(true)
+			if awgm != nil {
+				awgm.SetDNSResolver(true)
+			}
+			log.Info("dns protection up", "addr", srv.Addr(), "default_profile", string(dcfg.DefaultProfile))
+			// The resolver's own anti-leak rules cover the wg subnet only;
+			// AmneziaWG clients (second tunnel) need the same DNAT from
+			// their subnet or their port-53 traffic escapes the filter.
+			if awgm != nil {
+				if ac, err := cfg.AWGConfig(); err == nil {
+					if _, awgNet, err := net.ParseCIDR(ac.Subnet); err == nil {
+						awgLeak = dns.NewAntiLeak(*awgNet, net.ParseIP(ac.ServerIP), log)
+						if err := awgLeak.Apply(); err != nil {
+							log.Warn("dns anti-leak for the amneziawg subnet not applied", "error", err)
+							awgLeak = nil
+						}
+					}
+				}
+			}
+		}
+	} else {
+		log.Info("FIBR_DNS_ENABLED=false, dns protection disabled")
+	}
+
+	// Game catalog (internal/games; docs/dns-games.md §2): serves
+	// /api/games for the app's game-tunnel mode. Boots from the builtin
+	// snapshot, refreshes from GitHub every 24h.
+	var gamesCat *games.Catalog
+	if cfg.GamesEnabled {
+		gamesCat = games.NewCatalog(games.Options{DataDir: cfg.DataDir})
+		go gamesCat.Run(ctx)
+		log.Info("game catalog up", "games", len(gamesCat.List()))
+	} else {
+		log.Info("FIBR_GAMES_ENABLED=false, game catalog disabled")
+	}
+
 	// Subscription expiry pass (manual monetization, see docs/billing.md).
 	// Runs on every stats tick: recompute the set of expired accounts and
 	// resync the tunnels only when that set CHANGED — an account that just
@@ -239,6 +324,8 @@ func main() {
 	if awgm != nil {
 		apiSrv.SetAWG(awgm)
 	}
+	apiSrv.SetDNS(dnsSrv)
+	apiSrv.SetGames(gamesCat)
 
 	// "One VLESS link = one device": cut links used from too many IPs at
 	// once (internal/xray/limiter.go; FIBR_XRAY_IP_LIMIT=0 turns it off).
@@ -298,6 +385,9 @@ func main() {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_ = httpSrv.Shutdown(shutdownCtx)
+	if awgLeak != nil {
+		awgLeak.Remove()
+	}
 	if awgDaemon != nil {
 		_ = awgDaemon.Stop()
 	}

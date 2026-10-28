@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/fenjo26/Fibr/internal/awg"
@@ -47,6 +48,28 @@ type Manager struct {
 	samples     []ifaceSample
 	speeds      map[int64]PeerSpeed // last per-device rates; nil until 2nd sample
 	lastStatsAt time.Time           // zero until the first CollectStats
+
+	dnsOn atomic.Bool // the protected resolver started; configs point DNS at the gateway
+}
+
+// SetDNSResolver flips the client-config DNS line: while the protected
+// resolver runs (internal/dns), configs of devices with a filtering profile
+// get "DNS = <tunnel gateway>" instead of the plain FIBR_DNS resolvers
+// (docs/dns-games.md §6.8). Called from main once, before the API serves.
+func (m *Manager) SetDNSResolver(on bool) { m.dnsOn.Store(on) }
+
+// DNSLine picks the resolvers written into a client config: the tunnel
+// gateway while the protected resolver runs and the device's effective
+// profile is not "off", otherwise the plain public resolvers.
+func (m *Manager) DNSLine(d store.Device) string {
+	profile := d.DNSProfile
+	if profile == "" {
+		profile = m.cfg.DNSDefaultProfile
+	}
+	if m.dnsOn.Load() && profile != "" && profile != "off" {
+		return m.cfg.ServerIP
+	}
+	return strings.Join(m.cfg.DNS, ", ")
 }
 
 type ifaceSample struct {
@@ -494,6 +517,23 @@ func (m *Manager) ClientConfig(d store.Device) string {
 // section instead of this box's own (see internal/node). Addressing, DNS and
 // MTU are properties of the tunnel and stay the manager's own.
 func (m *Manager) ClientConfigAt(d store.Device, ep node.Endpoint) string {
+	return m.clientConfig(d, ep, "0.0.0.0/0, ::/0")
+}
+
+// ClientConfigGameAt renders the game-tunnel config (docs/dns-games.md §2):
+// the same peer and key, but AllowedIPs limited to the selected games' CIDR
+// ranges — everything else keeps flowing outside the tunnel, which is what
+// keeps the in-game route stable. The client imports it as a SECOND tunnel
+// next to the main one.
+func (m *Manager) ClientConfigGameAt(d store.Device, ep node.Endpoint, cidrs []string) string {
+	allowed := strings.Join(cidrs, ", ")
+	if allowed == "" {
+		allowed = "0.0.0.0/0, ::/0"
+	}
+	return m.clientConfig(d, ep, allowed)
+}
+
+func (m *Manager) clientConfig(d store.Device, ep node.Endpoint, allowedIPs string) string {
 	awgBlock := "\n"
 	if m.awg != nil {
 		awgBlock = m.awg.ClientINI() + "\n"
@@ -510,11 +550,11 @@ MTU = %d
 %s[Peer]
 PublicKey = %s
 PresharedKey = %s
-AllowedIPs = 0.0.0.0/0, ::/0
+AllowedIPs = %s
 Endpoint = %s:%d
 PersistentKeepalive = 25
-`, d.PrivateKey, address, strings.Join(m.cfg.DNS, ", "), m.cfg.MTU, awgBlock,
-		ep.WGServerPubKey, d.PresharedKey, ep.Host, ep.WGPort)
+`, d.PrivateKey, address, m.DNSLine(d), m.cfg.MTU, awgBlock,
+		ep.WGServerPubKey, d.PresharedKey, allowedIPs, ep.Host, ep.WGPort)
 }
 
 func detectDefaultIface() string {

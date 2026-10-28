@@ -791,3 +791,11 @@ main {
     width: 76px;
   }
 }
+
+/* ---------- DNS tab ---------- */
+.dns-toolbar { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.dns-toolbar .input { flex-basis: 160px; }
+@media (max-width: 640px) {
+  .dns-toolbar .input { flex-basis: 100%; }
+  .dns-toolbar .btn { flex: 1; }
+}

@@ -16,6 +16,8 @@ import (
 	"time"
 
 	"github.com/fenjo26/Fibr/internal/config"
+	"github.com/fenjo26/Fibr/internal/dns"
+	"github.com/fenjo26/Fibr/internal/games"
 	"github.com/fenjo26/Fibr/internal/store"
 	"github.com/fenjo26/Fibr/internal/wg"
 	"github.com/fenjo26/Fibr/internal/xray"
@@ -36,6 +38,8 @@ type API struct {
 	pairs       pairStore    // TV pairing codes (pair.go), in memory
 	loginFails  loginLimiter // failed password sign-ins per login (password.go)
 	awgm        *wg.Manager  // second, AmneziaWG tunnel; nil when off (SetAWG)
+	dnssrv      *dns.Server  // protected resolver; nil when off (SetDNS)
+	gamesCat    *games.Catalog
 }
 
 // New creates the API.
@@ -55,6 +59,12 @@ func New(cfg *config.Config, st *store.Store, wgm *wg.Manager, xm *xray.Manager,
 func (a *API) SetBotUsername(name string) {
 	a.botUsername.Store(name)
 }
+
+// SetDNS wires the protected resolver (nil = disabled/failed to start).
+func (a *API) SetDNS(s *dns.Server) { a.dnssrv = s }
+
+// SetGames wires the game catalog (nil = FIBR_GAMES_ENABLED=false).
+func (a *API) SetGames(c *games.Catalog) { a.gamesCat = c }
 
 // botName is the bot @username ("" until the bot reported getMe).
 func (a *API) botName() string {
@@ -116,6 +126,26 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("GET /api/admin/devices/{id}/qr.png", a.admin(a.handleAdminDeviceQR))
 	mux.HandleFunc("PATCH /api/admin/devices/{id}", a.admin(a.handleAdminUpdateDevice))
 	mux.HandleFunc("DELETE /api/admin/devices/{id}", a.admin(a.handleAdminDeleteDevice))
+
+	// Protected DNS + game catalog (docs/dns-games.md §3). The dns status
+	// and games endpoints are public like /api/health: the app probes them
+	// before login to decide which cards to show. Stats, the query log,
+	// blocklist management and per-device profiles are authenticated.
+	mux.HandleFunc("GET /api/dns/status", a.handleDNSStatus)
+	mux.HandleFunc("GET /api/dns/stats", a.admin(a.handleDNSStats))
+	mux.HandleFunc("GET /api/dns/querylog", a.admin(a.handleDNSQueryLog))
+	mux.HandleFunc("GET /api/dns/lists", a.admin(a.handleDNSLists))
+	mux.HandleFunc("POST /api/dns/lists", a.admin(a.handleDNSAddList))
+	mux.HandleFunc("PATCH /api/dns/lists/{name}", a.admin(a.handleDNSSetList))
+	mux.HandleFunc("DELETE /api/dns/lists/{name}", a.admin(a.handleDNSRemoveList))
+	mux.HandleFunc("POST /api/dns/lists/refresh", a.admin(a.handleDNSRefreshLists))
+	mux.HandleFunc("PUT /api/me/devices/{id}/dns", a.auth(a.handleMeDeviceDNS))
+	// Game mode: a second tunnel from the same peer whose AllowedIPs are
+	// the selected games' CIDRs (docs/dns-games.md §2).
+	mux.HandleFunc("GET /api/me/devices/{id}/game-config", a.auth(a.handleMeGameConfig))
+	mux.HandleFunc("GET /api/me/devices/{id}/game-qr.png", a.auth(a.handleMeGameQR))
+	mux.HandleFunc("GET /api/games", a.handleGames)
+	mux.HandleFunc("GET /api/games/routes", a.handleGameRoutes)
 
 	// Admin invite endpoints (self-enrollment links; see docs/self-enroll.md).
 	mux.HandleFunc("GET /api/admin/invites", a.admin(a.handleAdminListInvites))
@@ -494,9 +524,14 @@ func (a *API) handleMe(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"user": u, "devices": out,
 		"max_devices": limit, "xray_enabled": a.cfg.XrayEnabled,
-		"awg_enabled":    a.awgm != nil,
-		"has_access_key": hasKey,
-		"login":          login, // web login ("" until the person sets one)
+		"awg_enabled": a.awgm != nil,
+		// Protected DNS (docs/dns-games.md): the client renders the
+		// per-device filter switch only while the resolver runs.
+		"dns_enabled":         a.dnssrv != nil,
+		"dns_default_profile": a.cfg.DNSDefaultProfile,
+		"games_enabled":       a.gamesCat != nil,
+		"has_access_key":      hasKey,
+		"login":               login, // web login ("" until the person sets one)
 		// The client compares endpoint_changed_at with its stored copy to
 		// decide a re-download is needed (multi-node endpoint switch).
 		"active_node":         ep.Name,
@@ -1229,7 +1264,8 @@ func (a *API) handleAdminUpdateDevice(w http.ResponseWriter, r *http.Request) {
 	}
 	id := d.ID
 	var body struct {
-		Enabled *bool `json:"enabled"`
+		Enabled    *bool   `json:"enabled"`
+		DNSProfile *string `json:"dns_profile"` // off | adblock | family | "" (server default)
 	}
 	if err := decodeJSON(w, r, &body); err != nil {
 		a.errJSON(w, http.StatusBadRequest, err.Error())
@@ -1242,6 +1278,12 @@ func (a *API) handleAdminUpdateDevice(w http.ResponseWriter, r *http.Request) {
 		}
 		a.syncPeers()
 		a.syncXray()
+	}
+	if body.DNSProfile != nil {
+		if err := a.setDeviceDNS(id, *body.DNSProfile, d.DNSSchedule, nil); err != nil {
+			a.errJSON(w, http.StatusBadRequest, err.Error())
+			return
+		}
 	}
 	d, err := a.store.GetDevice(id)
 	if err != nil {
@@ -1284,6 +1326,12 @@ type deviceOut struct {
 	TotalRx         int64      `json:"total_rx"`
 	TotalTx         int64      `json:"total_tx"`
 	ConfigFetchedAt *time.Time `json:"config_fetched_at"` // multi-node staleness signal (nil = never)
+	// DNS filtering (docs/dns-games.md): "" = server default. The
+	// schedule JSON rides along for the family profile; the allowlist is
+	// the owner's personal never-block set.
+	DNSProfile   string   `json:"dns_profile"`
+	DNSSchedule  string   `json:"dns_schedule,omitempty"`
+	DNSAllowlist []string `json:"dns_allowlist,omitempty"`
 	// Current transfer rates (bit/s) from the latest stats sample; zero for
 	// xray devices (no counters) and until the second sample.
 	SpeedRxBps float64 `json:"speed_rx_bps"`
@@ -1296,6 +1344,7 @@ func newDeviceOut(d store.Device, username string) deviceOut {
 		Protocol: d.Protocol, PublicKey: d.PublicKey, IPv4: d.IPv4, Enabled: d.Enabled,
 		Online: isOnline(d), CreatedAt: d.CreatedAt,
 		TotalRx: d.TotalRx, TotalTx: d.TotalTx, ConfigFetchedAt: d.ConfigFetchedAt,
+		DNSProfile: d.DNSProfile, DNSSchedule: d.DNSSchedule, DNSAllowlist: parseAllowJSON(d.DNSAllowlist),
 	}
 	if out.Protocol == "" {
 		out.Protocol = store.ProtocolWG

@@ -72,6 +72,19 @@ type Config struct {
 	XrayIPLimit  int           // FIBR_XRAY_IP_LIMIT: distinct source IPs per VLESS link inside the window; 0 = no limit
 	XrayIPWindow time.Duration // FIBR_XRAY_IP_WINDOW: how long a seen IP counts (default 2m)
 	XrayBan      time.Duration // FIBR_XRAY_BAN: how long an over-limit link stays cut (default 10m)
+
+	// Protected DNS resolver (internal/dns; docs/dns-games.md §4). When
+	// DNSEnabled is false the resolver never starts and client configs keep
+	// the plain FIBR_DNS resolvers.
+	DNSEnabled        bool     // FIBR_DNS_ENABLED (default true)
+	DNSDefaultProfile string   // FIBR_DNS_PROFILE_DEFAULT: off | adblock | family (default adblock)
+	DNSUpstreams      []string // FIBR_DNS_UPSTREAM, default https://1.1.1.1/dns-query,1.1.1.1
+	DNSListsAdblock   string   // FIBR_DNS_LISTS_ADBLOCK, overrides the BuiltIn StevenBlack list
+	DNSListsAdult     string   // FIBR_DNS_LISTS_ADULT, overrides the BuiltIn adult list
+
+	// Game catalog (internal/games; docs/dns-games.md §2): the /api/games
+	// endpoints serve the catalog for the app's game-tunnel mode.
+	GamesEnabled bool // FIBR_GAMES_ENABLED (default true)
 }
 
 // DefaultXraySNI is the Reality camouflage host used when FIBR_XRAY_SNI is
@@ -158,6 +171,23 @@ func Load() (*Config, error) {
 	c.XrayIPLimit = getenvInt("FIBR_XRAY_IP_LIMIT", 2)
 	c.XrayIPWindow = getenvDuration("FIBR_XRAY_IP_WINDOW", 2*time.Minute)
 	c.XrayBan = getenvDuration("FIBR_XRAY_BAN", 10*time.Minute)
+
+	// Protected DNS + games (docs/dns-games.md §4). Profiles are validated
+	// here so a typo fails fast at boot instead of per query.
+	c.DNSEnabled = getenvBool("FIBR_DNS_ENABLED", true)
+	c.DNSDefaultProfile = getenv("FIBR_DNS_PROFILE_DEFAULT", "adblock")
+	switch c.DNSDefaultProfile {
+	case "off", "adblock", "family":
+	default:
+		return nil, fmt.Errorf("FIBR_DNS_PROFILE_DEFAULT: %q is not one of off, adblock, family", c.DNSDefaultProfile)
+	}
+	c.DNSUpstreams = splitCSV(getenv("FIBR_DNS_UPSTREAM", "https://1.1.1.1/dns-query,1.1.1.1"))
+	if len(c.DNSUpstreams) == 0 {
+		c.DNSUpstreams = []string{"https://1.1.1.1/dns-query", "1.1.1.1"}
+	}
+	c.DNSListsAdblock = strings.TrimSpace(os.Getenv("FIBR_DNS_LISTS_ADBLOCK"))
+	c.DNSListsAdult = strings.TrimSpace(os.Getenv("FIBR_DNS_LISTS_ADULT"))
+	c.GamesEnabled = getenvBool("FIBR_GAMES_ENABLED", true)
 	if c.XrayIPLimit < 0 {
 		c.XrayIPLimit = 0
 	}
