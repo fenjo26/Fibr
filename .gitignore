@@ -1,0 +1,19 @@
+# build artifacts
+bin/
+dist/
+
+# runtime state
+data/
+*.db
+*.db-shm
+*.db-wal
+
+# secrets
+.env
+install/.env
+
+# os / editor noise
+.DS_Store
+*.swp
+.idea/
+.vscode/

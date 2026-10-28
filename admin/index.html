@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Fibr Admin</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@600;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/shared/tokens.css">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <!-- login -->
+  <div id="login" class="modal-backdrop">
+    <form class="modal" id="login-form">
+      <h2>Fibr Admin</h2>
+      <p class="muted" data-i18n="loginHint"></p>
+      <input class="input" type="password" id="login-token" autocomplete="current-password" placeholder="token">
+      <p class="login-err" id="login-err"></p>
+      <button class="btn btn--wide" type="submit" data-i18n="loginBtn"></button>
+    </form>
+  </div>
+
+  <header class="topbar">
+    <div class="brand">Fibr <span class="pill pill--live">admin</span></div>
+    <div class="topbar-right">
+      <span class="muted mono" id="server-host"></span>
+      <select class="input input--lang" id="lang" title="Language">
+        <option value="ru">RU</option>
+        <option value="en">EN</option>
+      </select>
+      <button class="btn btn--tertiary btn--small" data-theme-toggle title="Theme">◐</button>
+      <button class="btn btn--ghost btn--small" id="logout" data-i18n="logout"></button>
+    </div>
+  </header>
+
+  <nav class="tabs">
+    <button class="tab active" data-tab="dashboard" data-i18n="tabDash"></button>
+    <button class="tab" data-tab="users" data-i18n="tabUsers"></button>
+    <button class="tab" data-tab="devices" data-i18n="tabDevices"></button>
+  </nav>
+
+  <main>
+    <!-- dashboard -->
+    <section id="tab-dashboard" class="page">
+      <div class="stat-grid">
+        <div class="card stat"><span class="muted" data-i18n="stOnline"></span><b id="st-online">—</b></div>
+        <div class="card stat"><span class="muted" data-i18n="stUsers"></span><b id="st-users">—</b></div>
+        <div class="card stat"><span class="muted" data-i18n="stDevices"></span><b id="st-devices">—</b></div>
+        <div class="card stat"><span class="muted" data-i18n="stTraffic"></span><b id="st-traffic">—</b></div>
+        <div class="card stat"><span class="muted" data-i18n="stTunnel"></span><b id="st-tunnel">—</b></div>
+      </div>
+      <div class="two-col">
+        <div class="card">
+          <h3 data-i18n="serverCard"></h3>
+          <dl class="kv" id="server-info"></dl>
+        </div>
+        <div class="card">
+          <h3 data-i18n="recentCard"></h3>
+          <div class="table-scroll">
+            <table class="table" id="recent-table"></table>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- users -->
+    <section id="tab-users" class="page hidden">
+      <div class="card toolbar">
+        <input class="input" id="nu-telegram" type="number" data-i18n-ph="phTelegram">
+        <input class="input" id="nu-username" data-i18n-ph="phUsername">
+        <select class="input" id="nu-role">
+          <option value="user" data-i18n="roleUser"></option>
+          <option value="admin" data-i18n="roleAdmin"></option>
+        </select>
+        <button class="btn" id="nu-create" data-i18n="addUser"></button>
+      </div>
+      <div class="card">
+        <div class="table-scroll">
+          <table class="table" id="users-table"></table>
+        </div>
+      </div>
+    </section>
+
+    <!-- devices -->
+    <section id="tab-devices" class="page hidden">
+      <div class="card">
+        <div class="table-scroll">
+          <table class="table" id="devices-table"></table>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <div class="modal-backdrop hidden" id="modal">
+    <div class="modal" id="modal-body"></div>
+  </div>
+
+  <script src="/shared/app.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

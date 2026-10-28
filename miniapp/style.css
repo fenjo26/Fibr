@@ -1,0 +1,152 @@
+/* Fibr Mini App layout (tokens & components live in /shared/tokens.css). */
+
+.wrap {
+  max-width: 560px;
+  margin: 0 auto;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 100vh;
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.head h1 {
+  font-size: 33px;
+  line-height: 1.1;
+}
+
+.head p {
+  margin: 2px 0 0;
+}
+
+.summary-row {
+  display: flex;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+
+.summary-row > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.summary-row b {
+  font-size: 20px;
+  font-weight: 800;
+}
+
+.add-row {
+  display: flex;
+  gap: 8px;
+}
+
+.add-row .btn {
+  flex: none;
+}
+
+#devices {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.device {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.device-top {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.device-top .grow {
+  flex: 1;
+  min-width: 0;
+}
+
+.device-top h3 {
+  font-size: 16px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.device-top .ip {
+  color: var(--muted);
+}
+
+.device-meta {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.device-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.foot-hint {
+  text-align: center;
+  padding-bottom: 16px;
+}
+
+.qr-wrap {
+  display: flex;
+  justify-content: center;
+  padding: 12px;
+  background: #fff;
+  border-radius: 12px;
+}
+
+.qr-wrap img {
+  width: 280px;
+  height: 280px;
+}
+
+.config-pre {
+  white-space: pre-wrap;
+  word-break: break-all;
+  background: var(--surface-2);
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  padding: 12px;
+  margin: 12px 0;
+  max-height: 40vh;
+  overflow: auto;
+}
+
+.modal h3 {
+  margin-bottom: 4px;
+}
+
+.modal .modal-sub {
+  margin: 0 0 12px;
+}
+
+.modal-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 12px;
+}
+
+.empty {
+  text-align: center;
+  color: var(--muted);
+  padding: 32px 16px;
+}

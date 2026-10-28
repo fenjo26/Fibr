@@ -1,0 +1,23 @@
+# Fibr edge: TLS termination, static admin/mini app, API reverse proxy.
+# Set FIBR_DOMAIN to your domain (e.g. vpn.example.com) — Caddy issues a
+# Let's Encrypt certificate automatically. For local dev set
+# FIBR_DOMAIN=http://localhost to serve plain HTTP without TLS.
+
+{$FIBR_DOMAIN} {
+	encode zstd gzip
+
+	handle /api/* {
+		reverse_proxy fibr:8080
+	}
+
+	handle {
+		root * /srv
+		redir / /miniapp/ 302
+		file_server
+	}
+
+	log {
+		output stdout
+		format console
+	}
+}
