@@ -223,4 +223,151 @@ AllowedIPs = 10.0.0.0/8
       expect(after.serverPublicKey, before.serverPublicKey);
     });
   });
+
+  group('subnet gateway & DNS protection', () {
+    // Minimal single-tunnel config with a variable Address/DNS pair.
+    WgConfig cfg(String address, [String dns = '']) {
+      final dnsLine = dns.isEmpty ? '' : 'DNS = $dns\n';
+      return WgConfigParser.parse(
+        '[Interface]\nPrivateKey = a=\nAddress = $address\n$dnsLine'
+        '\n[Peer]\nPublicKey = p=\nEndpoint = vpn.example.com:51820\n'
+        'AllowedIPs = 0.0.0.0/0\n',
+      );
+    }
+
+    test('/32 interface address is a member of its /24 → x.y.z.1', () {
+      expect(cfg('10.8.0.2/32').subnetGatewayV4, '10.8.0.1');
+      expect(cfg('192.168.50.130/32').subnetGatewayV4, '192.168.50.1');
+    });
+
+    test('explicit prefixes → network address + 1', () {
+      expect(cfg('10.66.7.9/24').subnetGatewayV4, '10.66.7.1');
+      expect(cfg('172.16.5.9/16').subnetGatewayV4, '172.16.0.1');
+      expect(cfg('10.0.0.4/30').subnetGatewayV4, '10.0.0.5');
+      expect(cfg('10.0.15.9/21').subnetGatewayV4, '10.0.8.1');
+    });
+
+    test('bare address (no prefix) is treated like /32 → /24', () {
+      expect(cfg('10.8.0.2').subnetGatewayV4, '10.8.0.1');
+    });
+
+    test('dual-stack: the IPv6 /128 member belongs to its /64', () {
+      // Gateway v6 = <subnet>::1; a v6 DNS pointing there counts as
+      // tunnel DNS. No IPv4 address → no v4 gateway.
+      final c = cfg('fd42:f1b2:3:4::2/128', 'fd42:f1b2:3:4::1');
+      expect(c.subnetGatewayV4, isNull);
+      expect(c.dnsPointsToTunnel, isTrue);
+      expect(cfg('fd42::2/128', '2001:4860:4860::8888').dnsPointsToTunnel, isFalse);
+    });
+
+    test('DNS = gateway → protected; public DNS → not', () {
+      expect(cfg('10.8.0.2/32', '10.8.0.1').dnsPointsToTunnel, isTrue);
+      expect(cfg('10.8.0.2/32', '1.1.1.1').dnsPointsToTunnel, isFalse);
+      // Any entry pointing at the gateway is enough.
+      expect(cfg('10.8.0.2/32', '1.1.1.1, 10.8.0.1').dnsPointsToTunnel, isTrue);
+      // No DNS at all → ordinary.
+      expect(cfg('10.8.0.2/32').dnsPointsToTunnel, isFalse);
+    });
+  });
+
+  group('render', () {
+    test('round-trips a parsed config field by field', () {
+      final cfg = WgConfigParser.parse(_normalConfig);
+      final back = WgConfigParser.parse(WgConfigParser.render(cfg));
+
+      expect(back.iface.privateKey, cfg.iface.privateKey);
+      expect(back.iface.addresses, cfg.iface.addresses);
+      expect(back.iface.dns, cfg.iface.dns);
+      expect(back.iface.mtu, cfg.iface.mtu);
+      expect(back.iface.listenPort, cfg.iface.listenPort);
+
+      expect(back.peers, hasLength(1));
+      final peer = back.peers.single;
+      expect(peer.publicKey, cfg.peers.single.publicKey);
+      expect(peer.presharedKey, cfg.peers.single.presharedKey);
+      expect(peer.endpoint, cfg.peers.single.endpoint);
+      expect(peer.allowedIps, cfg.peers.single.allowedIps);
+      expect(peer.persistentKeepalive, cfg.peers.single.persistentKeepalive);
+    });
+
+    test('round-trips multiple peers', () {
+      const config = '''
+[Interface]
+PrivateKey = a=
+Address = 10.9.0.5/32
+
+[Peer]
+PublicKey = peerA=
+PresharedKey = pskA=
+Endpoint = a.example.com:51820
+AllowedIPs = 192.168.1.0/24
+PersistentKeepalive = 25
+
+[Peer]
+PublicKey = peerB=
+AllowedIPs = 192.168.2.0/24
+''';
+      final cfg = WgConfigParser.parse(config);
+      final back = WgConfigParser.parse(WgConfigParser.render(cfg));
+      expect(back.peers.map((p) => p.publicKey), ['peerA=', 'peerB=']);
+      expect(back.peers.first.presharedKey, 'pskA=');
+      expect(back.peers.first.allowedIps, ['192.168.1.0/24']);
+      expect(back.peers.last.endpoint, isNull); // no endpoint stays absent
+      expect(back.allowedIpsJoined, cfg.allowedIpsJoined);
+    });
+
+    test('a config without DNS renders without a DNS line', () {
+      const text =
+          '[Interface]\nPrivateKey = a=\nAddress = 10.8.0.2/32\n\n[Peer]\n'
+          'PublicKey = p=\nEndpoint = vpn.example.com:51820\nAllowedIPs = 0.0.0.0/0\n';
+      final cfg = WgConfigParser.parse(text);
+      expect(cfg.iface.dns, isEmpty);
+      final rendered = WgConfigParser.render(cfg);
+      expect(rendered.contains('DNS'), isFalse);
+      expect(WgConfigParser.parse(rendered).iface.dns, isEmpty);
+    });
+
+    test('game-tunnel shape: same keys, union AllowedIPs, no DNS', () {
+      final base = WgConfigParser.parse('''
+[Interface]
+PrivateKey = devkey=
+Address = 10.8.0.2/32
+DNS = 10.8.0.1
+MTU = 1420
+
+[Peer]
+PublicKey = serverkey=
+PresharedKey = psk=
+Endpoint = vpn.example.com:51820
+AllowedIPs = 0.0.0.0/0, ::/0
+PersistentKeepalive = 25
+''');
+      final game = WgConfigParser.parse(WgConfigParser.render(WgConfig(
+        iface: WgInterface(
+          privateKey: base.iface.privateKey,
+          addresses: base.iface.addresses,
+        ),
+        peers: [
+          WgPeer(
+            publicKey: base.primaryPeer!.publicKey,
+            presharedKey: base.primaryPeer!.presharedKey,
+            endpoint: base.primaryPeer!.endpoint,
+            allowedIps: const ['146.66.155.0/24', '162.249.72.0/21'],
+            persistentKeepalive: base.primaryPeer!.persistentKeepalive,
+          ),
+        ],
+      )));
+
+      expect(game.iface.privateKey, 'devkey='); // same device keys
+      expect(game.iface.dns, isEmpty); // routing only, no filtering
+      expect(game.iface.mtu, isNull); // not carried over by design
+      final peer = game.primaryPeer!;
+      expect(peer.publicKey, 'serverkey=');
+      expect(peer.presharedKey, 'psk=');
+      expect(peer.endpoint, 'vpn.example.com:51820'); // same server
+      expect(peer.allowedIps, ['146.66.155.0/24', '162.249.72.0/21']);
+      expect(peer.persistentKeepalive, 25);
+      expect(game.dnsPointsToTunnel, isFalse);
+    });
+  });
 }

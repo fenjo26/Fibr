@@ -7,6 +7,7 @@
 library;
 
 import 'dart:convert';
+import 'dart:io' show InternetAddress, InternetAddressType;
 
 class WgConfigFormatException implements Exception {
   const WgConfigFormatException(this.message);
@@ -73,6 +74,55 @@ class WgConfig {
   /// All AllowedIPs values joined, e.g. "0.0.0.0/0, ::/0".
   String get allowedIpsJoined =>
       peers.expand((p) => p.allowedIps).toSet().join(', ');
+
+  /// Gateway of the tunnel's IPv4 subnet: the network address + 1, where
+  /// the Fibr server sits. A /32 (or prefix-less) interface address is
+  /// treated as one host inside a /24 — Fibr assigns addresses like
+  /// `10.8.0.2/32` while the server answers on `10.8.0.1`
+  /// (docs/dns-games.md §1). Null when the config has no parseable IPv4
+  /// address.
+  String? get subnetGatewayV4 {
+    final bytes = _subnetGatewayBytes(InternetAddressType.IPv4);
+    if (bytes == null) return null;
+    return InternetAddress.fromRawBytes(bytes, type: InternetAddressType.IPv4)
+        .address;
+  }
+
+  /// Whether any DNS server of the config IS the tunnel gateway — how a
+  /// Fibr device is routed through the server's filtering resolver instead
+  /// of a public one (docs/dns-games.md §1).
+  bool get dnsPointsToTunnel {
+    for (final raw in iface.dns) {
+      final addr = InternetAddress.tryParse(raw);
+      if (addr == null) continue;
+      final gw = _subnetGatewayBytes(addr.type);
+      if (gw != null && WgConfigParser._bytesEqual(addr.rawAddress, gw)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /// Gateway bytes for the first interface address of [type]: network
+  /// address + 1. Single-host prefixes (/32, /128 — and prefix-less bare
+  /// addresses) are first widened to the family's natural subnet (/24 for
+  /// IPv4, /64 for IPv6), mirroring how Fibr numbers its tunnels.
+  List<int>? _subnetGatewayBytes(InternetAddressType type) {
+    for (final raw in iface.addresses) {
+      final slash = raw.indexOf('/');
+      final addr =
+          InternetAddress.tryParse(slash < 0 ? raw : raw.substring(0, slash));
+      if (addr == null || addr.type != type) continue;
+      var prefix = addr.rawAddress.length * 8; // bare address = single host
+      if (slash >= 0) {
+        final p = int.tryParse(raw.substring(slash + 1));
+        if (p == null || p < 0 || p > prefix) continue; // malformed → next
+        prefix = p;
+      }
+      return WgConfigParser._gatewayBytes(addr, prefix);
+    }
+    return null;
+  }
 }
 
 class WgConfigParser {
@@ -195,6 +245,77 @@ class WgConfigParser {
         ? endpoint.substring(0, endpoint.lastIndexOf(':'))
         : endpoint;
     return host.isEmpty ? 'tunnel' : host;
+  }
+
+  /// Serialises [cfg] back to wg-quick text; the key order follows the
+  /// server's own config template (internal/wg ClientConfigAt). Everything
+  /// the parser keeps is written out. wg-quick-only keys (Table, PostUp, …)
+  /// do NOT round-trip — render is for DERIVED configs (e.g. the game
+  /// tunnel), never for rewriting a stored tunnel's original text.
+  static String render(WgConfig cfg) {
+    final b = StringBuffer('[Interface]\n');
+    b.writeln('PrivateKey = ${cfg.iface.privateKey}');
+    b.writeln('Address = ${cfg.iface.addresses.join(', ')}');
+    if (cfg.iface.dns.isNotEmpty) {
+      b.writeln('DNS = ${cfg.iface.dns.join(', ')}');
+    }
+    if (cfg.iface.listenPort != null) {
+      b.writeln('ListenPort = ${cfg.iface.listenPort}');
+    }
+    if (cfg.iface.mtu != null) b.writeln('MTU = ${cfg.iface.mtu}');
+    for (final p in cfg.peers) {
+      b.writeln();
+      b.writeln('[Peer]');
+      b.writeln('PublicKey = ${p.publicKey}');
+      final psk = p.presharedKey;
+      if (psk != null && psk.isNotEmpty) b.writeln('PresharedKey = $psk');
+      final endpoint = p.endpoint;
+      if (endpoint != null && endpoint.isNotEmpty) {
+        b.writeln('Endpoint = $endpoint');
+      }
+      if (p.allowedIps.isNotEmpty) {
+        b.writeln('AllowedIPs = ${p.allowedIps.join(', ')}');
+      }
+      final keepalive = p.persistentKeepalive;
+      if (keepalive != null) b.writeln('PersistentKeepalive = $keepalive');
+    }
+    return b.toString();
+  }
+
+  /// Bytes of the gateway of [addr]/[prefix]: the network address + 1. A
+  /// single-host prefix (equal to the address width — /32, /128, or a
+  /// prefix-less address) is first widened to the family's natural subnet
+  /// (/24 for IPv4, /64 for IPv6) because that is how Fibr numbers its
+  /// tunnels: clients get one address, the server sits on x.y.z.1 /
+  /// `<subnet>::1` (docs/dns-games.md §1).
+  static List<int>? _gatewayBytes(InternetAddress addr, int prefix) {
+    final bytes = addr.rawAddress;
+    final bits = bytes.length * 8;
+    if (prefix < 0 || prefix > bits) return null;
+    if (prefix == bits) prefix = bits == 32 ? 24 : 64; // host → its subnet
+    final gw = List<int>.of(bytes);
+    // Zero the host bits → network address.
+    final fullBytes = prefix ~/ 8;
+    final remBits = prefix % 8;
+    for (var i = fullBytes; i < bytes.length; i++) {
+      if (i == fullBytes && remBits > 0) {
+        gw[i] &= (0xFF << (8 - remBits)) & 0xFF;
+      } else {
+        gw[i] = 0;
+      }
+    }
+    // +1 — the gateway. Safe: masking left at least one host bit zero, so
+    // the last byte never overflows past 255.
+    gw[bytes.length - 1] += 1;
+    return gw;
+  }
+
+  static bool _bytesEqual(List<int> a, List<int> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
   }
 
   static List<String> _splitList(String? value) {

@@ -25,6 +25,8 @@
 | Статусы (connecting/connected/…) | готово, поток из плагина |
 | rx/tx и длительность сессии | **заглушка**: длительность считается локально, rx/tx — `—` (плагин не отдаёт счётчики; TODO в `WireGuardFlutterEngine.readStats`) |
 | Split tunneling | экран и хранение выбора (allow/deny) готовы; **применение к VPN — заглушка** (у `wireguard_flutter` 0.1.x нет per-app API; TODO в `WireGuardFlutterEngine.connect`). iOS — информационное сообщение про MDM |
+| DNS-защита (статус) | карточка в туннеле: вердикт по DNS конфига (шлюз подсети) + уточнение `GET /api/dns/status` через шлюз (`docs/dns-games.md`); профиль меняется в Mini App/админке |
+| Игровой режим | второй туннель с AllowedIPs выбранных игр: каталог `GET /api/games` + офлайн-снапшот, объединение CIDR с лимитом 180 (`game_mode_screen.dart`) |
 | Настройки: тема/язык | готово, `shared_preferences` |
 | Синхронизация с сервером | этап 2.5 (см. дорожную карту) |
 
@@ -40,22 +42,29 @@ lib/
   l10n/app_localizations.dart    словари ru/en (карты, без codegen) + L10nProvider
   theme/app_theme.dart           FibrColors (токены из design/tokens.css) + ThemeData
   models/tunnel.dart             модель туннеля (+JSON для shared_preferences)
+  models/game.dart               каталог игр (модель + офлайн-снапшот CIDR)
   services/
-    wg_config_parser.dart        парсер wg-quick (свой)
+    wg_config_parser.dart        парсер wg-quick (свой) + render() для
+                                 производных конфигов, шлюз подсети/DNS-вердикт
     tunnel_service.dart          TunnelEngine (абстракция) + WireGuardFlutterEngine
                                  + TunnelController (список, статусы, persistence)
     settings_service.dart        SettingsController: тема/язык
     deep_link_service.dart       fibr://import/<base64> (MethodChannel/EventChannel)
     app_list_service.dart        список приложений для split tunneling (Android)
+    server_api_service.dart      публичные ручки сервера через шлюз:
+                                 /api/dns/status, /api/games, /api/games/routes
+                                 (fail-soft: ошибки → null/пусто)
   screens/
-    tunnel_list_screen.dart      список + FAB добавления
+    tunnel_list_screen.dart      список + FAB добавления + кнопка игрового режима
     add_tunnel_screen.dart       QR / вставка / подтверждение с разбором
-    tunnel_detail_screen.dart    статус, сессия, инфо, конфиг, удаление
+    tunnel_detail_screen.dart    статус, сессия, инфо, DNS-защита, конфиг, удаление
     split_apps_screen.dart       выбор приложений (Android) / инфо (iOS)
+    game_mode_screen.dart        игровой туннель из CIDR выбранных игр
     settings_screen.dart         тема, язык, about
   widgets/fibr_widgets.dart      FibrCard (16px, hairline), StatusPill (999), StatusDot, InfoRow
 test/
-  wg_config_parser_test.dart     обычный конфиг, «грязный», несколько [Peer], ошибки
+  wg_config_parser_test.dart     обычный конфиг, «грязный», несколько [Peer], ошибки;
+                                 шлюз подсети + DNS-вердикт, render (round-trip)
 android/                         минимальный скаффолдинг (см. ниже) — gradle, манифест,
                                  MainActivity.kt (deep link + список приложений), res
 ios/Runner/                      Info.plist (fibr-scheme, камера) + Runner.entitlements

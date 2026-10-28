@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 
 import '../l10n/app_localizations.dart';
 import '../models/tunnel.dart';
+import '../services/server_api_service.dart';
 import '../services/tunnel_service.dart';
 import '../theme/app_theme.dart';
 import '../utils/format.dart';
@@ -76,6 +77,8 @@ class _TunnelDetailScreenState extends State<TunnelDetailScreen> {
             const SizedBox(height: 8),
           ],
           _InfoCard(tunnel: tunnel),
+          const SizedBox(height: 8),
+          _DnsCard(tunnel: tunnel, active: status == TunnelStatus.connected),
           const SizedBox(height: 8),
           _ActionsCard(
             tunnel: tunnel,
@@ -318,6 +321,105 @@ class _InfoCard extends StatelessWidget {
           InfoRow(label: l10n.t('lblDns'), value: tunnel.dnsLabel),
           InfoRow(label: l10n.t('lblAllowedIps'), value: tunnel.allowedIpsLabel),
           InfoRow(label: l10n.t('lblServerKey'), value: tunnel.serverKeyLabel),
+        ],
+      ),
+    );
+  }
+}
+
+/// DNS-protection verdict (docs/dns-games.md §1). The config alone already
+/// answers "is DNS the tunnel gateway"; while connected the card also
+/// probes the resolver's status endpoint ONCE and refines the verdict by
+/// the server's enabled/profile state.
+class _DnsCard extends StatefulWidget {
+  const _DnsCard({required this.tunnel, required this.active});
+
+  final Tunnel tunnel;
+
+  /// Whether this tunnel is currently connected — the status probe only
+  /// makes sense through a live tunnel.
+  final bool active;
+
+  @override
+  State<_DnsCard> createState() => _DnsCardState();
+}
+
+class _DnsCardState extends State<_DnsCard> {
+  DnsStatus? _apiStatus;
+
+  /// One probe attempt per card lifetime (docs/dns-games.md: the resolver
+  /// answers through the tunnel — no retries when it does not).
+  bool _probed = false;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.active) _probe();
+  }
+
+  @override
+  void didUpdateWidget(_DnsCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // Rising edge of active only — not on every parent rebuild tick.
+    if (widget.active && !oldWidget.active) _probe();
+  }
+
+  Future<void> _probe() async {
+    if (_probed) return;
+    final gateway = widget.tunnel.subnetGateway;
+    if (gateway == null) return;
+    _probed = true;
+    final status = await ServerApiService.fetchDnsStatus(gateway);
+    // A failed probe is silent — the config verdict below still applies.
+    if (status == null || !mounted) return;
+    setState(() => _apiStatus = status);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
+    final c = FibrColors.of(context);
+    final api = _apiStatus;
+    // Protection is on when DNS is the gateway AND the server (when it
+    // answered) runs with a profile other than "off".
+    final protected = widget.tunnel.dnsPointsToTunnel &&
+        (api == null || (api.enabled && api.defaultProfile != 'off'));
+    final profileText = switch (api?.defaultProfile) {
+      'adblock' => l10n.t('dnsProfileAdblock'),
+      'family' => l10n.t('dnsProfileFamily'),
+      _ => l10n.t('dnsProfileUnknown'),
+    };
+
+    return FibrCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                protected ? Icons.shield : Icons.shield_outlined,
+                color: protected ? c.primaryStrong : c.faint,
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  l10n.t('dnsTitle'),
+                  style: Theme.of(context).textTheme.titleSmall,
+                ),
+              ),
+              StatusPill(
+                label: protected ? l10n.t('dnsProtected') : l10n.t('dnsOrdinary'),
+                tone: protected ? PillTone.ok : PillTone.off,
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            l10n.t('dnsProfileHint'),
+            style: TextStyle(color: c.muted, fontSize: 12, fontWeight: FontWeight.w600),
+          ),
+          const SizedBox(height: 4),
+          Text(profileText, style: TextStyle(color: c.faint, fontSize: 12)),
         ],
       ),
     );

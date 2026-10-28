@@ -94,6 +94,30 @@ class AppLocalizations {
     'errJoinBad': 'Не похоже на ссылку или код подключения',
     'errJoinVless':
         'Это Xray-устройство: приложение работает с WireGuard, ссылка vless:// — на странице кода',
+    // DNS protection
+    'dnsTitle': 'DNS-защита',
+    'dnsProtected': 'Защита включена',
+    'dnsOrdinary': 'Обычный DNS',
+    'dnsProfileHint': 'Профиль меняется в Mini App или админке',
+    'dnsProfileAdblock': 'adblock — блокировка рекламы и трекеров',
+    'dnsProfileFamily': 'family — реклама, взрослый контент и SafeSearch',
+    'dnsProfileUnknown': 'Профиль устройства неизвестен',
+    // Game mode
+    'gameMode': 'Игровой режим',
+    'gameNeedBaseTunnel': 'Сначала добавьте и включите основной туннель',
+    'gameIntro':
+        'Отдельный туннель только для игрового трафика: выберите игры — '
+        'и через VPN пойдут только их серверы, всё остальное — напрямую.',
+    'gameSwitchHint':
+        'Два туннеля с одного пира — нормально для WireGuard; перед игрой '
+        'включайте игровой вместо основного',
+    'gameSnapshotNote': 'Список игр — офлайн-снапшот; сервер отдаёт актуальный',
+    'gameCidrCount': '{n} подсетей',
+    'gameCreate': 'Создать игровой туннель',
+    'gameCreating': 'Создаю…',
+    'gameTunnelCreated': 'Игровой туннель создан',
+    'gameNoRoutes': 'Не удалось получить маршруты игр',
+    'gameCidrLimit': 'Слишком много подсетей ({n}) — обрезано до 180',
     // Common
     'btnConfig': 'Конфиг',
     'btnDelete': 'Удалить',
@@ -113,6 +137,9 @@ class AppLocalizations {
     'iosSplitNote':
         'Per-app VPN на iOS требует MDM-профиль — это ограничение Apple. '
         'В этой версии доступен только полный туннель.',
+    'splitNotAppliedYet':
+        'Выбор сохраняется, но пока не влияет на VPN: плагин WireGuard ещё '
+        'не даёт API для per-app режимов. Появится в следующей версии.',
     // Settings
     'theme': 'Тема',
     'themeSystem': 'Системная',
@@ -195,6 +222,30 @@ class AppLocalizations {
     'errJoinBad': 'This does not look like a join link or code',
     'errJoinVless':
         'This is an Xray device: the app speaks WireGuard; the vless:// link is on the code page',
+    // DNS protection
+    'dnsTitle': 'DNS protection',
+    'dnsProtected': 'Protection on',
+    'dnsOrdinary': 'Ordinary DNS',
+    'dnsProfileHint': 'The profile is changed in the Mini App or the admin panel',
+    'dnsProfileAdblock': 'adblock — blocks ads and trackers',
+    'dnsProfileFamily': 'family — ads, adult content and SafeSearch',
+    'dnsProfileUnknown': 'Device profile unknown',
+    // Game mode
+    'gameMode': 'Game mode',
+    'gameNeedBaseTunnel': 'First add and connect the base tunnel',
+    'gameIntro':
+        'A separate tunnel for game traffic only: pick games and only their '
+        'servers go through the VPN — everything else stays direct.',
+    'gameSwitchHint':
+        'Two tunnels from one peer is normal for WireGuard; before playing, '
+        'turn on the game tunnel instead of the base one',
+    'gameSnapshotNote': 'This game list is an offline snapshot; the server serves the up-to-date one',
+    'gameCidrCount': '{n} subnets',
+    'gameCreate': 'Create game tunnel',
+    'gameCreating': 'Creating…',
+    'gameTunnelCreated': 'Game tunnel created',
+    'gameNoRoutes': 'Could not fetch game routes',
+    'gameCidrLimit': 'Too many subnets ({n}) — trimmed to 180',
     // Common
     'btnConfig': 'Config',
     'btnDelete': 'Delete',

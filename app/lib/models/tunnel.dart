@@ -68,6 +68,14 @@ class Tunnel {
   String get allowedIpsLabel => parsed?.allowedIpsJoined ?? '—';
   String get serverKeyLabel => parsed?.primaryPeer?.publicKey ?? '—';
 
+  /// Gateway of the tunnel's IPv4 subnet (network address + 1) — where the
+  /// Fibr filtering resolver listens (docs/dns-games.md §1).
+  String? get subnetGateway => parsed?.subnetGatewayV4;
+
+  /// Whether the config's DNS points at the tunnel gateway (= Fibr's
+  /// filtering resolver) rather than a public one.
+  bool get dnsPointsToTunnel => parsed?.dnsPointsToTunnel ?? false;
+
   Tunnel copyWith({String? name, SplitTunnelMode? splitMode, List<String>? splitApps}) =>
       Tunnel(
         id: id,
