@@ -34,3 +34,26 @@ func TestXrayRequiresSNI(t *testing.T) {
 		t.Fatal("expected error when FIBR_XRAY_SNI is missing")
 	}
 }
+
+func TestIPv6ForDerivesFromIPv4(t *testing.T) {
+	t.Setenv("FIBR_ADMIN_TOKEN", "x")
+	t.Setenv("FIBR_SECRET", "x")
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if c.ServerIP6 != "fd42:f1b2::1" {
+		t.Fatalf("ServerIP6 = %q, want fd42:f1b2::1", c.ServerIP6)
+	}
+	cases := map[string]string{
+		"10.8.0.1":   "fd42:f1b2::1",
+		"10.8.0.2":   "fd42:f1b2::2",
+		"10.8.0.255": "fd42:f1b2::ff",
+		"not-an-ip":  "",
+	}
+	for v4, want := range cases {
+		if got := c.IPv6For(v4); got != want {
+			t.Errorf("IPv6For(%q) = %q, want %q", v4, got, want)
+		}
+	}
+}

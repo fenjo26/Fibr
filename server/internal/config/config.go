@@ -36,6 +36,8 @@ type Config struct {
 	WGHost           string        // public endpoint host written into client configs
 	Subnet           string        // VPN IPv4 subnet, /24 only for now
 	ServerIP         string        // the server's own address inside Subnet (x.y.z.1)
+	Subnet6          string        // VPN IPv6 ULA /64 (dual-stack)
+	ServerIP6        string        // the server's ::1 address inside Subnet6
 	DNS              []string      // resolvers written into client configs
 	MTU              int           // tunnel MTU
 	MaxDevices       int           // devices per user
@@ -65,6 +67,7 @@ func Load() (*Config, error) {
 		WGInterface:      getenv("FIBR_WG_IFACE", "wg0"),
 		WGHost:           strings.TrimSpace(os.Getenv("FIBR_WG_HOST")),
 		Subnet:           getenv("FIBR_SUBNET", "10.8.0.0/24"),
+		Subnet6:          getenv("FIBR_SUBNET6", "fd42:f1b2::/64"),
 		DNS:              splitCSV(getenv("FIBR_DNS", "1.1.1.1,1.0.0.1")),
 		MTU:              getenvInt("FIBR_MTU", 1420),
 		MaxDevices:       getenvInt("FIBR_MAX_DEVICES", 10),
@@ -136,7 +139,47 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 	c.ServerIP = serverIP
+
+	// IPv6 ULA /64: server takes ::1; devices derive their host part from
+	// the last IPv4 octet (see IPv6For).
+	ip6, ip6net, err := net.ParseCIDR(c.Subnet6)
+	if err != nil {
+		return nil, fmt.Errorf("FIBR_SUBNET6: %w", err)
+	}
+	if ip6.To16() == nil || ip6.To4() != nil {
+		return nil, fmt.Errorf("FIBR_SUBNET6: an IPv6 ULA /64 is expected, got %s", c.Subnet6)
+	}
+	if ones, _ := ip6net.Mask.Size(); ones != 64 {
+		return nil, fmt.Errorf("FIBR_SUBNET6: only /64 is supported, got %s", c.Subnet6)
+	}
+	c.Subnet6 = ip6net.String()
+	server6 := make(net.IP, len(ip6))
+	copy(server6, ip6.To16())
+	server6[15] = 1
+	c.ServerIP6 = server6.String()
+
 	return c, nil
+}
+
+// IPv6For returns the device's IPv6 address: the ULA prefix with the host
+// part copied from the last octet of the device's IPv4 (10.8.0.42 ->
+// fd42:f1b2::2a). Nothing is stored — the address is always derived.
+func (c *Config) IPv6For(ipv4 string) string {
+	ip := net.ParseIP(ipv4).To4()
+	if ip == nil {
+		return ""
+	}
+	host := make(net.IP, net.IPv6len)
+	host[15] = ip[3]
+	_, ip6net, err := net.ParseCIDR(c.Subnet6)
+	if err != nil {
+		return ""
+	}
+	out := ip6net.IP.To16()
+	for i := range host {
+		out[i] |= host[i]
+	}
+	return out.String()
 }
 
 // serverIPForSubnet returns the .1 host address of an IPv4 /24 subnet.

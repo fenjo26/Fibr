@@ -147,7 +147,8 @@ make run     # локальный запуск в пассивном режим�
 - [x] Xray (VLESS-Reality) как второй протокол устройств — [docs/xray.md](docs/xray.md)
 - [x] AmneziaWG — обфусцированный WireGuard, движок на весь сервер — [docs/awg.md](docs/awg.md)
 - [x] Self-enroll по приглашениям — [docs/self-enroll.md](docs/self-enroll.md)
-- [ ] IPv6 dual-stack, OpenWrt/LuCI-плагин
+- [x] IPv6 dual-stack (ULA /64, адрес устройства выводится из IPv4)
+- [ ] OpenWrt/LuCI-плагин
 
 ## Лицензия
 

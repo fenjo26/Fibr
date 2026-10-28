@@ -23,6 +23,8 @@ func newTestManager(t *testing.T) (*Manager, *store.Store) {
 		WGInterface: "wg0",
 		Subnet:      "10.8.0.0/24",
 		ServerIP:    "10.8.0.1",
+		Subnet6:     "fd42:f1b2::/64",
+		ServerIP6:   "fd42:f1b2::1",
 		DNS:         []string{"1.1.1.1", "1.0.0.1"},
 		MTU:         1420,
 	}
@@ -70,7 +72,7 @@ func TestClientConfig(t *testing.T) {
 
 	for _, want := range []string{
 		"PrivateKey = PRIVKEY",
-		"Address = 10.8.0.2/32",
+		"Address = 10.8.0.2/32, fd42:f1b2::2/128",
 		"DNS = 1.1.1.1, 1.0.0.1",
 		"MTU = 1420",
 		"PublicKey = " + m.PublicKey(),

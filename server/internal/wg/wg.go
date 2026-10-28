@@ -140,6 +140,9 @@ func (m *Manager) EnsureInterface() error {
 	if err := run("ip", "addr", "replace", m.cfg.ServerIP+"/24", "dev", m.cfg.WGInterface); err != nil {
 		return fmt.Errorf("assign address: %w", err)
 	}
+	if err := run("ip", "addr", "replace", m.cfg.ServerIP6+"/64", "dev", m.cfg.WGInterface); err != nil {
+		return fmt.Errorf("assign ipv6 address: %w", err)
+	}
 	if err := run("ip", "link", "set", "mtu", strconv.Itoa(m.cfg.MTU), "dev", m.cfg.WGInterface, "up"); err != nil {
 		return fmt.Errorf("bring up: %w", err)
 	}
@@ -168,6 +171,9 @@ func (m *Manager) ensureInterfaceAWG() error {
 	}
 	if err := run("ip", "addr", "replace", m.cfg.ServerIP+"/24", "dev", m.cfg.WGInterface); err != nil {
 		return fmt.Errorf("assign address: %w", err)
+	}
+	if err := run("ip", "addr", "replace", m.cfg.ServerIP6+"/64", "dev", m.cfg.WGInterface); err != nil {
+		return fmt.Errorf("assign ipv6 address: %w", err)
 	}
 	if err := run("ip", "link", "set", "mtu", strconv.Itoa(m.cfg.MTU), "dev", m.cfg.WGInterface, "up"); err != nil {
 		return fmt.Errorf("bring up: %w", err)
@@ -220,6 +226,18 @@ func (m *Manager) ensureFirewall() error {
 			return fmt.Errorf("iptables %v: %w", r.add, err)
 		}
 	}
+
+	// Dual-stack egress is best-effort: hosts without IPv6 (or without
+	// ip6tables) simply never route v6 traffic out; v4 keeps working.
+	if _, err := exec.LookPath("ip6tables"); err == nil {
+		v6check := []string{"-t", "nat", "-C", "POSTROUTING", "-s", m.cfg.Subnet6, "-o", m.extIface, "-j", "MASQUERADE"}
+		if err := run("ip6tables", v6check...); err != nil {
+			v6add := []string{"-t", "nat", "-A", "POSTROUTING", "-s", m.cfg.Subnet6, "-o", m.extIface, "-j", "MASQUERADE"}
+			if err := run("ip6tables", v6add...); err != nil {
+				m.log.Warn("ip6tables MASQUERADE failed (IPv6 egress disabled)", "error", err)
+			}
+		}
+	}
 	return nil
 }
 
@@ -269,10 +287,15 @@ func (m *Manager) SyncPeers() error {
 			v := 25 * time.Second
 			ka = &v
 		}
+		// Dual-stack: the peer's tunnel IPs are its /32 and the derived /128.
+		allowed := []net.IPNet{{IP: ip, Mask: net.CIDRMask(32, 32)}}
+		if ip6 := net.ParseIP(m.cfg.IPv6For(d.IPv4)); ip6 != nil {
+			allowed = append(allowed, net.IPNet{IP: ip6.To16(), Mask: net.CIDRMask(128, 128)})
+		}
 		peers = append(peers, wgtypes.PeerConfig{
 			PublicKey:                   pub,
 			PresharedKey:                &psk,
-			AllowedIPs:                  []net.IPNet{{IP: ip, Mask: net.CIDRMask(32, 32)}},
+			AllowedIPs:                  allowed,
 			PersistentKeepaliveInterval: ka,
 		})
 	}
@@ -392,9 +415,13 @@ func (m *Manager) ClientConfig(d store.Device) string {
 	if m.awg != nil {
 		awgBlock = m.awg.ClientINI() + "\n"
 	}
+	address := fmt.Sprintf("%s/32", d.IPv4)
+	if ip6 := m.cfg.IPv6For(d.IPv4); ip6 != "" {
+		address += ", " + ip6 + "/128"
+	}
 	return fmt.Sprintf(`[Interface]
 PrivateKey = %s
-Address = %s/32
+Address = %s
 DNS = %s
 MTU = %d
 %s[Peer]
@@ -403,7 +430,7 @@ PresharedKey = %s
 AllowedIPs = 0.0.0.0/0, ::/0
 Endpoint = %s:%d
 PersistentKeepalive = 25
-`, d.PrivateKey, d.IPv4, strings.Join(m.cfg.DNS, ", "), m.cfg.MTU, awgBlock,
+`, d.PrivateKey, address, strings.Join(m.cfg.DNS, ", "), m.cfg.MTU, awgBlock,
 		m.PublicKey(), d.PresharedKey, m.cfg.WGHost, m.cfg.WGPort)
 }
 
