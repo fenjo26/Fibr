@@ -9,8 +9,6 @@ import (
 	"crypto/rand"
 	"math/big"
 	"net/http"
-	"os"
-	"strconv"
 	"strings"
 
 	"github.com/fenjo26/Fibr/internal/store"
@@ -22,9 +20,10 @@ const inviteAlphabet = "23456789abcdefghjkmnpqrstuvwxyzABCDEFGHJKMNPQRSTUVWXYZ"
 
 const inviteCodeLen = 10
 
-// generateInviteCode returns a crypto/rand code of inviteCodeLen chars from
-// inviteAlphabet (53^10 ≈ 1.6e17 combinations).
-func generateInviteCode() (string, error) {
+// GenerateInviteCode returns a crypto/rand code of inviteCodeLen chars from
+// inviteAlphabet (53^10 ≈ 1.6e17 combinations). Exported for the bot's
+// /invite command.
+func GenerateInviteCode() (string, error) {
 	var b strings.Builder
 	b.Grow(inviteCodeLen)
 	max := big.NewInt(int64(len(inviteAlphabet)))
@@ -38,10 +37,10 @@ func generateInviteCode() (string, error) {
 	return b.String(), nil
 }
 
-// inviteLink renders the enrollment link for a code. With a real public
+// InviteLink renders the enrollment link for a code. With a real public
 // domain it is absolute https; in dev (empty domain / localhost) it stays a
 // relative path the admin panel can still copy.
-func inviteLink(domain, code string) string {
+func InviteLink(domain, code string) string {
 	d := strings.TrimSpace(domain)
 	if i := strings.Index(d, "://"); i >= 0 { // dev mode: FIBR_DOMAIN=http://localhost
 		d = d[i+3:]
@@ -79,7 +78,7 @@ func (a *API) handleAdminListInvites(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]inviteOut, 0, len(invites))
 	for _, inv := range invites {
-		o := inviteOut{Invite: inv, Link: inviteLink(a.cfg.Domain, inv.Code)}
+		o := inviteOut{Invite: inv, Link: InviteLink(a.cfg.Domain, inv.Code)}
 		if inv.UsedBy != nil {
 			o.Username = names[*inv.UsedBy]
 		}
@@ -101,7 +100,7 @@ func (a *API) handleAdminCreateInvite(w http.ResponseWriter, r *http.Request) {
 	// The alphabet is huge, so collisions are ~impossible; retry anyway so a
 	// duplicate PRIMARY KEY can never surface as a 500.
 	for attempt := 0; attempt < 5; attempt++ {
-		code, err := generateInviteCode()
+		code, err := GenerateInviteCode()
 		if err != nil {
 			a.errJSON(w, http.StatusInternalServerError, "cannot generate invite code")
 			return
@@ -109,7 +108,7 @@ func (a *API) handleAdminCreateInvite(w http.ResponseWriter, r *http.Request) {
 		inv.Code = code
 		if err := a.store.CreateInvite(inv); err == nil {
 			a.log.Info("invite created", "code", inv.Code, "created_by", inv.CreatedBy)
-			writeJSON(w, http.StatusCreated, inviteOut{Invite: *inv, Link: inviteLink(a.cfg.Domain, inv.Code)})
+			writeJSON(w, http.StatusCreated, inviteOut{Invite: *inv, Link: InviteLink(a.cfg.Domain, inv.Code)})
 			return
 		}
 	}
@@ -130,14 +129,4 @@ func (a *API) handleAdminDeleteInvite(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// envBool parses a bool env var the same way config.getenvBool does.
-// TODO(move to config package): lives here only while config.Load() is being
-// edited in parallel; the coordinator folds FIBR_REQUIRE_INVITE into Config.
-func envBool(key string, def bool) bool {
-	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
-		if b, err := strconv.ParseBool(v); err == nil {
-			return b
-		}
-	}
-	return def
-}
+// envBool has moved to internal/config (Config.RequireInvite).

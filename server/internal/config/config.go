@@ -44,6 +44,7 @@ type Config struct {
 	TelegramBotToken string        // optional; enables the bot and Mini App auth
 	AdminTelegramIDs []int64       // telegram user ids auto-promoted to admin
 	StatsInterval    time.Duration // peer stats collection period
+	RequireInvite    bool          // FIBR_REQUIRE_INVITE: new Mini App users need a one-time invite code
 
 	// Xray (VLESS + Reality) — second protocol for DPI resistance. All fields
 	// except XrayPort are meaningful only when XrayEnabled is true.
@@ -71,6 +72,7 @@ func Load() (*Config, error) {
 		Secret:           strings.TrimSpace(os.Getenv("FIBR_SECRET")),
 		TelegramBotToken: strings.TrimSpace(os.Getenv("FIBR_TELEGRAM_BOT_TOKEN")),
 		StatsInterval:    getenvDuration("FIBR_STATS_INTERVAL", 30*time.Second),
+		RequireInvite:    getenvBool("FIBR_REQUIRE_INVITE", false),
 	}
 
 	for _, raw := range splitCSV(os.Getenv("FIBR_ADMIN_TELEGRAM_IDS")) {

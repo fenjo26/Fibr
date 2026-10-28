@@ -14,7 +14,7 @@ RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o /out/fibr ./cmd/fibr
 
-FROM alpine:3.20
+FROM alpine:3.24
 # iproute2/iptables manage the interface and NAT; wireguard-tools for debugging.
 RUN apk add --no-cache ca-certificates iproute2 iptables wireguard-tools
 COPY --from=build /out/fibr /usr/local/bin/fibr

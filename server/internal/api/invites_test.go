@@ -129,7 +129,7 @@ func TestInviteStoreLifecycle(t *testing.T) {
 func TestGenerateInviteCode(t *testing.T) {
 	seen := map[string]bool{}
 	for i := 0; i < 100; i++ {
-		code, err := generateInviteCode()
+		code, err := GenerateInviteCode()
 		if err != nil {
 			t.Fatalf("generate: %v", err)
 		}
@@ -160,8 +160,8 @@ func TestInviteLink(t *testing.T) {
 		"127.0.0.1":               "/miniapp/?invite=CODE",
 	}
 	for domain, want := range cases {
-		if got := inviteLink(domain, "CODE"); got != want {
-			t.Errorf("inviteLink(%q) = %q, want %q", domain, got, want)
+		if got := InviteLink(domain, "CODE"); got != want {
+			t.Errorf("InviteLink(%q) = %q, want %q", domain, got, want)
 		}
 	}
 }
@@ -170,12 +170,9 @@ func TestInviteLink(t *testing.T) {
 // FIBR_REQUIRE_INVITE=true: no code -> 403, bad code -> 403, good code ->
 // registered, repeat sign-in without code -> ok, code is one-time.
 func TestInviteGateRegistration(t *testing.T) {
-	t.Setenv("FIBR_REQUIRE_INVITE", "true")
 	a, st := newTestAPI(t, false)
 	a.cfg.TelegramBotToken = testBotToken
-	if !a.requireInvite {
-		t.Fatal("New() must read FIBR_REQUIRE_INVITE=true from the environment")
-	}
+	a.cfg.RequireInvite = true
 
 	// New user, no invite code: rejected, no user row.
 	rec := authPOST(a, signedInitData(501, "nocode"), "")
@@ -258,10 +255,9 @@ func TestInviteGateRegistration(t *testing.T) {
 // TestFreeRegistrationWithoutRequireInvite: with the flag off (default) the
 // old behaviour holds — anyone signing in via the Mini App is registered.
 func TestFreeRegistrationWithoutRequireInvite(t *testing.T) {
-	t.Setenv("FIBR_REQUIRE_INVITE", "")
 	a, st := newTestAPI(t, false)
 	a.cfg.TelegramBotToken = testBotToken
-	if a.requireInvite {
+	if a.cfg.RequireInvite {
 		t.Fatal("default must be free registration")
 	}
 

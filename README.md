@@ -145,7 +145,7 @@ make run     # локальный запуск в пассивном режим�
 - [x] Этап 1 — сервер, админка, бот, Mini App, WireGuard, QR, i18n (ru/en)
 - [x] Этап 2 — Flutter-клиент (`app/`): парсер конфигов, QR/deep-link импорт, темы
 - [x] Xray (VLESS-Reality) как второй протокол устройств — [docs/xray.md](docs/xray.md)
-- [ ] AmneziaWG — обфусцированный WireGuard (тот же UX, что и обычный WG)
+- [x] AmneziaWG — обфусцированный WireGuard, движок на весь сервер — [docs/awg.md](docs/awg.md)
 - [x] Self-enroll по приглашениям — [docs/self-enroll.md](docs/self-enroll.md)
 - [ ] IPv6 dual-stack, OpenWrt/LuCI-плагин
 

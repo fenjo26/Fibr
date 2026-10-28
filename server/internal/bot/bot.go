@@ -143,6 +143,22 @@ func (b *Bot) handleUpdate(ctx context.Context, u tgUpdate) {
 			return
 		}
 		b.sendMessage(ctx, msg.Chat.ID, formatStats(lang, ov), nil)
+	case "/invite":
+		if user.Role != "admin" {
+			b.sendMessage(ctx, msg.Chat.ID, t(lang, "denied"), nil)
+			return
+		}
+		code, err := api.GenerateInviteCode()
+		if err != nil {
+			b.sendMessage(ctx, msg.Chat.ID, t(lang, "statsError"), nil)
+			return
+		}
+		if err := b.store.CreateInvite(&store.Invite{Code: code, CreatedBy: user.ID}); err != nil {
+			b.log.Warn("bot: cannot create invite", "error", err)
+			b.sendMessage(ctx, msg.Chat.ID, t(lang, "statsError"), nil)
+			return
+		}
+		b.sendMessage(ctx, msg.Chat.ID, t(lang, "inviteCreated", code, api.InviteLink(b.cfg.Domain, code)), nil)
 	case "/id":
 		b.sendMessage(ctx, msg.Chat.ID, "Telegram ID: "+strconv.FormatInt(from.ID, 10), nil)
 	default:
@@ -276,32 +292,34 @@ func pickLang(code string) string {
 
 var texts = map[string]map[string]string{
 	"ru": {
-		"welcome":     "👋 Добро пожаловать в <b>Fibr</b>!\n\nКнопкой ниже откройте приложение: там можно создать устройство, забрать QR-код конфигурации и посмотреть свою статистику.",
-		"help":        "Команды:\n/start — открыть приложение\n/help — справка\n/stats — статистика (только админ)\n/id — узнать свой Telegram ID",
-		"denied":      "⛔ Команда доступна только администраторам.",
-		"unknown":     "Не понял команду. /help — список команд.",
-		"openApp":     "Открыть Fibr",
-		"statsHeader": "📊 <b>Статистика Fibr</b>",
-		"statsError":  "Не удалось собрать статистику, смотрите логи сервера.",
-		"users":       "Пользователей",
-		"devices":     "Устройств",
-		"online":      "Онлайн",
-		"traffic":     "Трафик",
-		"tunnelRate":  "Туннель",
+		"welcome":       "👋 Добро пожаловать в <b>Fibr</b>!\n\nКнопкой ниже откройте приложение: там можно создать устройство, забрать QR-код конфигурации и посмотреть свою статистику.",
+		"help":          "Команды:\n/start — открыть приложение\n/help — справка\n/stats — статистика (только админ)\n/invite — создать приглашение (только админ)\n/id — узнать свой Telegram ID",
+		"denied":        "⛔ Команда доступна только администраторам.",
+		"unknown":       "Не понял команду. /help — список команд.",
+		"inviteCreated": "🎟 Одноразовое приглашение:\n\nКод: <code>%s</code>\nСсылка: %s\n\nОдин человек сможет зарегистрироваться, открыв ссылку в Telegram.",
+		"openApp":       "Открыть Fibr",
+		"statsHeader":   "📊 <b>Статистика Fibr</b>",
+		"statsError":    "Не удалось собрать статистику, смотрите логи сервера.",
+		"users":         "Пользователей",
+		"devices":       "Устройств",
+		"online":        "Онлайн",
+		"traffic":       "Трафик",
+		"tunnelRate":    "Туннель",
 	},
 	"en": {
-		"welcome":     "👋 Welcome to <b>Fibr</b>!\n\nUse the button below to open the app: create a device, grab a QR config and check your traffic stats.",
-		"help":        "Commands:\n/start — open the app\n/help — help\n/stats — stats (admin only)\n/id — show your Telegram ID",
-		"denied":      "⛔ This command is admin-only.",
-		"unknown":     "Unknown command. /help lists commands.",
-		"openApp":     "Open Fibr",
-		"statsHeader": "📊 <b>Fibr stats</b>",
-		"statsError":  "Failed to collect stats, check server logs.",
-		"users":       "Users",
-		"devices":     "Devices",
-		"online":      "Online",
-		"traffic":     "Traffic",
-		"tunnelRate":  "Tunnel",
+		"welcome":       "👋 Welcome to <b>Fibr</b>!\n\nUse the button below to open the app: create a device, grab a QR config and check your traffic stats.",
+		"help":          "Commands:\n/start — open the app\n/help — help\n/stats — stats (admin only)\n/invite — create an invite (admin only)\n/id — show your Telegram ID",
+		"denied":        "⛔ This command is admin-only.",
+		"unknown":       "Unknown command. /help lists commands.",
+		"inviteCreated": "🎟 One-time invite:\n\nCode: <code>%s</code>\nLink: %s\n\nOne person can register by opening the link in Telegram.",
+		"openApp":       "Open Fibr",
+		"statsHeader":   "📊 <b>Fibr stats</b>",
+		"statsError":    "Failed to collect stats, check server logs.",
+		"users":         "Users",
+		"devices":       "Devices",
+		"online":        "Online",
+		"traffic":       "Traffic",
+		"tunnelRate":    "Tunnel",
 	},
 }
 

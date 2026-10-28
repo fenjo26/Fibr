@@ -23,20 +23,16 @@ import (
 
 // API bundles the HTTP handlers.
 type API struct {
-	cfg           *config.Config
-	store         *store.Store
-	wg            *wg.Manager
-	xray          *xray.Manager
-	log           *slog.Logger
-	requireInvite bool // FIBR_REQUIRE_INVITE: new users must present a one-time invite code
+	cfg   *config.Config
+	store *store.Store
+	wg    *wg.Manager
+	xray  *xray.Manager
+	log   *slog.Logger
 }
 
 // New creates the API.
 func New(cfg *config.Config, st *store.Store, wgm *wg.Manager, xm *xray.Manager, log *slog.Logger) *API {
-	// TODO(move to config package): FIBR_REQUIRE_INVITE is read here because
-	// internal/config is edited in parallel; the coordinator moves it into
-	// config.Load() during final integration.
-	return &API{cfg: cfg, store: st, wg: wgm, xray: xm, log: log, requireInvite: envBool("FIBR_REQUIRE_INVITE", false)}
+	return &API{cfg: cfg, store: st, wg: wgm, xray: xm, log: log}
 }
 
 // Handler builds the routed, panic-safe HTTP handler.
@@ -171,7 +167,7 @@ func (a *API) handleAuthTelegram(w http.ResponseWriter, r *http.Request) {
 		// Self-enroll gate: in invite-only mode a brand-new user must present
 		// a valid unused code (existing users sign in freely).
 		inviteCode := ""
-		if a.requireInvite {
+		if a.cfg.RequireInvite {
 			inviteCode = strings.TrimSpace(body.InviteCode)
 			if inviteCode == "" {
 				a.errJSON(w, http.StatusForbidden, "invite required")
