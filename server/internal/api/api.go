@@ -23,16 +23,20 @@ import (
 
 // API bundles the HTTP handlers.
 type API struct {
-	cfg   *config.Config
-	store *store.Store
-	wg    *wg.Manager
-	xray  *xray.Manager
-	log   *slog.Logger
+	cfg           *config.Config
+	store         *store.Store
+	wg            *wg.Manager
+	xray          *xray.Manager
+	log           *slog.Logger
+	requireInvite bool // FIBR_REQUIRE_INVITE: new users must present a one-time invite code
 }
 
 // New creates the API.
 func New(cfg *config.Config, st *store.Store, wgm *wg.Manager, xm *xray.Manager, log *slog.Logger) *API {
-	return &API{cfg: cfg, store: st, wg: wgm, xray: xm, log: log}
+	// TODO(move to config package): FIBR_REQUIRE_INVITE is read here because
+	// internal/config is edited in parallel; the coordinator moves it into
+	// config.Load() during final integration.
+	return &API{cfg: cfg, store: st, wg: wgm, xray: xm, log: log, requireInvite: envBool("FIBR_REQUIRE_INVITE", false)}
 }
 
 // Handler builds the routed, panic-safe HTTP handler.
@@ -61,6 +65,11 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("GET /api/admin/devices/{id}/qr.png", a.admin(a.handleAdminDeviceQR))
 	mux.HandleFunc("PATCH /api/admin/devices/{id}", a.admin(a.handleAdminUpdateDevice))
 	mux.HandleFunc("DELETE /api/admin/devices/{id}", a.admin(a.handleAdminDeleteDevice))
+
+	// Admin invite endpoints (self-enrollment links; see docs/self-enroll.md).
+	mux.HandleFunc("GET /api/admin/invites", a.admin(a.handleAdminListInvites))
+	mux.HandleFunc("POST /api/admin/invites", a.admin(a.handleAdminCreateInvite))
+	mux.HandleFunc("DELETE /api/admin/invites/{code}", a.admin(a.handleAdminDeleteInvite))
 
 	return a.recoverMiddleware(mux)
 }
@@ -132,7 +141,8 @@ func (a *API) handleHealth(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) handleAuthTelegram(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		InitData string `json:"init_data"`
+		InitData   string `json:"init_data"`
+		InviteCode string `json:"invite_code"` // required for NEW users when FIBR_REQUIRE_INVITE=true
 	}
 	if err := decodeJSON(w, r, &body); err != nil {
 		a.errJSON(w, http.StatusBadRequest, err.Error())
@@ -158,6 +168,20 @@ func (a *API) handleAuthTelegram(w http.ResponseWriter, r *http.Request) {
 			u.Role = "admin"
 		}
 	case errors.Is(err, store.ErrNotFound):
+		// Self-enroll gate: in invite-only mode a brand-new user must present
+		// a valid unused code (existing users sign in freely).
+		inviteCode := ""
+		if a.requireInvite {
+			inviteCode = strings.TrimSpace(body.InviteCode)
+			if inviteCode == "" {
+				a.errJSON(w, http.StatusForbidden, "invite required")
+				return
+			}
+			if _, err := a.store.GetInvite(inviteCode); err != nil {
+				a.errJSON(w, http.StatusForbidden, "invalid invite")
+				return
+			}
+		}
 		role := "user"
 		if containsInt64(a.cfg.AdminTelegramIDs, tu.ID) {
 			role = "admin"
@@ -168,7 +192,18 @@ func (a *API) handleAuthTelegram(w http.ResponseWriter, r *http.Request) {
 			a.errJSON(w, http.StatusInternalServerError, "cannot create user")
 			return
 		}
-		a.log.Info("user registered via mini app", "user_id", u.ID, "telegram_id", tu.ID)
+		if inviteCode != "" {
+			// Claim the code only after the account exists; if a concurrent
+			// registration won the race, roll the account back — the code is
+			// one-time and cannot be shared.
+			if err := a.store.MarkUsed(inviteCode, u.ID); err != nil {
+				_ = a.store.DeleteUser(u.ID)
+				a.log.Warn("invite claim failed, registration rolled back", "invite", inviteCode, "user_id", u.ID, "error", err)
+				a.errJSON(w, http.StatusForbidden, "invalid invite")
+				return
+			}
+		}
+		a.log.Info("user registered via mini app", "user_id", u.ID, "telegram_id", tu.ID, "invite", inviteCode)
 	default:
 		a.errJSON(w, http.StatusInternalServerError, "storage error")
 		return

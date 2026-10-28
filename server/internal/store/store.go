@@ -14,6 +14,10 @@ import (
 // ErrNotFound is returned when a row does not exist.
 var ErrNotFound = errors.New("not found")
 
+// ErrInviteUsed is returned by MarkUsed when the invite exists but has
+// already been consumed (one-time use).
+var ErrInviteUsed = errors.New("invite already used")
+
 // User is a Fibr account. Telegram-linked users are created lazily on first
 // Mini App open or /start; admins can also create manual (panel-only) users.
 type User struct {
@@ -63,6 +67,18 @@ type Device struct {
 	TotalTx       int64     `json:"total_tx"`
 }
 
+// Invite is a one-time self-enrollment code (stage 4). The admin generates
+// it in the panel; a new user presents it on the first Mini App sign-in.
+// UsedBy/UsedAt are nil until the code is consumed by registration.
+type Invite struct {
+	Code      string     `json:"code"`
+	Note      string     `json:"note"`
+	CreatedBy int64      `json:"created_by"` // 0 = created with the static admin token
+	CreatedAt time.Time  `json:"created_at"`
+	UsedBy    *int64     `json:"used_by"`
+	UsedAt    *time.Time `json:"used_at"`
+}
+
 // Store wraps the SQLite database.
 type Store struct {
 	db *sql.DB
@@ -100,6 +116,15 @@ CREATE INDEX IF NOT EXISTS idx_devices_user ON devices(user_id);
 CREATE TABLE IF NOT EXISTS settings (
 	key   TEXT PRIMARY KEY,
 	value TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS invites (
+	code       TEXT PRIMARY KEY,
+	note       TEXT    NOT NULL DEFAULT '',
+	created_by INTEGER NOT NULL,
+	created_at INTEGER NOT NULL,
+	used_by    INTEGER REFERENCES users(id),
+	used_at    INTEGER
 );
 `
 
@@ -379,6 +404,94 @@ func scanDevice(r interface{ Scan(...any) error }) (*Device, error) {
 		d.LastHandshake = time.Unix(hs, 0)
 	}
 	return &d, nil
+}
+
+/* ---------------------------- invites ---------------------------- */
+
+// CreateInvite inserts an invite; the code is chosen by the caller (the API
+// generates a random one). CreatedAt is filled in.
+func (s *Store) CreateInvite(inv *Invite) error {
+	now := time.Now().Unix()
+	if _, err := s.db.Exec(
+		`INSERT INTO invites (code, note, created_by, created_at) VALUES (?, ?, ?, ?)`,
+		inv.Code, inv.Note, inv.CreatedBy, now,
+	); err != nil {
+		return err
+	}
+	inv.CreatedAt = time.Unix(now, 0)
+	return nil
+}
+
+// GetInvite returns an invite by code, or ErrNotFound.
+func (s *Store) GetInvite(code string) (*Invite, error) {
+	row := s.db.QueryRow(`SELECT code, note, created_by, created_at, used_by, used_at FROM invites WHERE code = ?`, code)
+	return scanInvite(row)
+}
+
+// ListInvites returns all invites, newest first.
+func (s *Store) ListInvites() ([]Invite, error) {
+	rows, err := s.db.Query(`SELECT code, note, created_by, created_at, used_by, used_at FROM invites ORDER BY created_at DESC, code`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Invite
+	for rows.Next() {
+		inv, err := scanInvite(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *inv)
+	}
+	return out, rows.Err()
+}
+
+// MarkUsed atomically consumes an invite: the UPDATE only matches rows with
+// used_by IS NULL, so exactly one concurrent registration can win. Returns
+// ErrInviteUsed when the code was already consumed, ErrNotFound when the code
+// does not exist at all.
+func (s *Store) MarkUsed(code string, userID int64) error {
+	now := time.Now().Unix()
+	res, err := s.db.Exec(`UPDATE invites SET used_by = ?, used_at = ? WHERE code = ? AND used_by IS NULL`, userID, now, code)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		if _, err := s.GetInvite(code); err != nil {
+			return err // ErrNotFound (or a storage error)
+		}
+		return ErrInviteUsed
+	}
+	return nil
+}
+
+// DeleteInvite removes an invite (used or not). Deleting a used invite is
+// allowed — the account it created stays.
+func (s *Store) DeleteInvite(code string) error {
+	res, err := s.db.Exec(`DELETE FROM invites WHERE code = ?`, code)
+	return touched(res, err)
+}
+
+func scanInvite(r interface{ Scan(...any) error }) (*Invite, error) {
+	var inv Invite
+	var usedBy, usedAt sql.NullInt64
+	var created int64
+	if err := r.Scan(&inv.Code, &inv.Note, &inv.CreatedBy, &created, &usedBy, &usedAt); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	inv.CreatedAt = time.Unix(created, 0)
+	if usedBy.Valid {
+		uid := usedBy.Int64
+		inv.UsedBy = &uid
+	}
+	if usedAt.Valid && usedAt.Int64 > 0 {
+		t := time.Unix(usedAt.Int64, 0)
+		inv.UsedAt = &t
+	}
+	return &inv, nil
 }
 
 /* ---------------------------- settings ---------------------------- */

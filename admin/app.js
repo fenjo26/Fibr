@@ -32,7 +32,12 @@
       configTitle: 'Конфигурация устройства', noTG: '—',
       thProtocol: 'Протокол', protWG: 'WG', protXray: 'Xray',
       addDevTitle: 'Новое устройство', fieldName: 'Название', fieldProtocol: 'Протокол',
-      btnCancel: 'Отмена', btnCreate: 'Создать', errXrayDisabled: 'Xray выключен на сервере'
+      btnCancel: 'Отмена', btnCreate: 'Создать', errXrayDisabled: 'Xray выключен на сервере',
+      invitesTitle: 'Приглашения', phInviteNote: 'Заметка (кому ссылка)',
+      btnInviteCreate: 'Создать приглашение',
+      thCode: 'Код', thLink: 'Ссылка', thNote: 'Заметка', thCreated: 'Создано', thUsed: 'Использовано',
+      inviteUnused: 'не использовано', inviteCreated: 'Приглашение создано, ссылка скопирована',
+      inviteDeleted: 'Приглашение удалено', confirmDeleteInvite: 'Удалить приглашение?'
     },
     en: {
       loginHint: 'Enter the admin token from /opt/fibr/install/.env (FIBR_ADMIN_TOKEN)',
@@ -63,7 +68,12 @@
       configTitle: 'Device configuration', noTG: '—',
       thProtocol: 'Protocol', protWG: 'WG', protXray: 'Xray',
       addDevTitle: 'New device', fieldName: 'Name', fieldProtocol: 'Protocol',
-      btnCancel: 'Cancel', btnCreate: 'Create', errXrayDisabled: 'Xray is disabled on the server'
+      btnCancel: 'Cancel', btnCreate: 'Create', errXrayDisabled: 'Xray is disabled on the server',
+      invitesTitle: 'Invites', phInviteNote: 'Note (who the link is for)',
+      btnInviteCreate: 'Create invite',
+      thCode: 'Code', thLink: 'Link', thNote: 'Note', thCreated: 'Created', thUsed: 'Used',
+      inviteUnused: 'unused', inviteCreated: 'Invite created, link copied',
+      inviteDeleted: 'Invite deleted', confirmDeleteInvite: 'Delete this invite?'
     }
   };
 
@@ -233,7 +243,7 @@
   /* ---------- users ---------- */
 
   function loadUsers() {
-    Promise.all([api('/api/admin/users'), api('/api/admin/devices'), api('/api/admin/overview')]).then(function (res) {
+    Promise.all([api('/api/admin/users'), api('/api/admin/devices'), api('/api/admin/overview'), api('/api/admin/invites')]).then(function (res) {
       var users = res[0];
       xrayEnabled = !!(res[2] && res[2].server && res[2].server.xray_enabled);
       var byUser = {};
@@ -269,8 +279,69 @@
             '<button class="btn btn--danger btn--small" data-act="deluser" data-id="' + u.id + '">' + t('btnDelete') + '</button>' +
             '</div></td></tr>';
         }).join('') + '</tbody>';
+      renderInvites(res[3] || []);
     }).catch(fail);
   }
+
+  /* ---------- invites (self-enroll links) ---------- */
+
+  // Trim a link for the table cell; the full link travels in data-link and is
+  // copied on click.
+  function shortLink(link) {
+    return link.length > 34 ? link.slice(0, 34) + '…' : link;
+  }
+
+  function renderInvites(invites) {
+    if (!invites.length) {
+      el('invites-table').innerHTML = '<thead><tr><th>' + t('thCode') + '</th><th>' + t('thLink') + '</th>' +
+        '<th>' + t('thNote') + '</th><th>' + t('thCreated') + '</th><th>' + t('thUsed') + '</th><th></th></tr></thead>' +
+        '<tbody><tr><td class="muted">—</td></tr></tbody>';
+      return;
+    }
+    el('invites-table').innerHTML =
+      '<thead><tr><th>' + t('thCode') + '</th><th>' + t('thLink') + '</th>' +
+      '<th>' + t('thNote') + '</th><th>' + t('thCreated') + '</th><th>' + t('thUsed') + '</th><th></th></tr></thead><tbody>' +
+      invites.map(function (inv) {
+        var used = inv.used_by
+          ? esc(inv.username || ('#' + inv.used_by)) + '<br><small class="muted">' + (inv.used_at ? (fmtAgo(inv.used_at, t.lang) || '') : '') + '</small>'
+          : '<span class="pill pill--off">' + t('inviteUnused') + '</span>';
+        return '<tr>' +
+          '<td class="mono">' + esc(inv.code) + '</td>' +
+          '<td><button class="btn btn--ghost btn--small mono" data-act="copylink" data-link="' + esc(inv.link) + '" title="' + esc(inv.link) + '">' + esc(shortLink(inv.link)) + '</button></td>' +
+          '<td>' + esc(inv.note || '—') + '</td>' +
+          '<td>' + (fmtAgo(inv.created_at, t.lang) || '') + '</td>' +
+          '<td>' + used + '</td>' +
+          '<td><button class="btn btn--danger btn--small" data-act="delinv" data-code="' + esc(inv.code) + '">' + t('btnDelete') + '</button></td>' +
+          '</tr>';
+      }).join('') + '</tbody>';
+  }
+
+  el('inv-create').addEventListener('click', function () {
+    api('/api/admin/invites', { method: 'POST', body: { note: el('inv-note').value.trim() } }).then(function (inv) {
+      el('inv-note').value = '';
+      if (inv.link && navigator.clipboard) {
+        navigator.clipboard.writeText(inv.link).then(function () { toast(t('inviteCreated')); }, function () { toast(t('inviteCreated')); });
+      } else {
+        toast(t('inviteCreated'));
+      }
+      loadUsers();
+    }).catch(fail);
+  });
+
+  el('invites-table').addEventListener('click', function (e) {
+    var btn = e.target.closest('button[data-act]');
+    if (!btn) return;
+    var act = btn.getAttribute('data-act');
+    if (act === 'copylink') {
+      navigator.clipboard.writeText(btn.getAttribute('data-link')).then(function () {
+        toast(t('copied'));
+      }, function () { toast(t('copy'), false); });
+    } else if (act === 'delinv') {
+      if (!confirm(t('confirmDeleteInvite'))) return;
+      api('/api/admin/invites/' + encodeURIComponent(btn.getAttribute('data-code')), { method: 'DELETE' })
+        .then(function () { toast(t('inviteDeleted')); loadUsers(); }).catch(fail);
+    }
+  });
 
   el('nu-create').addEventListener('click', function () {
     var body = { username: el('nu-username').value.trim(), role: el('nu-role').value };

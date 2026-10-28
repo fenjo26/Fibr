@@ -14,6 +14,7 @@ Telegram-ботом и Telegram Mini App. Пользователь открыв�
 | [routers.md](routers.md) | OpenWrt, Keenetic и любой роутер с WireGuard: куда какие поля конфига класть |
 | [telegram-bot.md](telegram-bot.md) | Команды бота, роли и FIBR_ADMIN_TELEGRAM_IDS, как устроен Mini App |
 | [xray.md](xray.md) | Второй протокол VLESS/Reality для сетей с блокировкой WireGuard: включение, клиенты, ограничения |
+| [self-enroll.md](self-enroll.md) | Регистрация по приглашениям: ссылки, режим «только по invite», deep-link через бота |
 | [faq.md](faq.md) | Скорость, смена порта, обновление, перенос на новый сервер, забытый токен, безопасность |
 
 ## С чего начать

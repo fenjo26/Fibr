@@ -15,6 +15,7 @@
       errNotTelegram: 'Откройте это окно из бота Fibr в Telegram.',
       errAuth: 'Не удалось войти через Telegram. Сообщите админу.',
       errDisabled: 'Ваш аккаунт отключён администратором.',
+      errInvite: 'Регистрация только по приглашению. Попросите у админа ссылку-приглашение и откройте её.',
       errGeneric: 'Ошибка запроса',
       deviceLimit: 'Лимит устройств исчерпан',
       empty: 'Пока нет устройств.\nДобавьте первое — и отсканируйте QR.',
@@ -37,6 +38,7 @@
       errNotTelegram: 'Open this window from the Fibr bot in Telegram.',
       errAuth: 'Telegram sign-in failed. Contact the admin.',
       errDisabled: 'Your account is disabled by the administrator.',
+      errInvite: 'Sign-up is invite-only. Ask the admin for an invite link and open it.',
       errGeneric: 'Request failed',
       deviceLimit: 'Device limit reached',
       empty: 'No devices yet.\nAdd one and scan the QR code.',
@@ -106,20 +108,41 @@
 
   /* ---------- auth ---------- */
 
+  // Invite code for self-enroll: either an explicit ?invite=CODE query (the
+  // admin panel copies links like https://<domain>/miniapp/?invite=CODE) or
+  // the start_param of a t.me/<bot>?startapp=CODE deep link.
+  function inviteCode() {
+    try {
+      var p = new URLSearchParams(window.location.search).get('invite');
+      if (p) return p;
+    } catch (e) { /* ignore */ }
+    try {
+      return (tg && tg.initDataUnsafe && tg.initDataUnsafe.start_param) || null;
+    } catch (e) { return null; }
+  }
+
   function signIn() {
     if (!tg || !tg.initData) {
       showError(t('errNotTelegram'));
       return;
     }
+    var body = { init_data: tg.initData };
+    var code = inviteCode();
+    if (code) body.invite_code = code;
     fetch('/api/auth/telegram', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ init_data: tg.initData })
+      body: JSON.stringify(body)
     }).then(function (res) {
       return res.json().then(function (data) {
         if (!res.ok) {
+          var msg = data && data.error ? data.error : 'auth failed';
+          if (res.status === 403 && (msg === 'invite required' || msg === 'invalid invite')) {
+            showError(t('errInvite'));
+            throw new Error('invite');
+          }
           if (res.status === 403) { showError(t('errDisabled')); throw new Error('disabled'); }
-          throw new Error(data && data.error ? data.error : 'auth failed');
+          throw new Error(msg);
         }
         return data;
       });
@@ -128,7 +151,7 @@
       try { sessionStorage.setItem('fibr-token', token); } catch (e) { /* ignore */ }
       load();
     }).catch(function (e) {
-      if (e && e.message === 'disabled') return;
+      if (e && (e.message === 'disabled' || e.message === 'invite')) return;
       showError(t('errAuth'));
     });
   }
