@@ -1,4 +1,29 @@
 /* Fibr Telegram Mini App. */
+// Global error trap — the very first thing on the page. A JS crash during
+// init otherwise leaves both views hidden = the infamous "black screen";
+// with this, any error shows as readable text instead (fast support).
+(function () {
+  function showErr(msg) {
+    try {
+      var el = document.getElementById('error-text');
+      var view = document.getElementById('error-view');
+      if (el && view) {
+        el.textContent = 'Error: ' + msg;
+        view.classList.remove('hidden');
+        document.getElementById('app-view') && document.getElementById('app-view').classList.add('hidden');
+      }
+    } catch (e) { /* nothing left to break */ }
+  }
+  window.addEventListener('error', function (e) {
+    var src = e.filename ? ' @' + String(e.filename).split('/').pop() + ':' + e.lineno : '';
+    showErr((e.message || e.type || 'unknown') + src);
+  });
+  window.addEventListener('unhandledrejection', function (e) {
+    var r = e.reason;
+    showErr((r && (r.message || r)) || 'promise rejection');
+  });
+})();
+
 (function () {
   'use strict';
 

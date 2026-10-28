@@ -1,3 +1,26 @@
+// Global error trap: a JS crash during init otherwise hides every view
+// (black screen); this makes it readable text instead.
+(function () {
+  function showErr(msg) {
+    try {
+      var el = document.getElementById('error-text');
+      var view = document.getElementById('error-view');
+      if (el && view) {
+        el.textContent = 'Error: ' + msg;
+        view.classList.remove('hidden');
+      }
+    } catch (e) { /* nothing left to break */ }
+  }
+  window.addEventListener('error', function (e) {
+    var src = e.filename ? ' @' + String(e.filename).split('/').pop() + ':' + e.lineno : '';
+    showErr((e.message || e.type || 'unknown') + src);
+  });
+  window.addEventListener('unhandledrejection', function (e) {
+    var r = e.reason;
+    showErr((r && (r.message || r)) || 'promise rejection');
+  });
+})();
+
 /* Fibr web cabinet — the browser twin of the Telegram Mini App.
  * Same screens and the same /api, only the sign-in differs: the Telegram
  * Login Widget (data-auth-url redirect) instead of initData. The server
