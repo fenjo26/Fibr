@@ -1,0 +1,17 @@
+{
+	"luci-app-fibr": {
+		"description": "Grant access to the Fibr VPN setup page",
+		"read": {
+			"ubus": {
+				"network.interface.wg_fibr": [ "status" ]
+			},
+			"uci": [ "network", "firewall" ]
+		},
+		"write": {
+			"ubus": {
+				"network.interface.wg_fibr": [ "up", "down" ]
+			},
+			"uci": [ "network", "firewall" ]
+		}
+	}
+}

@@ -153,9 +153,9 @@ func (b *Bot) handleUpdate(ctx context.Context, u tgUpdate) {
 	switch firstWord(msg.Text) {
 	case "/start":
 		if refCode != "" {
-			b.sendMessage(ctx, msg.Chat.ID, t(lang, "welcomeReferred", b.me), b.miniAppKeyboard(lang, refCode))
+			b.sendMessage(ctx, msg.Chat.ID, t(lang, "welcomeReferred"), b.miniAppKeyboard(lang, refCode))
 		} else {
-			b.sendMessage(ctx, msg.Chat.ID, t(lang, "welcome", b.me), b.miniAppKeyboard(lang, ""))
+			b.sendMessage(ctx, msg.Chat.ID, t(lang, "welcome"), b.miniAppKeyboard(lang, ""))
 		}
 	case "/help":
 		b.sendMessage(ctx, msg.Chat.ID, t(lang, "help"), nil)

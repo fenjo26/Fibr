@@ -42,6 +42,49 @@ opkg update
 opkg install wireguard-tools luci-proto-wireguard
 ```
 
+### LuCI-плагин (проще всего)
+
+Вместо ручного переноса полей по таблицам ниже можно поставить пакет
+`luci-app-fibr`: страница **Network → Fibr VPN** сама обменяет join-код на
+конфиг и пропишет интерфейс, пира и файрвол (все шаги из UCI-инструкции
+ниже — автоматически). Требования: OpenWrt 23.05+ (24.10 рекомендована),
+зависимости `wireguard-tools` и `luci-proto-wireguard` ставятся сами.
+
+Установка (когда пакет собран CI и приложен к релизу):
+
+```sh
+opkg update
+opkg install luci-app-fibr
+```
+
+или вручную — скачайте ipk из артефактов CI (Actions → OpenWrt package →
+luci-app-fibr-ipk) или релизов и:
+
+```sh
+scp luci-app-fibr-*.ipk root@192.168.1.1:/tmp/
+ssh root@192.168.1.1 "opkg install /tmp/luci-app-fibr-*.ipk"
+```
+
+Затем:
+
+1. Mini App → устройство роутера → кнопка «Код» (join-код, живёт 15 минут).
+2. LuCI → **Network → Fibr VPN**: домен сервера (например `vpn.example.com`)
+   и код → «Настроить». Можно и без кода — вставьте весь `.conf` в поле
+   «… или конфиг».
+3. Плагин пишет `network.wg_fibr` (proto wireguard), пир
+   `wireguard_wg_fibr` (AllowedIPs из конфига, endpoint, keepalive),
+   зону файрвола `fibr` с маскарадингом и forwarding `lan → fibr`.
+   DNS из конфига при желании пропишите в Network → DHCP and DNS.
+4. Статус туннеля и кнопки «Включить/Выключить» — на той же странице.
+
+Обмен кода идёт из браузера роутера напрямую на
+`https://<домен>/api/join/<код>` — код одноразовый и гасится на сервере
+как обычно. Для этого сервер должен отдавать `Access-Control-Allow-Origin`
+на этой ручке (актуальные версии Fibr делают это); на старом сервере
+вставьте конфиг вручную. Xray-устройства (vless) и серверы с движком
+AmneziaWG плагин определит и честно предупредит — роутеру нужен обычный
+WireGuard-конфиг.
+
 ### Через веб-интерфейс (LuCI)
 
 1. **Network → Interfaces → Add new interface…** — имя `fibr`,

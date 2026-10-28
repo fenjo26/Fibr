@@ -1,0 +1,15 @@
+#!/bin/sh
+# luci-app-fibr uci-defaults.
+#
+# Nothing to preconfigure in UCI: the tunnel sections (network.wg_fibr,
+# wireguard_wg_fibr peer, firewall zone "fibr") are written by the user
+# from the LuCI page after the join code is exchanged. The only thing the
+# package must do on install/first boot is make rpcd re-read its ACL
+# directory, otherwise the page answers "Permission denied" for non-root
+# users until the next rpcd restart.
+#
+# The script must exit 0 to be removed after a successful run.
+
+killall -HUP rpcd 2>/dev/null
+
+exit 0

@@ -61,7 +61,20 @@
       refEarnedFrom: 'Заработано',
       refPayout: 'Вывод средств',
       refContactLabel: 'Связь с администратором',
-      errXrayDisabled: 'Xray выключен на сервере'
+      errXrayDisabled: 'Xray выключен на сервере',
+      /* app access key (server login for the Fibr app) */
+      keyTitle: 'Ключ для приложения',
+      keyHint: 'Личный ключ для входа в приложение Fibr — домен сервера и ключ, без Telegram и QR.',
+      keyExists: 'ключ создан',
+      keyNone: 'ключа нет',
+      keyGen: 'Сгенерировать',
+      keyRegen: 'Сгенерировать заново',
+      keyRevoke: 'Отозвать',
+      keyModalTitle: 'Ключ для приложения',
+      keyWarning: 'Показывается только один раз — скопируйте сразу. Прежний ключ перестанет работать.',
+      keyHowTo: 'Приложение Fibr → «Вход» → «Ключ доступа»: введите домен сервера и этот ключ.',
+      keyConfirmRevoke: 'Отозвать ключ? Вход в приложение по нему перестанет работать.',
+      keyRevoked: 'Ключ отозван'
     },
     en: {
       greeting: 'Hi, {name}!',
@@ -117,7 +130,20 @@
       refEarnedFrom: 'Earned',
       refPayout: 'Withdrawals',
       refContactLabel: 'Contact the administrator',
-      errXrayDisabled: 'Xray is disabled on the server'
+      errXrayDisabled: 'Xray is disabled on the server',
+      /* app access key (server login for the Fibr app) */
+      keyTitle: 'App key',
+      keyHint: 'A personal key to sign in to the Fibr app — the server domain and the key, no Telegram and no QR.',
+      keyExists: 'key created',
+      keyNone: 'no key',
+      keyGen: 'Generate',
+      keyRegen: 'Regenerate',
+      keyRevoke: 'Revoke',
+      keyModalTitle: 'App key',
+      keyWarning: 'Shown only once — copy it now. The previous key stops working.',
+      keyHowTo: 'Fibr app → “Sign in” → “Access key”: enter the server domain and this key.',
+      keyConfirmRevoke: 'Revoke the key? Sign-in with it will stop working.',
+      keyRevoked: 'Key revoked'
     }
   };
 
@@ -155,6 +181,9 @@
   el('ref-title').textContent = t('refTitle');
   el('ref-hint').textContent = t('refHint');
   el('ref-copy').textContent = t('refCopy');
+  el('key-title').textContent = t('keyTitle');
+  el('key-hint').textContent = t('keyHint');
+  el('key-revoke').textContent = t('keyRevoke');
 
   /* ---------- views ---------- */
 
@@ -340,6 +369,7 @@
       render();
       loadUsersSection();
       loadRefSection();
+      loadKeySection();
     }).catch(fail);
   }
 
@@ -577,6 +607,61 @@
       el('ref-copy').textContent = t('copied');
       setTimeout(function () { el('ref-copy').textContent = t('refCopy'); }, 1500);
     });
+  });
+
+  /* ---------- app key (server login for the Fibr app) ---------- */
+
+  // Kept in sync with the Mini App: the server stores only a hash, the
+  // plaintext key is shown exactly once in the modal right after generation.
+  // A repeat generate rotates the key; revoke clears it.
+  function loadKeySection() {
+    el('key-view').classList.remove('hidden');
+    renderKeyState(!!(me && me.has_access_key));
+  }
+
+  function renderKeyState(has) {
+    var pill = el('key-status');
+    pill.textContent = has ? t('keyExists') : t('keyNone');
+    pill.className = 'pill ' + (has ? 'pill--ok' : 'pill--off');
+    el('key-revoke').classList.toggle('hidden', !has);
+    el('key-create').textContent = has ? t('keyRegen') : t('keyGen');
+  }
+
+  function showKeyModal(key) {
+    openModal('<h3>' + esc(t('keyModalTitle')) + '</h3>' +
+      '<p class="muted modal-sub key-warn">' + esc(t('keyWarning')) + '</p>' +
+      '<div class="key-value mono" id="app-key" title="' + esc(t('copy')) + '">' + esc(key) + '</div>' +
+      '<p class="muted">' + esc(t('keyHowTo')) + '</p>' +
+      '<div class="modal-actions">' +
+      '<button class="btn btn--tertiary btn--small" id="key-copy">' + esc(t('copy')) + '</button>' +
+      '<button class="btn" id="key-close">' + esc(t('close')) + '</button></div>');
+    function copyKey() {
+      navigator.clipboard.writeText(key).then(function () { /* :active feedback */ });
+    }
+    el('app-key').addEventListener('click', copyKey);
+    el('key-copy').addEventListener('click', function () {
+      navigator.clipboard.writeText(key).then(function () {
+        el('key-copy').textContent = t('copied');
+      });
+    });
+    el('key-close').addEventListener('click', function () {
+      closeModal();
+      load(); // refresh has_access_key behind the section
+    });
+  }
+
+  el('key-create').addEventListener('click', function () {
+    api('/api/me/access-key', { method: 'POST', body: {} }).then(function (d) {
+      showKeyModal(d.key);
+    }).catch(fail);
+  });
+
+  el('key-revoke').addEventListener('click', function () {
+    if (!confirm(t('keyConfirmRevoke'))) return;
+    api('/api/me/access-key', { method: 'DELETE' }).then(function () {
+      alert(t('keyRevoked'));
+      load();
+    }).catch(fail);
   });
 
   /* ---------- qr & config ---------- */

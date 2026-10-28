@@ -59,6 +59,9 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("GET /api/health", a.handleHealth)
 	mux.HandleFunc("GET /api/public/info", a.handlePublicInfo)
 	mux.HandleFunc("POST /api/auth/telegram", a.handleAuthTelegram)
+	// Server login for the Flutter client: exchange an app access key for
+	// the same {token, user} session the Telegram sign-in issues.
+	mux.HandleFunc("POST /api/auth/key", a.handleAuthKey)
 
 	// Quick-connect: public exchange of a one-time code for a device config,
 	// plus the /join/<code> landing page (never consumes the code, so
@@ -74,6 +77,11 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("GET /api/me/devices/{id}/config", a.auth(a.handleDeviceConfig))
 	mux.HandleFunc("GET /api/me/devices/{id}/qr.png", a.auth(a.handleDeviceQR))
 	mux.HandleFunc("POST /api/me/devices/{id}/join", a.auth(a.handleMeJoinCode))
+
+	// App access key management (server login; see access_key.go). The
+	// plaintext key leaves the server only from the create/rotate handler.
+	mux.HandleFunc("POST /api/me/access-key", a.auth(a.handleMeAccessKeyCreate))
+	mux.HandleFunc("DELETE /api/me/access-key", a.auth(a.handleMeAccessKeyDelete))
 
 	// Admin endpoints (admin token or admin-role user).
 	mux.HandleFunc("GET /api/admin/overview", a.admin(a.handleAdminOverview))
@@ -156,10 +164,12 @@ var ctxKey ctxKeyType
 // expired" screen (see docs/billing.md).
 const msgSubscriptionExpired = "subscription expired"
 
-// identify resolves the caller from the Authorization header: either the
-// static admin token or a Mini App session token. An account past its
-// effective subscription deadline is rejected with the
-// msgSubscriptionExpired reason (surfaces as 403), like a disabled one.
+// identify resolves the caller from the Authorization header: the static
+// admin token, a Mini App session token, or an app access key (server login
+// for the Flutter client — resolved by SHA-256 hash comparison, never by
+// storing the key). An account past its effective subscription deadline is
+// rejected with the msgSubscriptionExpired reason (surfaces as 403), like a
+// disabled one.
 func (a *API) identify(r *http.Request) (identity, string, bool) {
 	token := bearer(r)
 	if token == "" {
@@ -170,7 +180,16 @@ func (a *API) identify(r *http.Request) (identity, string, bool) {
 	}
 	uid, ok := a.parseSessionToken(token)
 	if !ok {
-		return identity{}, "", false
+		// Not an admin token and not a session token — the last chance is an
+		// app access key (a key carries its owner's rights; no separate role).
+		u, err := a.store.GetUserByAccessTokenHash(hashAccessKey(token))
+		if err != nil || u.Disabled {
+			return identity{}, "", false
+		}
+		if a.userExpired(u) {
+			return identity{}, msgSubscriptionExpired, false
+		}
+		return identity{userID: u.ID, role: u.Role}, "", true
 	}
 	u, err := a.store.GetUser(uid)
 	if err != nil || u.Disabled {
@@ -439,9 +458,17 @@ func (a *API) handleMe(w http.ResponseWriter, r *http.Request) {
 		a.errJSON(w, http.StatusInternalServerError, "storage error")
 		return
 	}
+	// Whether the account currently holds an app access key (the Mini App
+	// profile shows "created" without ever learning the key or its hash).
+	hasKey, err := a.store.HasUserAccessToken(u.ID)
+	if err != nil {
+		a.errJSON(w, http.StatusInternalServerError, "storage error")
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"user": u, "devices": out,
 		"max_devices": limit, "xray_enabled": a.cfg.XrayEnabled,
+		"has_access_key": hasKey,
 		// The client compares endpoint_changed_at with its stored copy to
 		// decide a re-download is needed (multi-node endpoint switch).
 		"active_node":         ep.Name,

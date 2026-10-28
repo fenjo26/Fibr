@@ -31,6 +31,12 @@
 	redir /windows.zip /download/Fibr-Windows.zip 302
 	redir /macos.zip /download/Fibr-macOS.zip 302
 
+	# The web frontends are small static files that change with every deploy;
+	# Telegram's webview caches aggressively, and a stale app.js against a
+	# fresh index.html renders as a black screen. Ask for revalidation.
+	@frontend path /miniapp/* /admin/* /cabinet/* /shared/*
+	header @frontend Cache-Control "no-cache"
+
 	handle {
 		root * /srv
 		redir / /miniapp/ 302

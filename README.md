@@ -139,6 +139,7 @@ miniapp/  Telegram Mini App (vanilla JS)
 cabinet/  Веб-кабинет: миниапп для браузера, вход Telegram Login Widget
 design/   Общие дизайн-токены и хелперы (отдаются на /shared/*)
 app/      Flutter-клиент
+luci-app-fibr/  LuCI-плагин для OpenWrt: join-код или .conf → WireGuard на всём доме
 ```
 
 ## Архитектура
@@ -214,7 +215,7 @@ make run     # локальный запуск в пассивном режим�
 - [x] Self-enroll по приглашениям — [docs/self-enroll.md](docs/self-enroll.md)
 - [x] IPv6 dual-stack (ULA /64, адрес устройства выводится из IPv4)
 - [x] Мультинодовость — ноды-агенты, активная нода, подмена при блокировке — [docs/multinode.md](docs/multinode.md)
-- [ ] OpenWrt/LuCI-плагин
+- [x] OpenWrt/LuCI-плагин `luci-app-fibr` — VPN на весь дом по join-коду — [docs/routers.md](docs/routers.md)
 
 ## Лицензия
 

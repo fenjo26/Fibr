@@ -13,7 +13,7 @@
       fPublicKey: 'Публичный ключ', fPort: 'Порт', fHost: 'Endpoint', fSubnet: 'Подсеть',
       fDNS: 'DNS', fMTU: 'MTU', fPassive: 'Режим', passiveOn: 'активный', passiveOff: 'только конфиги (нет kernel WG)',
       thUser: 'Пользователь', thTelegram: 'Telegram', thRole: 'Роль', thDevices: 'Устр-ва',
-      thOwner: 'Кто создал', thExpiry: 'Действует до',
+      thOwner: 'Кто создал', thLinks: 'Связи', thExpiry: 'Действует до',
       thStatus: 'Статус', thTraffic: 'Трафик', thSpeed: 'Скорость', thActions: 'Действия',
       thDevice: 'Устройство', thIP: 'IP', thLastSeen: 'Был(а)', thEnabled: 'Вкл',
       phTelegram: 'Telegram ID (необяз.)', phUsername: 'Имя пользователя',
@@ -117,7 +117,7 @@
       fPublicKey: 'Public key', fPort: 'Port', fHost: 'Endpoint', fSubnet: 'Subnet',
       fDNS: 'DNS', fMTU: 'MTU', fPassive: 'Mode', passiveOn: 'active', passiveOff: 'configs only (no kernel WG)',
       thUser: 'User', thTelegram: 'Telegram', thRole: 'Role', thDevices: 'Devices',
-      thOwner: 'Created by', thExpiry: 'Valid until',
+      thOwner: 'Created by', thLinks: 'Links', thExpiry: 'Valid until',
       thStatus: 'Status', thTraffic: 'Traffic', thSpeed: 'Speed', thActions: 'Actions',
       thDevice: 'Device', thIP: 'IP', thLastSeen: 'Last seen', thEnabled: 'On',
       phTelegram: 'Telegram ID (optional)', phUsername: 'Username',
@@ -309,10 +309,39 @@
 
   /* ---------- tabs ---------- */
 
+  // Mobile tab drawer: on narrow screens the tab strip collapses into the
+  // ☰ burger in the topbar; tapping a drawer item switches and closes it.
+  var burger = el('nav-burger');
+  var tabsNav = el('main-tabs');
+
+  function burgerLabel() {
+    var active = document.querySelector('.tab.active');
+    el('nav-burger-label').textContent = active ? active.textContent : '';
+  }
+
+  function closeDrawer() {
+    tabsNav.classList.remove('open');
+    burger.setAttribute('aria-expanded', 'false');
+  }
+
+  burger.addEventListener('click', function () {
+    var open = tabsNav.classList.toggle('open');
+    burger.setAttribute('aria-expanded', open ? 'true' : 'false');
+    burgerLabel();
+  });
+
+  document.addEventListener('click', function (e) {
+    if (!tabsNav.classList.contains('open')) return;
+    if (tabsNav.contains(e.target) || burger.contains(e.target)) return;
+    closeDrawer();
+  });
+
   document.querySelectorAll('.tab').forEach(function (tab) {
     tab.addEventListener('click', function () {
       document.querySelectorAll('.tab').forEach(function (x) { x.classList.remove('active'); });
       tab.classList.add('active');
+      closeDrawer();
+      burgerLabel();
       var name = tab.getAttribute('data-tab');
       document.querySelectorAll('.page').forEach(function (p) { p.classList.add('hidden'); });
       el('tab-' + name).classList.remove('hidden');
@@ -419,39 +448,26 @@
     return Math.max(0, Math.floor((Date.now() - t) / 86400000));
   }
 
-  // "Valid until" cell: green date pill / muted ∞ / red "expired N days ago",
-  // plus the superadmin renewal actions (see docs/billing.md). "Top up"
-  // records a payment instead: amount + optional days, with referral
-  // commissions minted server-side (docs/referrals.md).
+  // "Valid until" pill: green date / muted ∞ / red "expired N days ago".
+  // All renewal actions live in the row's single actions cell — buttons
+  // inside data cells made the table unreadable (see the card layout too).
   function expiryCell(u) {
-    var pill;
     if (u.expired) {
-      pill = '<span class="pill pill--danger">' + esc(t('expiredAgo', { n: daysOver(u.expires_at) })) + '</span>';
-    } else if (u.expires_at) {
-      pill = '<span class="pill pill--ok">' + esc(fmtDate(u.expires_at)) + '</span>';
-    } else {
-      pill = '<span class="pill pill--off">' + t('unlimited') + '</span>';
+      return '<span class="pill pill--danger">' + esc(t('expiredAgo', { n: daysOver(u.expires_at) })) + '</span>';
     }
-    return pill + '<div class="actions actions--tight">' +
-      '<button class="btn btn--ghost btn--small" data-act="pay" data-id="' + u.id + '">' + t('btnPay') + '</button>' +
-      '<button class="btn btn--ghost btn--small" data-act="exp30" data-id="' + u.id + '">' + t('btnPlus30') + '</button>' +
-      '<button class="btn btn--ghost btn--small" data-act="expdate" data-id="' + u.id + '">' + t('btnUntilDate') + '</button>' +
-      (u.expires_at ? '<button class="btn btn--ghost btn--small" data-act="expnull" data-id="' + u.id + '">' + t('btnUnlimited') + '</button>' : '') +
-      '</div>';
+    if (u.expires_at) {
+      return '<span class="pill pill--ok">' + esc(fmtDate(u.expires_at)) + '</span>';
+    }
+    return '<span class="pill pill--off">' + t('unlimited') + '</span>';
   }
 
-  // "Limit" cell, same pattern as expiryCell: a pill (personal number /
-  // grey "default" — the panel does not know the global value) plus the
-  // set/reset buttons. Server-side null = fall back to the global default
+  // "Limit" pill: a personal number / grey "default" (the panel does not
+  // know the global value). Server-side null = the global default
   // (docs/devices.md).
   function limitCell(u) {
-    var pill = u.max_devices != null
+    return u.max_devices != null
       ? '<span class="pill pill--live">' + u.max_devices + '</span>'
       : '<span class="pill pill--off" title="' + esc(t('limitDefault')) + '">' + esc(t('limitDefault')) + '</span>';
-    return pill + '<div class="actions actions--tight">' +
-      '<button class="btn btn--ghost btn--small" data-act="devlimit" data-id="' + u.id + '">' + t('btnLimit') + '</button>' +
-      (u.max_devices != null ? '<button class="btn btn--ghost btn--small" data-act="devlimitreset" data-id="' + u.id + '">' + t('btnLimitReset') + '</button>' : '') +
-      '</div>';
   }
 
   function loadUsers() {
@@ -468,8 +484,9 @@
       });
 
       el('users-table').innerHTML =
-        '<thead><tr><th>ID</th><th>' + t('thUser') + '</th><th>' + t('thTelegram') + '</th>' +
-        '<th>' + t('thRole') + '</th><th>' + t('thOwner') + '</th><th>' + t('thReferrer') + '</th><th>' + t('thExpiry') + '</th><th>' + t('thDevices') + '</th><th>' + t('thLimit') + '</th><th>' + t('thTraffic') + '</th><th>' + t('thSpeed') + '</th>' +
+        '<thead><tr><th>' + t('thUser') + '</th>' +
+        '<th>' + t('thRole') + '</th><th>' + t('thLinks') + '</th><th>' + t('thExpiry') + '</th>' +
+        '<th>' + t('thDevices') + '</th><th>' + t('thTraffic') + '</th><th>' + t('thSpeed') + '</th>' +
         '<th>' + t('thStatus') + '</th><th></th></tr></thead><tbody>' +
         users.map(function (u) {
           var devs = byUser[u.id] || [];
@@ -496,21 +513,28 @@
           // (docs/referrals.md); owner_id and referred_by are different links.
           var referrer = u.referred_by_name
             ? esc(u.referred_by_name)
-            : '<span class="muted">—</span>';
+            : '';
+          var links = owner + (referrer ? '<br><span class="muted">' + referrer + '</span>' : '');
+          var L = function (label) { return ' data-label="' + esc(label) + '"'; };
           return '<tr>' +
-            '<td class="row-id mono">#' + u.id + '</td>' +
-            '<td class="user-cell">' + esc(u.username || '—') + '</td>' +
-            '<td class="mono">' + (u.telegram_id || t('noTG')) + '</td>' +
-            '<td>' + rolePill(u.role) + '</td>' +
-            '<td>' + owner + '</td>' +
-            '<td>' + referrer + '</td>' +
-            '<td>' + expiryCell(u) + '</td>' +
-            '<td>' + (devs.length + (u.max_devices != null ? ' / ' + u.max_devices : '')) + (online ? ' <span class="pill pill--ok">' + online + ' ' + t('online') + '</span>' : '') + '</td>' +
-            '<td>' + limitCell(u) + '</td>' +
-            '<td>↓ ' + fmtBytes(rx) + '<br>↑ ' + fmtBytes(tx) + '</td>' +
-            '<td>↓ ' + fmtBits(u.speed_rx_bps) + '<br>↑ ' + fmtBits(u.speed_tx_bps) + '</td>' +
-            '<td>' + (u.disabled ? '<span class="pill pill--danger">' + t('statusDisabled') + '</span>' : '<span class="pill pill--ok">' + t('statusActive') + '</span>') + '</td>' +
-            '<td><div class="actions">' + roleBtn + disBtn +
+            '<td class="user-cell"' + L(t('thUser')) + '>' +
+            esc(u.username || '—') +
+            '<small class="row-sub mono">#' + u.id + (u.telegram_id ? ' · TG ' + u.telegram_id : '') + '</small></td>' +
+            '<td' + L(t('thRole')) + '>' + rolePill(u.role) + '</td>' +
+            '<td' + L(t('thLinks')) + '>' + links + '</td>' +
+            '<td' + L(t('thExpiry')) + '>' + expiryCell(u) + '</td>' +
+            '<td' + L(t('thDevices')) + '>' + devs.length + ' ' + limitCell(u) +
+            (online ? ' <span class="pill pill--ok">' + online + ' ' + t('online') + '</span>' : '') + '</td>' +
+            '<td' + L(t('thTraffic')) + '>↓ ' + fmtBytes(rx) + '<br>↑ ' + fmtBytes(tx) + '</td>' +
+            '<td' + L(t('thSpeed')) + '>↓ ' + fmtBits(u.speed_rx_bps) + '<br>↑ ' + fmtBits(u.speed_tx_bps) + '</td>' +
+            '<td' + L(t('thStatus')) + '>' + (u.disabled ? '<span class="pill pill--danger">' + t('statusDisabled') + '</span>' : '<span class="pill pill--ok">' + t('statusActive') + '</span>') + '</td>' +
+            '<td class="actions-cell"><div class="actions">' +
+            '<button class="btn btn--secondary btn--small" data-act="pay" data-id="' + u.id + '">' + t('btnPay') + '</button>' +
+            '<button class="btn btn--ghost btn--small" data-act="exp30" data-id="' + u.id + '">' + t('btnPlus30') + '</button>' +
+            '<button class="btn btn--ghost btn--small" data-act="expdate" data-id="' + u.id + '">' + t('btnUntilDate') + '</button>' +
+            (u.expires_at ? '<button class="btn btn--ghost btn--small" data-act="expnull" data-id="' + u.id + '">' + t('btnUnlimited') + '</button>' : '') +
+            '<button class="btn btn--ghost btn--small" data-act="devlimit" data-id="' + u.id + '">' + t('btnLimit') + '</button>' +
+            roleBtn + disBtn +
             '<button class="btn btn--tertiary btn--small" data-act="adddev" data-id="' + u.id + '">' + t('btnAddDevice') + '</button>' +
             '<button class="btn btn--danger btn--small" data-act="deluser" data-id="' + u.id + '">' + t('btnDelete') + '</button>' +
             '</div></td></tr>';
@@ -880,22 +904,23 @@
   function loadDevices() {
     api('/api/admin/devices').then(function (devices) {
       el('devices-table').innerHTML =
-        '<thead><tr><th>ID</th><th>' + t('thDevice') + '</th><th>' + t('thUser') + '</th>' +
+        '<thead><tr><th>' + t('thDevice') + '</th><th>' + t('thUser') + '</th>' +
         '<th>' + t('thProtocol') + '</th>' +
         '<th>' + t('thIP') + '</th><th>' + t('thStatus') + '</th><th>' + t('thLastSeen') + '</th>' +
         '<th>' + t('thTraffic') + '</th><th>' + t('thSpeed') + '</th><th></th></tr></thead><tbody>' +
         (devices || []).map(function (d) {
+          var L = function (label) { return ' data-label="' + esc(label) + '"'; };
           return '<tr>' +
-            '<td class="row-id mono">#' + d.id + '</td>' +
-            '<td class="device-cell">' + esc(d.name) + '</td>' +
-            '<td>' + esc(d.username || '#' + d.user_id) + '</td>' +
-            '<td>' + protoPill(d.protocol) + '</td>' +
-            '<td class="mono">' + esc(d.ipv4) + '</td>' +
-            '<td>' + deviceStatus(d) + '</td>' +
-            '<td>' + (d.last_handshake ? (fmtAgo(d.last_handshake, t.lang) || '') : t('never')) + '</td>' +
-            '<td>↓ ' + fmtBytes(d.total_rx) + '<br>↑ ' + fmtBytes(d.total_tx) + '</td>' +
-            '<td>↓ ' + fmtBits(d.speed_rx_bps) + '<br>↑ ' + fmtBits(d.speed_tx_bps) + '</td>' +
-            '<td><div class="actions">' +
+            '<td class="device-cell"' + L(t('thDevice')) + '>' + esc(d.name) +
+            '<small class="row-sub mono">#' + d.id + '</small></td>' +
+            '<td' + L(t('thUser')) + '>' + esc(d.username || '#' + d.user_id) + '</td>' +
+            '<td' + L(t('thProtocol')) + '>' + protoPill(d.protocol) + '</td>' +
+            '<td class="mono"' + L(t('thIP')) + '>' + esc(d.ipv4) + '</td>' +
+            '<td' + L(t('thStatus')) + '>' + deviceStatus(d) + '</td>' +
+            '<td' + L(t('thLastSeen')) + '>' + (d.last_handshake ? (fmtAgo(d.last_handshake, t.lang) || '') : t('never')) + '</td>' +
+            '<td' + L(t('thTraffic')) + '>↓ ' + fmtBytes(d.total_rx) + '<br>↑ ' + fmtBytes(d.total_tx) + '</td>' +
+            '<td' + L(t('thSpeed')) + '>↓ ' + fmtBits(d.speed_rx_bps) + '<br>↑ ' + fmtBits(d.speed_tx_bps) + '</td>' +
+            '<td class="actions-cell"><div class="actions">' +
             '<button class="btn btn--secondary btn--small" data-act="qr" data-id="' + d.id + '">' + t('btnQR') + '</button>' +
             '<button class="btn btn--tertiary btn--small" data-act="cfg" data-id="' + d.id + '">' + t('btnConfig') + '</button>' +
             (d.enabled

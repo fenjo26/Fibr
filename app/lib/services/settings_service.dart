@@ -3,14 +3,19 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 enum AppLanguageMode { system, ru, en }
 
-/// Theme + language, persisted in shared_preferences (keys `fibr.theme`,
-/// `fibr.lang`). Provided via `provider` at the app root.
+/// Theme + language + simple-mode prefs, persisted in shared_preferences
+/// (keys `fibr.theme`, `fibr.lang`, `fibr.connectOnLaunch`). Provided via
+/// `provider` at the app root.
 class SettingsController extends ChangeNotifier {
   ThemeMode _themeMode = ThemeMode.system;
   AppLanguageMode _language = AppLanguageMode.system;
+  bool _connectOnLaunch = false;
 
   ThemeMode get themeMode => _themeMode;
   AppLanguageMode get language => _language;
+
+  /// Simple mode: bring the active server device up right after launch.
+  bool get connectOnLaunch => _connectOnLaunch;
 
   /// Locale passed to MaterialApp; null means "follow the system".
   Locale? get resolvedLocale {
@@ -28,6 +33,7 @@ class SettingsController extends ChangeNotifier {
     final prefs = await SharedPreferences.getInstance();
     _themeMode = _themeModeFromString(prefs.getString(_themeKey));
     _language = _languageFromString(prefs.getString(_langKey));
+    _connectOnLaunch = prefs.getBool(_connectOnLaunchKey) ?? false;
     notifyListeners();
   }
 
@@ -47,8 +53,17 @@ class SettingsController extends ChangeNotifier {
     await prefs.setString(_langKey, mode.name);
   }
 
+  Future<void> setConnectOnLaunch(bool value) async {
+    if (value == _connectOnLaunch) return;
+    _connectOnLaunch = value;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_connectOnLaunchKey, value);
+  }
+
   static const _themeKey = 'fibr.theme';
   static const _langKey = 'fibr.lang';
+  static const _connectOnLaunchKey = 'fibr.connectOnLaunch';
 
   static ThemeMode _themeModeFromString(String? s) {
     switch (s) {

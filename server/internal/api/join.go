@@ -148,6 +148,14 @@ type joinResult struct {
 // code is burned atomically before the config is rendered, so a code can be
 // redeemed exactly once even under races.
 func (a *API) handleJoin(w http.ResponseWriter, r *http.Request) {
+	// CORS for the LuCI plugin (luci-app-fibr): its page runs in the
+	// router's browser (https://<router>/cgi-bin/luci) and exchanges the
+	// code directly with https://<domain>/api/join/<code>. Without
+	// ACAO the browser hides the response from cross-origin JS. The POST
+	// is a "simple request" (no body, no custom headers), so no preflight
+	// (OPTIONS) handling is needed. The endpoint is public and carries no
+	// credentials, so "*" leaks nothing a curl could not get.
+	w.Header().Set("Access-Control-Allow-Origin", "*")
 	code := r.PathValue("code")
 	if code == "" {
 		a.errJSON(w, http.StatusBadRequest, "bad code")

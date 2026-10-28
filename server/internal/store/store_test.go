@@ -1,7 +1,9 @@
 package store
 
 import (
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"path/filepath"
 	"strconv"
 	"testing"
@@ -599,4 +601,142 @@ func TestExpiryMigration(t *testing.T) {
 	if err != nil || u2.ExpiresAt == nil {
 		t.Fatalf("expiry lost across reopen: %+v err=%v", u2, err)
 	}
+}
+
+// TestAccessTokenMigration verifies the pragma-gated users.access_token_hash
+// migration (app access keys): a database from before the feature must be
+// upgraded in place on the next Open, and repeated Opens must be a no-op
+// that keeps keys written after the migration.
+func TestAccessTokenMigration(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "pre-access-keys.db")
+	// The referral-era users schema: every column except access_token_hash.
+	oldSchema := `
+	CREATE TABLE IF NOT EXISTS users (
+		id          INTEGER PRIMARY KEY AUTOINCREMENT,
+		telegram_id INTEGER UNIQUE,
+		username    TEXT    NOT NULL DEFAULT '',
+		role        TEXT    NOT NULL DEFAULT 'user' CHECK (role IN ('user','admin','superadmin')),
+		owner_id    INTEGER REFERENCES users(id) ON DELETE SET NULL,
+		disabled    INTEGER NOT NULL DEFAULT 0,
+		expires_at  INTEGER,
+		max_devices INTEGER,
+		referral_code TEXT,
+		referred_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+		created_at  INTEGER NOT NULL
+	);`
+	raw, err := sql.Open("sqlite", "file:"+path+"?_pragma=busy_timeout(5000)")
+	if err != nil {
+		t.Fatalf("open raw: %v", err)
+	}
+	if _, err := raw.Exec(oldSchema); err != nil {
+		t.Fatalf("old schema: %v", err)
+	}
+	if _, err := raw.Exec(`INSERT INTO users (telegram_id, username, role, created_at) VALUES (1, 'pre', 'user', 1)`); err != nil {
+		t.Fatalf("seed user: %v", err)
+	}
+	raw.Close()
+
+	s, err := Open(path)
+	if err != nil {
+		t.Fatalf("migrating open: %v", err)
+	}
+	t.Cleanup(func() { s.Close() })
+
+	u, err := s.GetUserByTelegramID(1)
+	if err != nil {
+		t.Fatalf("get user: %v", err)
+	}
+	// Pre-feature row: no key, and lookups by hash miss cleanly.
+	if has, err := s.HasUserAccessToken(u.ID); err != nil || has {
+		t.Fatalf("pre-feature row must have no key, got has=%v err=%v", has, err)
+	}
+	if _, err := s.GetUserByAccessTokenHash("deadbeef"); err != ErrNotFound {
+		t.Fatalf("expected ErrNotFound, got %v", err)
+	}
+
+	// Keys written after the migration survive a reopen (no-op pass).
+	h := sha256Hex("first-key")
+	if err := s.SetUserAccessToken(u.ID, &h); err != nil {
+		t.Fatalf("set key: %v", err)
+	}
+	s.Close()
+	s2, err := Open(path)
+	if err != nil {
+		t.Fatalf("second open: %v", err)
+	}
+	t.Cleanup(func() { s2.Close() })
+	got, err := s2.GetUserByAccessTokenHash(h)
+	if err != nil || got.ID != u.ID {
+		t.Fatalf("key lost across reopen: %+v err=%v", got, err)
+	}
+}
+
+// TestAccessTokenRotationAndRevoke covers the app-access-key store surface:
+// hash round-trip, rotation (a second Set replaces the first key), revoke
+// (NULL clears it) and the shared-key uniqueness guard.
+func TestAccessTokenRotationAndRevoke(t *testing.T) {
+	s := openTestStore(t)
+
+	alice := &User{Username: "alice"}
+	bob := &User{Username: "bob"}
+	if err := s.CreateUser(alice); err != nil {
+		t.Fatalf("create alice: %v", err)
+	}
+	if err := s.CreateUser(bob); err != nil {
+		t.Fatalf("create bob: %v", err)
+	}
+
+	first := sha256Hex("key-one")
+	if err := s.SetUserAccessToken(alice.ID, &first); err != nil {
+		t.Fatalf("set first key: %v", err)
+	}
+	if has, _ := s.HasUserAccessToken(alice.ID); !has {
+		t.Fatal("HasUserAccessToken must be true after set")
+	}
+	got, err := s.GetUserByAccessTokenHash(first)
+	if err != nil || got.ID != alice.ID {
+		t.Fatalf("lookup by hash: %+v err=%v", got, err)
+	}
+
+	// Rotation: the second key replaces the first for the same account.
+	second := sha256Hex("key-two")
+	if err := s.SetUserAccessToken(alice.ID, &second); err != nil {
+		t.Fatalf("rotate key: %v", err)
+	}
+	if _, err := s.GetUserByAccessTokenHash(first); err != ErrNotFound {
+		t.Fatalf("old key must stop resolving after rotation, got %v", err)
+	}
+	got, err = s.GetUserByAccessTokenHash(second)
+	if err != nil || got.ID != alice.ID {
+		t.Fatalf("new key must resolve: %+v err=%v", got, err)
+	}
+
+	// Uniqueness: two accounts may not share one key (partial unique index).
+	if err := s.SetUserAccessToken(bob.ID, &second); err == nil {
+		t.Fatal("expected UNIQUE violation when sharing a key between accounts")
+	}
+
+	// Revoke: NULL clears the key; HasUserAccessToken flips back to false.
+	if err := s.SetUserAccessToken(alice.ID, nil); err != nil {
+		t.Fatalf("revoke: %v", err)
+	}
+	if _, err := s.GetUserByAccessTokenHash(second); err != ErrNotFound {
+		t.Fatalf("revoked key must stop resolving, got %v", err)
+	}
+	if has, _ := s.HasUserAccessToken(alice.ID); has {
+		t.Fatal("HasUserAccessToken must be false after revoke")
+	}
+
+	// Setting a key on a missing account is ErrNotFound, not a silent no-op.
+	ghost := sha256Hex("ghost")
+	if err := s.SetUserAccessToken(99999, &ghost); err != ErrNotFound {
+		t.Fatalf("expected ErrNotFound for missing user, got %v", err)
+	}
+}
+
+// sha256Hex mirrors the API layer's storage form (access_key.go hashAccessKey)
+// so tests exercise real hash values, not placeholders.
+func sha256Hex(s string) string {
+	sum := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(sum[:])
 }

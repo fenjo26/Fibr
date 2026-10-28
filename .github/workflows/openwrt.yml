@@ -1,0 +1,77 @@
+# Build the luci-app-fibr OpenWrt package (.ipk) inside the official
+# OpenWrt SDK docker image (24.10, x86/64). The package is architecture
+# independent (PKGARCH:=all), so an x86/64 SDK build produces an ipk that
+# installs on every target.
+#
+# Nothing is published: the ipk is uploaded as a workflow artifact for
+# manual install (opkg / scp — see docs/routers.md, "LuCI-плагин").
+#
+# Note: this job was written against the SDK docker usage documented in the
+# OpenWrt wiki (docker run -v ... openwrt/sdk:<tag>, WORKDIR /builder,
+# feeds update/install, make package/<name>/compile). The first real push
+# may need a nudge — most likely the SDK image tag or the working directory
+# — before it goes green; the package Makefile itself is plain package.mk.
+name: OpenWrt package
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'luci-app-fibr/**'
+      - '.github/workflows/openwrt.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'luci-app-fibr/**'
+      - '.github/workflows/openwrt.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: openwrt-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Bump on new point releases of the 24.10 branch.
+  SDK_IMAGE: openwrt/sdk:24.10.2-x86-64
+
+jobs:
+  ipk:
+    name: luci-app-fibr ipk (OpenWrt SDK 24.10 x86/64)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      # GH-hosted runners ship docker. The SDK container gets the repo
+      # mounted at /src; everything below runs inside it.
+      - name: Build ipk in the OpenWrt SDK container
+        run: |
+          docker run --rm -v "$PWD:/src" "$SDK_IMAGE" /bin/sh -c '
+            set -ex
+            cd /builder 2>/dev/null || cd "$(ls -d /openwrt-sdk-* 2>/dev/null | head -n1)"
+
+            # The package lives outside the feeds: copy it in, then pull
+            # its dependencies (luci-base, luci-proto-wireguard,
+            # wireguard-tools and their feed deps) via feeds install.
+            cp -r /src/luci-app-fibr package/luci-app-fibr
+            ./scripts/feeds update -a
+            ./scripts/feeds install -a
+            make defconfig
+            make -j"$(nproc)" package/luci-app-fibr/compile
+
+            mkdir -p /src/dist
+            cp -v bin/packages/*/base/luci-app-fibr*.ipk /src/dist/ 2>/dev/null \
+              || find bin -name "luci-app-fibr*.ipk" -exec cp -v {} /src/dist/ \;
+            ls -l /src/dist/
+          '
+          ls -l dist/
+
+      - name: Upload ipk artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: luci-app-fibr-ipk
+          path: dist/*.ipk
+          if-no-files-found: error

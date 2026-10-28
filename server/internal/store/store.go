@@ -148,7 +148,8 @@ CREATE TABLE IF NOT EXISTS users (
 	owner_id    INTEGER REFERENCES users(id) ON DELETE SET NULL,
 	disabled    INTEGER NOT NULL DEFAULT 0,
 	expires_at  INTEGER,
-	created_at  INTEGER NOT NULL
+	created_at  INTEGER NOT NULL,
+	access_token_hash TEXT
 );
 
 CREATE TABLE IF NOT EXISTS devices (
@@ -277,6 +278,10 @@ func Open(path string) (*Store, error) {
 		return nil, fmt.Errorf("migrate devices.config_fetched_at: %w", err)
 	}
 	st := &Store{db: db}
+	if err := migrateUsersAccessToken(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate users.access_token_hash: %w", err)
+	}
 	if err := migrateUsersReferrals(db); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("migrate users referrals: %w", err)
@@ -577,6 +582,45 @@ func migrateUsersReferrals(db *sql.DB) error {
 	return err
 }
 
+// migrateUsersAccessToken adds the users.access_token_hash column (app access
+// keys: a personal long-lived credential for the Flutter client's server
+// login, see the "Ключ для приложения" section of the Mini App). The value is
+// the SHA-256 hex hash of the plaintext key — the key itself is shown to the
+// user exactly once at generation and is never stored. Same pragma-gate
+// pattern as migrateUsersExpiry: a plain nullable TEXT column, so ALTER TABLE
+// is enough. The partial unique index keeps two accounts from ever sharing a
+// key and speeds the per-request lookup in identify().
+func migrateUsersAccessToken(db *sql.DB) error {
+	rows, err := db.Query(`pragma table_info(users)`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	hasHash := false
+	for rows.Next() {
+		var cid int
+		var name, colType string
+		var notNull, pk int
+		var dflt any
+		if err := rows.Scan(&cid, &name, &colType, &notNull, &dflt, &pk); err != nil {
+			return err
+		}
+		if name == "access_token_hash" {
+			hasHash = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if !hasHash {
+		if _, err := db.Exec(`ALTER TABLE users ADD COLUMN access_token_hash TEXT`); err != nil {
+			return err
+		}
+	}
+	_, err = db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_access_token_hash ON users(access_token_hash) WHERE access_token_hash IS NOT NULL`)
+	return err
+}
+
 // Close closes the database.
 func (s *Store) Close() error { return s.db.Close() }
 
@@ -744,6 +788,44 @@ func (s *Store) SetUserMaxDevices(id int64, n *int64) error {
 	}
 	res, err := s.db.Exec(`UPDATE users SET max_devices = ? WHERE id = ?`, v, id)
 	return touched(res, err)
+}
+
+/* ---------------------------- app access keys ---------------------------- */
+
+// SetUserAccessToken stores the SHA-256 hex hash of the account's app access
+// key, replacing any previous one (rotation). A nil hash revokes the key —
+// the account can no longer sign in with a key until a new one is generated.
+// The plaintext key never reaches the store.
+func (s *Store) SetUserAccessToken(id int64, hash *string) error {
+	var v any
+	if hash != nil {
+		v = *hash
+	}
+	res, err := s.db.Exec(`UPDATE users SET access_token_hash = ? WHERE id = ?`, v, id)
+	return touched(res, err)
+}
+
+// GetUserByAccessTokenHash resolves an account by the SHA-256 hex hash of
+// its app access key, or ErrNotFound when no account holds that key. The
+// caller supplies the hash (never the key itself) — the lookup compares
+// hashes, not secrets.
+func (s *Store) GetUserByAccessTokenHash(hash string) (*User, error) {
+	row := s.db.QueryRow(`SELECT `+userCols+` FROM users WHERE access_token_hash = ?`, hash)
+	return scanUser(row)
+}
+
+// HasUserAccessToken reports whether the account currently holds an app
+// access key (the Mini App shows "key created" without learning the hash).
+func (s *Store) HasUserAccessToken(id int64) (bool, error) {
+	var v sql.NullString
+	err := s.db.QueryRow(`SELECT access_token_hash FROM users WHERE id = ?`, id).Scan(&v)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, ErrNotFound
+	}
+	if err != nil {
+		return false, err
+	}
+	return v.Valid && v.String != "", nil
 }
 
 // EffectiveMaxDevices resolves the device cap that actually governs an
