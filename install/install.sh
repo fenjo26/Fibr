@@ -11,8 +11,10 @@
 #   --port PORT       WireGuard UDP port (default 51820)
 #   --bot-token TOKEN set up the Telegram bot in the same command (from @BotFather)
 #   --admin-tg IDS    your numeric Telegram id(s), comma-separated (makes you superadmin)
-#   --awg             use the AmneziaWG engine (DPI-obfuscated WireGuard;
-#                     clients must be AmneziaVPN apps — see docs/awg.md)
+#   (all three protocols are on by default: WireGuard udp/--port, AmneziaWG
+#    udp/51821 as a per-device choice, VLESS/Xray tcp/--xray-port)
+#   --awg             run the WHOLE server on AmneziaWG instead of plain
+#                     WireGuard (rarely needed now — see docs/awg.md)
 #   --xray            Xray (VLESS + Reality) on TCP --xray-port — ON by default now
 #   --no-xray         do not enable Xray (WireGuard only)
 #   --xray-sni HOST   Reality camouflage host (default www.microsoft.com; implies --xray)
@@ -193,8 +195,6 @@ if command -v ufw >/dev/null && ufw status 2>/dev/null | grep -q "Status: active
   ufw allow "$WG_PORT/udp" >/dev/null
   ufw allow 51821/udp >/dev/null # AmneziaWG tunnel (FIBR_AWG_PORT)
   # Xray speaks TCP (Reality masquerades as TLS), unlike WireGuard's UDP.
-  # Opened unconditionally: when xray is disabled the container is not even
-  # started, so nothing listens on the port and the rule is inert.
   ufw allow "$XRAY_PORT/tcp" >/dev/null
   info "ufw: opened 80,443/tcp, $WG_PORT/udp, 51821/udp and $XRAY_PORT/tcp"
 fi
@@ -389,8 +389,14 @@ ${C_INFO}───────────────────────�
   Admin panel : $URL/admin/
   Admin token : $ADMIN_TOKEN_SHOW
   Mini App    : $URL/miniapp/   (needs the Telegram bot, see below)
-  Web cabinet : $URL/cabinet/   (login via Telegram, in a regular browser)
-  WireGuard   : udp/$WG_PORT (config QR codes are in the panel)
+  Web cabinet : $URL/cabinet/   (main door for users: invite link -> own
+                login & password; Telegram sign-in is optional)
+  Protocols   : every user picks per device —
+                WireGuard  udp/$WG_PORT
+                AmneziaWG  udp/51821   (for AmneziaVPN, masked WireGuard)
+                VLESS      tcp/$XRAY_PORT  (Reality, SNI $XRAY_SNI)
+  Firewall    : if your hosting has its own firewall panel, open the same
+                ports there too (80,443/tcp, $WG_PORT+51821/udp, $XRAY_PORT/tcp).
 EOF
 if [[ $AWG -eq 1 ]]; then
   cat <<EOF
@@ -398,10 +404,9 @@ if [[ $AWG -eq 1 ]]; then
                 imported into AmneziaVPN apps, not the official WireGuard app
 EOF
 fi
-if [[ $XRAY -eq 1 ]]; then
+if [[ $XRAY -eq 0 ]]; then
   cat <<EOF
-  Xray        : tcp/$XRAY_PORT — VLESS+Reality, SNI $XRAY_SNI (choose the
-                "xray" protocol when adding a device in the panel)
+  Xray        : off (--no-xray) — the VLESS option is greyed out for users
 EOF
 fi
 if [[ $UPDATER -eq 1 ]]; then
@@ -414,8 +419,8 @@ if grep -q '^FIBR_TELEGRAM_BOT_TOKEN=..*' "$ENV_FILE"; then
   cat <<EOF
 
   Bot         : configured ✔ — open your bot in Telegram and press Start.
-                (BotFather, one time: /mybots -> Bot Settings -> Menu Button ->
-                 set $URL/miniapp/ ; for the web cabinet also set Domain.)
+                (Optional, BotFather: /setdomain -> $DOMAIN enables the
+                 "Sign in with Telegram" button in the web cabinet.)
 EOF
 else
   cat <<EOF
