@@ -87,6 +87,34 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+  # The Flutter client has no SDK locally — CI is its only compile check.
+  # analyze+test only; native release builds live in release.yml.
+  flutter:
+    name: Flutter client (analyze, test)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: pub get
+        run: flutter pub get
+
+      # --no-fatal-infos: infos don't break the build; errors and warnings do.
+      - name: analyze
+        run: flutter analyze --no-fatal-infos
+
+      - name: test
+        run: flutter test
+
   shellcheck:
     name: shellcheck install.sh (errors only)
     runs-on: ubuntu-latest

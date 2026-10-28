@@ -1,0 +1,112 @@
+# Builds distributable client artifacts on version tags and publishes a
+# GitHub Release. Asset names are stable so README links of the form
+# releases/latest/download/<name> keep working forever.
+#
+# Local caveats (documented in README "Скачать"):
+#  - Android APK is signed with an ephemeral CI keystore — installable, but
+#    each release is signed anew; set up your own keystore secrets before
+#    distributing widely.
+#  - macOS build is unsigned (Gatekeeper: right-click → Open the first time).
+#  - Desktop platform folders are generated in CI (flutter create --platforms),
+#    so the repo only carries android/ and ios/.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - run: flutter test
+      - run: flutter build apk --release
+      - name: Sign APK with ephemeral CI keystore
+        run: |
+          keytool -genkeypair -v -keystore $HOME/fibr-ci.keystore -alias fibr \
+            -keyalg RSA -keysize 2048 -validity 10000 \
+            -storepass fibr-ci -keypass fibr-ci -dname "CN=Fibr CI"
+          BT=$(ls -d $ANDROID_HOME/build-tools/* | sort -V | tail -1)
+          "$BT/zipalign" -f 4 build/app/outputs/flutter-apk/app-release.apk fibr-aligned.apk
+          "$BT/apksigner" sign --ks $HOME/fibr-ci.keystore \
+            --ks-pass pass:fibr-ci --key-pass pass:fibr-ci \
+            --out Fibr-Android.apk fibr-aligned.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Fibr-Android
+          path: app/Fibr-Android.apk
+          if-no-files-found: error
+
+  windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v7
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: flutter create --platforms=windows .
+      - run: flutter pub get
+      - run: flutter build windows --release
+      - run: Compress-Archive -Path build/windows/x64/runner/Release/* -DestinationPath Fibr-Windows.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Fibr-Windows
+          path: app/Fibr-Windows.zip
+          if-no-files-found: error
+
+  macos:
+    runs-on: macos-14
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v7
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: flutter create --platforms=macos .
+      - run: flutter pub get
+      - run: flutter build macos --release
+      - run: ditto -c -k --keepParent build/macos/Build/Products/Release/*.app Fibr-macOS.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Fibr-macOS
+          path: app/Fibr-macOS.zip
+          if-no-files-found: error
+
+  publish:
+    needs: [android, windows, macos]
+    # Publish whatever platforms succeeded; a broken platform must not block
+    # the others (first releases are expected to need iteration).
+    if: always() && !cancelled()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true

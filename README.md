@@ -35,6 +35,23 @@ curl -fsSL https://raw.githubusercontent.com/fenjo26/Fibr/main/install/install.s
 Опции: `--port` (UDP-порт WG), `--dev` (локальный режим без домена и TLS),
 `--skip-dns-check`, `--force`, `--uninstall [--purge]`.
 
+## Скачать клиент
+
+Готовые сборки публикуются в [Releases](https://github.com/fenjo26/Fibr/releases) и собираются автоматически из тегов (`git tag v0.2.0 && git push --tags`) — релизный конвейер в `.github/workflows/release.yml`.
+
+| Платформа | Скачать |
+|---|---|
+| Android (APK) | [Fibr-Android.apk](https://github.com/fenjo26/Fibr/releases/latest/download/Fibr-Android.apk) |
+| Windows (zip) | [Fibr-Windows.zip](https://github.com/fenjo26/Fibr/releases/latest/download/Fibr-Windows.zip) |
+| macOS (zip) | [Fibr-macOS.zip](https://github.com/fenjo26/Fibr/releases/latest/download/Fibr-macOS.zip) |
+| Google Play / App Store | — (добавим после публикации) |
+
+Примечания:
+
+- Пока клиент — этап 2, сборки экспериментальные. Для всех платформ по-прежнему работает связка «QR из Mini App + официальное приложение WireGuard».
+- APK подписан CI-ключом: устанавливается как «неизвестный источник»; перед массовой раздачей настроим собственный keystore.
+- macOS-сборка без подписи разработчика: первый запуск — правый клик по приложению → «Открыть».
+
 ### Подключение Telegram-бота и Mini App
 
 1. В [@BotFather](https://t.me/BotFather): `/newbot` → получите токен.
