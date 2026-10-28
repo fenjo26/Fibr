@@ -293,3 +293,97 @@
   white-space: nowrap;
   font-size: 13px;
 }
+
+/* ---------- adaptive (keep in sync with ../miniapp/style.css) ---------- */
+
+@media (max-width: 400px) {
+  .add-row {
+    flex-wrap: wrap;
+  }
+
+  .add-row .input:first-child {
+    flex: 1 1 100%;
+  }
+}
+
+@media (max-width: 480px) {
+  .device-actions .btn {
+    flex: 1 1 auto;
+  }
+
+  .login-card {
+    margin-top: 6vh;
+    padding: 14px;
+  }
+}
+
+@media (max-width: 360px) {
+  .head h1 {
+    font-size: 27px;
+  }
+
+  .summary-row {
+    gap: 12px;
+  }
+
+  .qr-wrap img {
+    width: 74vw;
+    height: 74vw;
+  }
+}
+
+@media (max-height: 640px) {
+  .modal {
+    max-height: 88vh;
+  }
+
+  .qr-wrap img {
+    width: min(240px, 60vw);
+    height: min(240px, 60vw);
+  }
+}
+
+/* ---------- app key section (server login for the Fibr app) ---------- */
+
+#key-view {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.key-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.key-actions {
+  display: flex;
+  gap: 8px;
+}
+
+/* The 32-char key in the one-time modal: monospaced, tappable to copy. */
+.key-value {
+  font-size: 17px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-align: center;
+  word-break: break-all;
+  background: var(--surface-2);
+  border: 1px solid var(--hairline);
+  border-radius: 12px;
+  padding: 14px 8px;
+  margin: 12px 0;
+  cursor: pointer;
+  user-select: all;
+}
+
+/* "Shown only once" warning — same amber as the Mini App's stale badge. */
+.key-warn {
+  color: #f5a623;
+}
+
+:root[data-theme="light"] .key-warn {
+  color: #a16207;
+}

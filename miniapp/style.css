@@ -326,3 +326,105 @@
   cursor: pointer;
   user-select: all;
 }
+
+/* ---------- app key section (server login for the Fibr app) ---------- */
+
+#key-view {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.key-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.key-actions {
+  display: flex;
+  gap: 8px;
+}
+
+/* The 32-char key in the one-time modal: monospaced, tappable to copy —
+ * smaller than .join-code so it never overflows a narrow phone screen. */
+.key-value {
+  font-size: 17px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-align: center;
+  word-break: break-all;
+  background: var(--surface-2);
+  border: 1px solid var(--hairline);
+  border-radius: 12px;
+  padding: 14px 8px;
+  margin: 12px 0;
+  cursor: pointer;
+  user-select: all;
+}
+
+/* "Shown only once" warning — the key is unrecoverable after this modal.
+ * Same amber pair as .pill--warn above. */
+.key-warn {
+  color: #f5a623;
+}
+
+:root[data-theme="light"] .key-warn {
+  color: #a16207;
+}
+
+/* ---------- adaptive ---------- */
+
+/* Phones with tight widths: keep the one-line add-row readable by letting
+   the name input take the full first line. */
+@media (max-width: 400px) {
+  .add-row {
+    flex-wrap: wrap;
+  }
+
+  .add-row .input:first-child {
+    flex: 1 1 100%;
+  }
+}
+
+/* Buttons stretch across the card on narrow screens — thumb-friendly. */
+@media (max-width: 480px) {
+  .device-actions .btn {
+    flex: 1 1 auto;
+  }
+}
+
+@media (max-width: 360px) {
+  .head h1 {
+    font-size: 27px;
+  }
+
+  .summary-row {
+    gap: 12px;
+  }
+
+  .qr-wrap img {
+    width: 74vw;
+    height: 74vw;
+  }
+}
+
+/* Short screens (landscape phones): the modal must fit, the QR scales. */
+@media (max-height: 640px) {
+  .modal {
+    max-height: 88vh;
+  }
+
+  .qr-wrap img {
+    width: min(240px, 60vw);
+    height: min(240px, 60vw);
+  }
+}
+
+/* Tablets/desktop (Telegram Desktop, web cabinet): cap and center. */
+@media (min-width: 700px) {
+  .head h1 {
+    font-size: 28px;
+  }
+}

@@ -279,3 +279,80 @@ main {
   font: inherit;
   font-weight: 600;
 }
+
+/* ---------- mobile ---------- */
+
+@media (max-width: 640px) {
+  .topbar {
+    flex-wrap: wrap;
+    row-gap: 6px;
+    padding: 8px 10px;
+  }
+
+  .brand {
+    font-size: 17px;
+    gap: 6px;
+  }
+
+  /* The host:port hint is desktop chrome — redundant on a phone. */
+  #server-host {
+    display: none;
+  }
+
+  .topbar-right {
+    margin-left: auto;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .tabs {
+    padding: 6px 10px 0;
+  }
+
+  .tab {
+    padding: 7px 12px;
+    font-size: 13px;
+  }
+
+  main {
+    padding: 10px;
+  }
+
+  .stat-grid {
+    grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+    gap: 8px;
+  }
+
+  .stat b {
+    font-size: 17px;
+  }
+
+  .toolbar {
+    grid-template-columns: 1fr;
+  }
+
+  .two-col {
+    gap: 10px;
+  }
+
+  .table th,
+  .table td {
+    padding: 7px 8px;
+    font-size: 13px;
+  }
+
+  .card {
+    padding: 12px;
+    border-radius: 12px;
+  }
+
+  .modal {
+    padding: 14px;
+    width: 96vw;
+  }
+
+  .qr-wrap img {
+    width: min(280px, 74vw);
+    height: min(280px, 74vw);
+  }
+}
