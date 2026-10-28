@@ -4,6 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Fibr — личный кабинет</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="alternate icon" href="favicon.ico">
+  <link rel="apple-touch-icon" href="apple-touch-icon.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@600;800&display=swap" rel="stylesheet">
@@ -14,15 +17,23 @@
   <main class="wrap">
     <!-- login: Telegram Login Widget -->
     <section id="login-view" class="card login-card">
-      <h1>Fibr</h1>
-      <p class="muted" id="login-hint"></p>
+      <div class="brand-badge">
+        <img class="brand-logo-large" src="favicon.svg" alt="Fibr" width="48" height="48">
+        <div>
+          <h1>Fibr</h1>
+          <p class="muted" id="login-hint"></p>
+        </div>
+      </div>
       <div id="tg-widget"></div>
       <p class="faint login-foot" id="login-foot"></p>
     </section>
 
     <!-- error state -->
     <section id="error-view" class="card hidden">
-      <h2>Fibr</h2>
+      <div class="brand-title">
+        <img class="brand-logo" src="favicon.svg" alt="Fibr" width="32" height="32">
+        <h2>Fibr</h2>
+      </div>
       <p id="error-text" class="muted"></p>
       <button class="btn btn--tertiary btn--small" id="error-back"></button>
     </section>
@@ -30,9 +41,12 @@
     <!-- app (same layout as the Mini App) -->
     <section id="app-view" class="hidden">
       <header class="head">
-        <div>
-          <h1>Fibr</h1>
-          <p class="muted" id="greeting"></p>
+        <div class="brand-title">
+          <img class="brand-logo" src="favicon.svg" alt="Fibr" width="36" height="36">
+          <div>
+            <h1>Fibr</h1>
+            <p class="muted" id="greeting"></p>
+          </div>
         </div>
         <div class="head-actions">
           <button class="btn btn--tertiary btn--small" data-theme-toggle title="Theme">◐</button>

@@ -1,0 +1,37 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    
+    <!-- Central Connector Rays -->
+    <path
+        android:strokeColor="#9aa1b1"
+        android:strokeWidth="1.83"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M54.00,54.00 L43.28,54.00 M54.00,54.00 L59.36,44.71 M54.00,54.00 L59.36,63.29" />
+
+    <!-- Brand Green Center Hub Pulse -->
+    <path
+        android:fillColor="#00b24b"
+        android:pathData="M54.00,53.08 A0.92,0.92 0 1,0 54.00,54.92 A0.92,0.92 0 1,0 54.00,53.08 Z" />
+
+    <!-- Node Ring 1 (Left) -->
+    <path
+        android:strokeColor="#f0f2f5"
+        android:strokeWidth="1.83"
+        android:pathData="M31.51,49.36 A4.64,4.64 0 1,0 31.51,58.64 A4.64,4.64 0 1,0 31.51,49.36 Z" />
+
+    <!-- Node Ring 2 (Top-Right) -->
+    <path
+        android:strokeColor="#f0f2f5"
+        android:strokeWidth="1.83"
+        android:pathData="M65.25,29.88 A4.64,4.64 0 1,0 65.25,39.16 A4.64,4.64 0 1,0 65.25,29.88 Z" />
+
+    <!-- Node Ring 3 (Bottom-Right) -->
+    <path
+        android:strokeColor="#f0f2f5"
+        android:strokeWidth="1.83"
+        android:pathData="M65.25,68.84 A4.64,4.64 0 1,0 65.25,78.12 A4.64,4.64 0 1,0 65.25,68.84 Z" />
+</vector>
