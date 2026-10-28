@@ -1,0 +1,60 @@
+# Fibr extra node — the agent that serves VPN traffic on a second machine.
+# The control plane (admin panel, bot, Mini App, database) stays on the
+# main server; this compose runs ONLY the node side. See docs/multinode.md.
+#
+# Setup on the node machine:
+#   mkdir -p /opt/fibr-node && cd /opt/fibr-node
+#   # put this file and a .env here:
+#   cat > .env <<EOF
+#   FIBR_API_URL=https://vpn.example.com
+#   FIBR_NODE_TOKEN=<token from the admin panel, shown once>
+#   EOF
+#   docker compose -f docker-compose.node.yml up -d
+#
+# Open the UDP port (default 51820/udp) in the node's firewall; add
+# 8443/tcp when running the xray profile.
+
+name: fibr-node
+
+services:
+  node:
+    build:
+      context: ../server
+      dockerfile: Dockerfile.node
+    restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    sysctls:
+      - net.ipv4.ip_forward=1
+    devices:
+      - /dev/net/tun:/dev/net/tun # fallback for wireguard-go userspace
+    ports:
+      - "${FIBR_LISTEN_PORT:-51820}:${FIBR_LISTEN_PORT:-51820}/udp"
+    volumes:
+      - node-data:/data
+    env_file: .env
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8081/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # Optional xray on the node: enable with COMPOSE_PROFILES=xray in .env
+  # (and FIBR_XRAY_ENABLED=true so the agent renders the config).
+  xray:
+    image: ghcr.io/xtls/xray-core:latest
+    restart: unless-stopped
+    command: ["run", "-c", "/data/xray/config.json"]
+    ports:
+      - "${FIBR_XRAY_PORT:-8443}:${FIBR_XRAY_PORT:-8443}/tcp"
+    volumes:
+      - node-data:/data
+    depends_on:
+      - node
+    profiles:
+      - xray
+
+volumes:
+  node-data:
