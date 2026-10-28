@@ -6,16 +6,32 @@ enum AppLanguageMode { system, ru, en }
 /// Theme + language + simple-mode prefs, persisted in shared_preferences
 /// (keys `fibr.theme`, `fibr.lang`, `fibr.connectOnLaunch`). Provided via
 /// `provider` at the app root.
+///
+/// `isTv` is a NOT-persisted device property: main() asks the platform once
+/// (AppListService.isTv → `fibr/apps` channel) and stores the answer here,
+/// so widgets read it from the same provider as everything else.
 class SettingsController extends ChangeNotifier {
   ThemeMode _themeMode = ThemeMode.system;
   AppLanguageMode _language = AppLanguageMode.system;
   bool _connectOnLaunch = false;
+  bool _isTv = false;
 
   ThemeMode get themeMode => _themeMode;
   AppLanguageMode get language => _language;
 
   /// Simple mode: bring the active server device up right after launch.
   bool get connectOnLaunch => _connectOnLaunch;
+
+  /// Android TV / leanback device → the 10-foot UI (feature 2). Recomputed
+  /// on every launch by main(); intentionally not persisted (the same APK
+  /// may move between a phone and a TV).
+  bool get isTv => _isTv;
+
+  void setTv(bool value) {
+    if (value == _isTv) return;
+    _isTv = value;
+    notifyListeners();
+  }
 
   /// Locale passed to MaterialApp; null means "follow the system".
   Locale? get resolvedLocale {

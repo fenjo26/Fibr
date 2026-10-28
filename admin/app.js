@@ -14,6 +14,8 @@
       fDNS: 'DNS', fMTU: 'MTU', fPassive: 'Режим', passiveOn: 'активный', passiveOff: 'только конфиги (нет kernel WG)',
       thUser: 'Пользователь', thTelegram: 'Telegram', thRole: 'Роль', thDevices: 'Устр-ва',
       thOwner: 'Кто создал', thLinks: 'Связи', thExpiry: 'Действует до',
+      btnEdit: 'Редактировать', secSubscription: 'Подписка',
+      secLimit: 'Лимит устройств', secAccess: 'Доступ и устройства',
       thStatus: 'Статус', thTraffic: 'Трафик', thSpeed: 'Скорость', thActions: 'Действия',
       thDevice: 'Устройство', thIP: 'IP', thLastSeen: 'Был(а)', thEnabled: 'Вкл',
       phTelegram: 'Telegram ID (необяз.)', phUsername: 'Имя пользователя',
@@ -118,6 +120,8 @@
       fDNS: 'DNS', fMTU: 'MTU', fPassive: 'Mode', passiveOn: 'active', passiveOff: 'configs only (no kernel WG)',
       thUser: 'User', thTelegram: 'Telegram', thRole: 'Role', thDevices: 'Devices',
       thOwner: 'Created by', thLinks: 'Links', thExpiry: 'Valid until',
+      btnEdit: 'Edit', secSubscription: 'Subscription',
+      secLimit: 'Device limit', secAccess: 'Access & devices',
       thStatus: 'Status', thTraffic: 'Traffic', thSpeed: 'Speed', thActions: 'Actions',
       thDevice: 'Device', thIP: 'IP', thLastSeen: 'Last seen', thEnabled: 'On',
       phTelegram: 'Telegram ID (optional)', phUsername: 'Username',
@@ -492,18 +496,6 @@
           var devs = byUser[u.id] || [];
           var rx = 0, tx = 0, online = 0;
           devs.forEach(function (d) { rx += d.total_rx; tx += d.total_tx; if (d.online) online++; });
-          // Role buttons: the panel token is the superadmin, who may promote
-          // users to admins and demote admins back; superadmin accounts come
-          // from the env/static token and are not managed here.
-          var roleBtn = '';
-          if (u.role === 'user') {
-            roleBtn = '<button class="btn btn--ghost btn--small" data-act="role" data-id="' + u.id + '" data-role="admin">' + t('btnMakeAdmin') + '</button>';
-          } else if (u.role === 'admin') {
-            roleBtn = '<button class="btn btn--ghost btn--small" data-act="role" data-id="' + u.id + '" data-role="user">' + t('btnMakeUser') + '</button>';
-          }
-          var disBtn = u.disabled
-            ? '<button class="btn btn--ghost btn--small" data-act="undisable" data-id="' + u.id + '">' + t('btnEnable') + '</button>'
-            : '<button class="btn btn--ghost btn--small" data-act="disable" data-id="' + u.id + '">' + t('btnDisable') + '</button>';
           var owner = u.owner_id
             ? (byId[u.owner_id]
               ? esc(byId[u.owner_id].username || ('#' + u.owner_id))
@@ -529,14 +521,7 @@
             '<td' + L(t('thSpeed')) + '>↓ ' + fmtBits(u.speed_rx_bps) + '<br>↑ ' + fmtBits(u.speed_tx_bps) + '</td>' +
             '<td' + L(t('thStatus')) + '>' + (u.disabled ? '<span class="pill pill--danger">' + t('statusDisabled') + '</span>' : '<span class="pill pill--ok">' + t('statusActive') + '</span>') + '</td>' +
             '<td class="actions-cell"><div class="actions">' +
-            '<button class="btn btn--secondary btn--small" data-act="pay" data-id="' + u.id + '">' + t('btnPay') + '</button>' +
-            '<button class="btn btn--ghost btn--small" data-act="exp30" data-id="' + u.id + '">' + t('btnPlus30') + '</button>' +
-            '<button class="btn btn--ghost btn--small" data-act="expdate" data-id="' + u.id + '">' + t('btnUntilDate') + '</button>' +
-            (u.expires_at ? '<button class="btn btn--ghost btn--small" data-act="expnull" data-id="' + u.id + '">' + t('btnUnlimited') + '</button>' : '') +
-            '<button class="btn btn--ghost btn--small" data-act="devlimit" data-id="' + u.id + '">' + t('btnLimit') + '</button>' +
-            roleBtn + disBtn +
-            '<button class="btn btn--tertiary btn--small" data-act="adddev" data-id="' + u.id + '">' + t('btnAddDevice') + '</button>' +
-            '<button class="btn btn--danger btn--small" data-act="deluser" data-id="' + u.id + '">' + t('btnDelete') + '</button>' +
+            '<button class="btn btn--tertiary btn--small" data-act="edit" data-id="' + u.id + '" title="' + esc(t('btnEdit')) + '">✏️</button>' +
             '</div></td></tr>';
         }).join('') + '</tbody>';
       renderInvites(res[3] || []);
@@ -672,11 +657,15 @@
     }).catch(fail);
   });
 
-  el('users-table').addEventListener('click', function (e) {
-    var btn = e.target.closest('button[data-act]');
-    if (!btn) return;
+  // Shared user-action dispatcher: used by the row pencil button (via the
+  // edit modal) and by the modal itself — one place for every user mutation.
+  function handleUserAction(btn) {
     var id = btn.getAttribute('data-id');
     var act = btn.getAttribute('data-act');
+
+    // Close the edit modal for actions that run inline (prompts/confirms);
+    // pay/adddev open their own modal on top.
+    if (act !== 'pay' && act !== 'adddev') closeModal();
 
     if (act === 'role') {
       api('/api/admin/users/' + id, { method: 'PATCH', body: { role: btn.getAttribute('data-role') } })
@@ -705,6 +694,65 @@
       api('/api/admin/users/' + id, { method: 'PATCH', body: { max_devices: null } })
         .then(function () { toast(t('updated')); loadUsers(); }).catch(fail);
     }
+  }
+
+  // Per-user edit modal: the row shows current values only; every mutation
+  // lives here behind the ✏ pencil (docs/billing.md, docs/referrals.md).
+  function showEditUser(id) {
+    var u = usersById[id];
+    if (!u) return;
+    var roleBtn = '';
+    if (u.role === 'user') {
+      roleBtn = '<button class="btn btn--ghost btn--small" data-act="role" data-id="' + u.id + '" data-role="admin">' + t('btnMakeAdmin') + '</button>';
+    } else if (u.role === 'admin') {
+      roleBtn = '<button class="btn btn--ghost btn--small" data-act="role" data-id="' + u.id + '" data-role="user">' + t('btnMakeUser') + '</button>';
+    }
+    var disBtn = u.disabled
+      ? '<button class="btn btn--ghost btn--small" data-act="undisable" data-id="' + u.id + '">' + t('btnEnable') + '</button>'
+      : '<button class="btn btn--ghost btn--small" data-act="disable" data-id="' + u.id + '">' + t('btnDisable') + '</button>';
+    openModal('<h3>✏️ ' + esc(u.username || ('#' + u.id)) +
+      ' <span class="mono muted">#' + u.id + '</span> ' + rolePill(u.role) + '</h3>' +
+      '<p class="muted modal-sub">' + (u.telegram_id ? 'TG ' + u.telegram_id : t('noTG')) + '</p>' +
+
+      '<p class="muted modal-sub edit-sec">' + esc(t('secSubscription')) + '</p>' +
+      '<div class="edit-row">' + expiryCell(u) +
+      '<button class="btn btn--secondary btn--small" data-act="pay" data-id="' + u.id + '">' + t('btnPay') + '</button>' +
+      '<button class="btn btn--ghost btn--small" data-act="exp30" data-id="' + u.id + '">' + t('btnPlus30') + '</button>' +
+      '<button class="btn btn--ghost btn--small" data-act="expdate" data-id="' + u.id + '">' + t('btnUntilDate') + '</button>' +
+      (u.expires_at ? '<button class="btn btn--ghost btn--small" data-act="expnull" data-id="' + u.id + '">' + t('btnUnlimited') + '</button>' : '') +
+      '</div>' +
+
+      '<p class="muted modal-sub edit-sec">' + esc(t('secLimit')) + '</p>' +
+      '<div class="edit-row">' + limitCell(u) +
+      '<button class="btn btn--ghost btn--small" data-act="devlimit" data-id="' + u.id + '">' + t('btnLimit') + '</button>' +
+      (u.max_devices != null ? '<button class="btn btn--ghost btn--small" data-act="devlimitreset" data-id="' + u.id + '">' + t('btnLimitReset') + '</button>' : '') +
+      '</div>' +
+
+      '<p class="muted modal-sub edit-sec">' + esc(t('secAccess')) + '</p>' +
+      '<div class="edit-row">' + roleBtn + disBtn +
+      '<button class="btn btn--tertiary btn--small" data-act="adddev" data-id="' + u.id + '">' + t('btnAddDevice') + '</button>' +
+      '</div>' +
+
+      '<div class="modal-actions edit-danger">' +
+      '<button class="btn btn--danger btn--small" data-act="deluser" data-id="' + u.id + '">' + t('btnDelete') + '</button>' +
+      '<button class="btn btn--tertiary btn--small" onclick="document.getElementById(\'modal\').classList.add(\'hidden\')">' + esc(t('btnCancel')) + '</button>' +
+      '</div>');
+  }
+
+  el('modal-body').addEventListener('click', function (e) {
+    var btn = e.target.closest('button[data-act]');
+    if (!btn) return;
+    handleUserAction(btn);
+  });
+
+  el('users-table').addEventListener('click', function (e) {
+    var btn = e.target.closest('button[data-act]');
+    if (!btn) return;
+    if (btn.getAttribute('data-act') === 'edit') {
+      showEditUser(btn.getAttribute('data-id'));
+      return;
+    }
+    handleUserAction(btn);
   });
 
   /* ---------- referral program (docs/referrals.md) ---------- */

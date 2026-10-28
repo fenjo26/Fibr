@@ -1,7 +1,9 @@
 package com.fibr.app
 
+import android.app.UiModeManager
 import android.content.Intent
 import android.content.pm.ApplicationInfo
+import android.content.res.Configuration
 import android.os.Bundle
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -14,7 +16,8 @@ import io.flutter.plugin.common.MethodChannel
  *
  *  - "fibr/deeplink" (+ events) — fibr:// import links: the initial link
  *    and links arriving via onNewIntent (launchMode is singleTask).
- *  - "fibr/apps" — installed app list for the split-tunneling screen.
+ *  - "fibr/apps" — installed app list for the split-tunneling screen,
+ *    plus "isTv" (UiModeManager → TELEVISION) for the 10-foot UI.
  */
 class MainActivity : FlutterActivity() {
 
@@ -62,6 +65,7 @@ class MainActivity : FlutterActivity() {
         MethodChannel(messenger, "fibr/apps").setMethodCallHandler { call, result ->
             when (call.method) {
                 "list" -> result.success(installedApps())
+                "isTv" -> result.success(isTelevision())
                 else -> result.notImplemented()
             }
         }
@@ -80,5 +84,12 @@ class MainActivity : FlutterActivity() {
                 "system" to ((app.flags and ApplicationInfo.FLAG_SYSTEM) != 0),
             )
         }
+    }
+
+    /** Android TV / leanback device: UiModeManager says the current mode is
+     *  a television (emulator included; phones and tablets report NORMAL). */
+    private fun isTelevision(): Boolean {
+        val uiModeManager = getSystemService(UI_MODE_SERVICE) as UiModeManager
+        return uiModeManager.currentModeType == Configuration.UI_MODE_TYPE_TELEVISION
     }
 }

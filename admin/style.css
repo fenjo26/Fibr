@@ -471,3 +471,29 @@ main {
     content: none;
   }
 }
+
+/* ---------- per-user edit modal ---------- */
+
+.edit-sec {
+  margin: 14px 0 6px !important;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 11px;
+}
+
+.edit-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.edit-row .pill {
+  margin-right: 4px;
+}
+
+.edit-danger {
+  margin-top: 18px;
+  border-top: 1px solid var(--hairline);
+  padding-top: 12px;
+}
