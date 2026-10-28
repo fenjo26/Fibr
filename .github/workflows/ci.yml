@@ -1,0 +1,102 @@
+# Fibr CI: Go server checks (gofmt/vet/test/build), Docker image build,
+# shellcheck of the installer. Everything runs on GitHub-hosted Ubuntu
+# runners — nothing here depends on macOS or local tooling.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Least privilege: this workflow never pushes artifacts or commits,
+# read-only access to the repository is enough.
+permissions:
+  contents: read
+
+# Cancel a superseded run on the same branch/PR to save runner minutes.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  server:
+    name: Go server (gofmt, vet, test, build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      # Go version is taken from server/go.mod instead of 'stable':
+      #  - modernc.org/sqlite (pure-Go SQLite driver) requires go >= 1.26,
+      #    so CI must never run an older toolchain than the module declares;
+      #  - go-version-file keeps CI in lockstep with the project: bumping
+      #    go.mod bumps CI too, and a brand-new Go release cannot surprise
+      #    the build before the project opts in;
+      #  - if go.mod ever requires a newer toolchain than what setup-go
+      #    resolved, `go` downloads it itself (GOTOOLCHAIN=auto default).
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: server/go.mod
+          cache: true # built-in module cache (go.sum based)
+          cache-dependency-path: server/go.sum
+
+      - name: gofmt (fail if any file is unformatted)
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "::error::gofmt found unformatted files (fix with: cd server && gofmt -w .)"
+            printf '%s\n' "$unformatted"
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go test
+        run: go test ./...
+
+      - name: go build
+        run: go build ./...
+
+  docker:
+    name: Docker image (build only, no push)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      # docker/build-push-action instead of a plain `docker build`: it is the
+      # same build of the same Dockerfile users get via install.sh, but with
+      # the GitHub Actions layer cache (type=gha) repeat runs are much
+      # faster. push:false needs no registry login and no secrets — the goal
+      # is purely to prove the image builds.
+      - name: Build server image
+        uses: docker/build-push-action@v7
+        with:
+          context: ./server
+          push: false
+          tags: fibr:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  shellcheck:
+    name: shellcheck install.sh (errors only)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      # shellcheck ships preinstalled on GitHub-hosted Ubuntu runners.
+      # Soft mode on purpose: --severity=error means only real errors
+      # (syntax problems, broken constructs) fail the job; style- and
+      # warning-level notes never do.
+      - name: Run shellcheck
+        run: shellcheck --severity=error install/install.sh
