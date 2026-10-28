@@ -158,30 +158,37 @@ class _KeyCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context);
     final c = FibrColors.of(context);
+    // Only the header toggles the card. Wrapping the whole card (with the
+    // TextFields inside) in an InkWell let the card's tap win the gesture
+    // arena on Android: tapping a field collapsed/re-opened the card and the
+    // field never got focus, so the key could not be typed or pasted.
     return FibrCard(
-      onTap: onToggle,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              Icon(Icons.vpn_key_outlined, color: c.secondary),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(l10n.t('loginKeyCard'),
-                        style: Theme.of(context).textTheme.titleMedium),
-                    Text(
-                      l10n.t('loginKeyCardHint'),
-                      style: TextStyle(color: c.muted, fontSize: 12),
-                    ),
-                  ],
+          InkWell(
+            onTap: onToggle,
+            borderRadius: BorderRadius.circular(12),
+            child: Row(
+              children: [
+                Icon(Icons.vpn_key_outlined, color: c.secondary),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(l10n.t('loginKeyCard'),
+                          style: Theme.of(context).textTheme.titleMedium),
+                      Text(
+                        l10n.t('loginKeyCardHint'),
+                        style: TextStyle(color: c.muted, fontSize: 12),
+                      ),
+                    ],
+                  ),
                 ),
-              ),
-              Icon(open ? Icons.expand_less : Icons.expand_more, color: c.faint),
-            ],
+                Icon(open ? Icons.expand_less : Icons.expand_more, color: c.faint),
+              ],
+            ),
           ),
           if (open) ...[
             const SizedBox(height: 12),
