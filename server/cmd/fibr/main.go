@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -21,6 +22,19 @@ import (
 	"github.com/fenjo26/Fibr/internal/wg"
 	"github.com/fenjo26/Fibr/internal/xray"
 )
+
+// sameIDSet reports whether two id sets hold exactly the same elements.
+func sameIDSet(a, b map[int64]struct{}) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for id := range a {
+		if _, ok := b[id]; !ok {
+			return false
+		}
+	}
+	return true
+}
 
 func main() {
 	log := slog.New(slog.NewTextHandler(os.Stdout, nil))
@@ -103,6 +117,38 @@ func main() {
 		log.Info("FIBR_XRAY_ENABLED not set, xray protocol disabled")
 	}
 
+	// Subscription expiry pass (manual monetization, see docs/billing.md).
+	// Runs on every stats tick: recompute the set of expired accounts and
+	// resync WireGuard peers only when that set CHANGED — an account that
+	// just crossed its deadline gets its tunnel cut within one interval,
+	// while a steady state never rebuilds peers for nothing.
+	var lastExpired map[int64]struct{}
+	checkExpiries := func() {
+		ids, err := st.ListExpiredUserIDs(time.Now())
+		if err != nil {
+			log.Warn("expiry check failed", "error", err)
+			return
+		}
+		cur := make(map[int64]struct{}, len(ids))
+		for _, id := range ids {
+			cur[id] = struct{}{}
+		}
+		if sameIDSet(cur, lastExpired) {
+			return
+		}
+		grew := len(cur) > len(lastExpired)
+		lastExpired = cur
+		if err := wgm.SyncPeers(); err != nil {
+			log.Error("peer resync after expiry change failed", "error", err)
+			return
+		}
+		if grew {
+			log.Info(fmt.Sprintf("%d users expired, peers resynced", len(cur)))
+		} else {
+			log.Info("expired set shrank or changed, peers resynced", "expired", len(cur))
+		}
+	}
+
 	// Periodic stats collection (peer transfer counters + iface throughput).
 	go func() {
 		wgm.CollectStats() // first sample right away
@@ -114,6 +160,7 @@ func main() {
 				return
 			case <-t.C:
 				wgm.CollectStats()
+				checkExpiries()
 			}
 		}
 	}()

@@ -3,7 +3,9 @@ package store
 import (
 	"database/sql"
 	"path/filepath"
+	"strconv"
 	"testing"
+	"time"
 
 	_ "modernc.org/sqlite" // pure-Go SQLite driver
 )
@@ -384,5 +386,217 @@ func TestUsersRolesMigration(t *testing.T) {
 	t.Cleanup(func() { s2.Close() })
 	if _, err := s2.GetUserByTelegramID(3); err != nil {
 		t.Fatalf("get after second open: %v", err)
+	}
+}
+
+// TestEffectiveExpiry covers the pure deadline helpers: the effective
+// deadline is the earlier of the account's own and its owner's, NULL means
+// "no deadline" and is ignored, and only a passed deadline counts as expired.
+func TestEffectiveExpiry(t *testing.T) {
+	now := time.Now()
+	earlier := now.Add(-24 * time.Hour)
+	later := now.Add(24 * time.Hour)
+
+	cases := []struct {
+		own, owner *time.Time
+		want       *time.Time // nil = unlimited
+		expired    bool
+	}{
+		{own: nil, owner: nil, want: nil, expired: false},             // unlimited everywhere
+		{own: nil, owner: &later, want: &later, expired: false},       // admin's deadline governs
+		{own: nil, owner: &earlier, want: &earlier, expired: true},    // unpaid admin kills the branch
+		{own: &later, owner: nil, want: &later, expired: false},       // own deadline only
+		{own: &earlier, owner: nil, want: &earlier, expired: true},    // own deadline passed
+		{own: &earlier, owner: &later, want: &earlier, expired: true}, // own is earlier and passed
+		{own: &later, owner: &earlier, want: &earlier, expired: true}, // owner is earlier and passed
+		{own: &later, owner: &later, want: &later, expired: false},    // both fine
+	}
+	for i, c := range cases {
+		got := EffectiveExpiry(c.own, c.owner)
+		if (got == nil) != (c.want == nil) {
+			t.Fatalf("case %d: EffectiveExpiry = %v, want %v", i, got, c.want)
+		}
+		if got != nil && !got.Equal(*c.want) {
+			t.Fatalf("case %d: EffectiveExpiry = %v, want %v", i, got, c.want)
+		}
+		if exp := ExpiredAt(got, now); exp != c.expired {
+			t.Fatalf("case %d: ExpiredAt = %v, want %v", i, exp, c.expired)
+		}
+	}
+	if ExpiredAt(nil, now) {
+		t.Fatal("nil deadline must never expire")
+	}
+}
+
+// TestUserExpiry covers the manual-monetization store surface (see
+// docs/billing.md): SetUserExpiry round-trip, ListActiveDevices' filtering
+// (enabled devices of unexpired accounts, owner cascade) and
+// ListExpiredUserIDs.
+func TestUserExpiry(t *testing.T) {
+	s := openTestStore(t)
+	now := time.Now()
+	earlier := now.Add(-time.Hour)
+	later := now.Add(24 * time.Hour)
+	unix := func(ts time.Time) *int64 { v := ts.Unix(); return &v }
+
+	mkUser := func(u *User) *User {
+		if err := s.CreateUser(u); err != nil {
+			t.Fatalf("seed user %s: %v", u.Username, err)
+		}
+		return u
+	}
+	nextIP := 2
+	mkDev := func(uid int64, name string, enabled bool) *Device {
+		d := &Device{UserID: uid, Name: name, PublicKey: "pub-" + name, PrivateKey: "priv-" + name,
+			IPv4: "10.8.0." + strconv.Itoa(nextIP), Enabled: enabled}
+		nextIP++
+		if err := s.CreateDevice(d); err != nil {
+			t.Fatalf("seed device %s: %v", name, err)
+		}
+		return d
+	}
+
+	// The cast: a paid admin, an expired admin, and users in every expiry
+	// combination around them.
+	adminOK := mkUser(&User{Username: "admin-ok", Role: RoleAdmin})
+	adminExp := mkUser(&User{Username: "admin-expired", Role: RoleAdmin})
+	if err := s.SetUserExpiry(adminExp.ID, unix(earlier)); err != nil {
+		t.Fatalf("set admin expiry: %v", err)
+	}
+
+	plain := mkUser(&User{Username: "plain"})              // no owner, no deadline
+	expiredUser := mkUser(&User{Username: "expired-user"}) // own deadline passed
+	if err := s.SetUserExpiry(expiredUser.ID, unix(earlier)); err != nil {
+		t.Fatalf("set user expiry: %v", err)
+	}
+	underOK := mkUser(&User{Username: "under-ok", OwnerID: &adminOK.ID})        // NULL deadline under a paid admin
+	underExp := mkUser(&User{Username: "under-expired", OwnerID: &adminExp.ID}) // NULL deadline under an expired admin
+	lateOwn := mkUser(&User{Username: "late-own", OwnerID: &adminExp.ID})       // own future deadline, owner's past one wins
+	if err := s.SetUserExpiry(lateOwn.ID, unix(later)); err != nil {
+		t.Fatalf("set late-own expiry: %v", err)
+	}
+
+	devPlain := mkDev(plain.ID, "plain-phone", true)
+	devExpired := mkDev(expiredUser.ID, "expired-phone", true)
+	devUnderOK := mkDev(underOK.ID, "under-ok-phone", true)
+	devUnderExp := mkDev(underExp.ID, "under-expired-phone", true)
+	devLateOwn := mkDev(lateOwn.ID, "late-own-phone", true)
+	mkDev(plain.ID, "plain-phone-disabled", false) // enabled=false drops even a paid user's device
+
+	// Active devices: only the ones whose whole chain is still paid for.
+	active, err := s.ListActiveDevices(now)
+	if err != nil {
+		t.Fatalf("ListActiveDevices: %v", err)
+	}
+	got := map[int64]bool{}
+	for _, d := range active {
+		got[d.ID] = true
+	}
+	for _, d := range []*Device{devPlain, devUnderOK} {
+		if !got[d.ID] {
+			t.Fatalf("device %s (id %d) must be active, got %v", d.Name, d.ID, got)
+		}
+	}
+	for _, d := range []*Device{devExpired, devUnderExp, devLateOwn} {
+		if got[d.ID] {
+			t.Fatalf("device %s (id %d) must be dropped by expiry, got %v", d.Name, d.ID, got)
+		}
+	}
+	if len(active) != 2 {
+		t.Fatalf("expected exactly 2 active devices, got %d: %v", len(active), active)
+	}
+
+	// The expired-id set is exactly the accounts behind those drops.
+	ids, err := s.ListExpiredUserIDs(now)
+	if err != nil {
+		t.Fatalf("ListExpiredUserIDs: %v", err)
+	}
+	wantIDs := map[int64]bool{adminExp.ID: true, expiredUser.ID: true, underExp.ID: true, lateOwn.ID: true}
+	if len(ids) != len(wantIDs) {
+		t.Fatalf("expired ids: got %v want %v", ids, wantIDs)
+	}
+	for _, id := range ids {
+		if !wantIDs[id] {
+			t.Fatalf("unexpected expired id %d (want %v)", id, wantIDs)
+		}
+	}
+
+	// SetUserExpiry round-trip: renewing the user brings the device back,
+	// clearing the deadline (NULL) keeps it active.
+	if err := s.SetUserExpiry(expiredUser.ID, unix(later)); err != nil {
+		t.Fatalf("renew: %v", err)
+	}
+	gotUser, err := s.GetUser(expiredUser.ID)
+	if err != nil || gotUser.ExpiresAt == nil || !gotUser.ExpiresAt.Equal(later.Truncate(time.Second)) {
+		t.Fatalf("renewed expiry not persisted: %+v err=%v", gotUser, err)
+	}
+	if active, _ = s.ListActiveDevices(now); len(active) != 3 {
+		t.Fatalf("renewal must restore the device, got %d active", len(active))
+	}
+	if err := s.SetUserExpiry(expiredUser.ID, nil); err != nil {
+		t.Fatalf("clear: %v", err)
+	}
+	if gotUser, _ = s.GetUser(expiredUser.ID); gotUser.ExpiresAt != nil {
+		t.Fatalf("nil must clear the deadline (unlimited), got %+v", gotUser)
+	}
+}
+
+// TestExpiryMigration verifies the pragma-gated users.expires_at migration:
+// a database from before the billing feature (roles schema, no expires_at
+// column) must be upgraded in place on the next Open, existing rows reading
+// back as NULL (unlimited), and repeated Opens must be a no-op that keeps
+// values written after the migration.
+func TestExpiryMigration(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "pre-billing.db")
+	oldSchema := `
+	CREATE TABLE IF NOT EXISTS users (
+		id          INTEGER PRIMARY KEY AUTOINCREMENT,
+		telegram_id INTEGER UNIQUE,
+		username    TEXT    NOT NULL DEFAULT '',
+		role        TEXT    NOT NULL DEFAULT 'user' CHECK (role IN ('user','admin','superadmin')),
+		owner_id    INTEGER REFERENCES users(id) ON DELETE SET NULL,
+		disabled    INTEGER NOT NULL DEFAULT 0,
+		created_at  INTEGER NOT NULL
+	);`
+	raw, err := sql.Open("sqlite", "file:"+path+"?_pragma=busy_timeout(5000)")
+	if err != nil {
+		t.Fatalf("open raw: %v", err)
+	}
+	if _, err := raw.Exec(oldSchema); err != nil {
+		t.Fatalf("old schema: %v", err)
+	}
+	if _, err := raw.Exec(`INSERT INTO users (telegram_id, username, role, created_at) VALUES (1, 'pre', 'admin', 1)`); err != nil {
+		t.Fatalf("seed user: %v", err)
+	}
+	raw.Close()
+
+	s, err := Open(path)
+	if err != nil {
+		t.Fatalf("migrating open: %v", err)
+	}
+	t.Cleanup(func() { s.Close() })
+
+	u, err := s.GetUserByTelegramID(1)
+	if err != nil {
+		t.Fatalf("get user: %v", err)
+	}
+	if u.ExpiresAt != nil {
+		t.Fatalf("pre-billing row must read back as unlimited, got %+v", u.ExpiresAt)
+	}
+
+	// Deadlines written after the migration survive a reopen (no-op pass).
+	exp := time.Now().Add(48 * time.Hour).Unix()
+	if err := s.SetUserExpiry(u.ID, &exp); err != nil {
+		t.Fatalf("set expiry: %v", err)
+	}
+	s.Close()
+	s2, err := Open(path)
+	if err != nil {
+		t.Fatalf("second open: %v", err)
+	}
+	t.Cleanup(func() { s2.Close() })
+	u2, err := s2.GetUserByTelegramID(1)
+	if err != nil || u2.ExpiresAt == nil {
+		t.Fatalf("expiry lost across reopen: %+v err=%v", u2, err)
 	}
 }

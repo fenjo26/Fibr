@@ -95,32 +95,71 @@ type ctxKeyType struct{}
 
 var ctxKey ctxKeyType
 
+// msgSubscriptionExpired is the 403 reason for accounts past their effective
+// deadline; the Mini App matches on it to show a localized "subscription
+// expired" screen (see docs/billing.md).
+const msgSubscriptionExpired = "subscription expired"
+
 // identify resolves the caller from the Authorization header: either the
-// static admin token or a Mini App session token.
-func (a *API) identify(r *http.Request) (identity, bool) {
+// static admin token or a Mini App session token. An account past its
+// effective subscription deadline is rejected with the
+// msgSubscriptionExpired reason (surfaces as 403), like a disabled one.
+func (a *API) identify(r *http.Request) (identity, string, bool) {
 	token := bearer(r)
 	if token == "" {
-		return identity{}, false
+		return identity{}, "", false
 	}
 	if token == a.cfg.AdminToken {
-		return identity{role: store.RoleSuperadmin}, true
+		return identity{role: store.RoleSuperadmin}, "", true
 	}
 	uid, ok := a.parseSessionToken(token)
 	if !ok {
-		return identity{}, false
+		return identity{}, "", false
 	}
 	u, err := a.store.GetUser(uid)
 	if err != nil || u.Disabled {
-		return identity{}, false
+		return identity{}, "", false
 	}
-	return identity{userID: u.ID, role: u.Role}, true
+	if a.userExpired(u) {
+		return identity{}, msgSubscriptionExpired, false
+	}
+	return identity{userID: u.ID, role: u.Role}, "", true
+}
+
+// userExpired reports whether the account's effective deadline (its own
+// expires_at OR its owner-admin's, whichever is earlier) has passed.
+func (a *API) userExpired(u *store.User) bool {
+	var ownerExp *time.Time
+	if u.OwnerID != nil {
+		if owner, err := a.store.GetUser(*u.OwnerID); err == nil {
+			ownerExp = owner.ExpiresAt
+		}
+	}
+	return store.ExpiredAt(store.EffectiveExpiry(u.ExpiresAt, ownerExp), time.Now())
+}
+
+// userExpiredByMap is userExpired over a preloaded id -> user map (list
+// handlers already hold every account in memory; the owner of a scoped user
+// is not in the scoped slice, so the map must be built from the full list).
+func userExpiredByMap(byID map[int64]*store.User, u store.User, now time.Time) bool {
+	var ownerExp *time.Time
+	if u.OwnerID != nil {
+		if owner := byID[*u.OwnerID]; owner != nil {
+			ownerExp = owner.ExpiresAt
+		}
+	}
+	return store.ExpiredAt(store.EffectiveExpiry(u.ExpiresAt, ownerExp), now)
 }
 
 func (a *API) auth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		id, ok := a.identify(r)
+		id, reason, ok := a.identify(r)
 		if !ok || id.userID == 0 {
-			a.errJSON(w, http.StatusUnauthorized, "unauthorized")
+			code, msg := http.StatusUnauthorized, "unauthorized"
+			if reason == msgSubscriptionExpired {
+				code, msg = http.StatusForbidden, reason
+			}
+			a.errJSON(w, code, msg)
 			return
 		}
 		next(w, r.WithContext(context.WithValue(r.Context(), ctxKey, id)))
@@ -129,8 +168,16 @@ func (a *API) auth(next http.HandlerFunc) http.HandlerFunc {
 
 func (a *API) admin(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		id, ok := a.identify(r)
-		if !ok || !id.isAdmin() {
+		id, reason, ok := a.identify(r)
+		if !ok {
+			if reason == msgSubscriptionExpired {
+				a.errJSON(w, http.StatusForbidden, reason)
+				return
+			}
+			a.errJSON(w, http.StatusForbidden, "admin only")
+			return
+		}
+		if !id.isAdmin() {
 			a.errJSON(w, http.StatusForbidden, "admin only")
 			return
 		}
@@ -222,6 +269,10 @@ func (a *API) handleAuthTelegram(w http.ResponseWriter, r *http.Request) {
 	}
 	if u.Disabled {
 		a.errJSON(w, http.StatusForbidden, "account disabled")
+		return
+	}
+	if a.userExpired(u) {
+		a.errJSON(w, http.StatusForbidden, msgSubscriptionExpired)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"token": a.newSessionToken(u.ID), "user": u})
@@ -332,6 +383,7 @@ type Overview struct {
 		Users   int   `json:"users"`
 		Devices int   `json:"devices"`
 		Online  int   `json:"online"`
+		Expired int   `json:"expired"` // accounts past their effective deadline
 		TotalRx int64 `json:"total_rx"`
 		TotalTx int64 `json:"total_tx"`
 	} `json:"totals"`
@@ -365,11 +417,19 @@ func (a *API) BuildOverview() (*Overview, error) {
 		return nil, err
 	}
 	names := make(map[int64]string, len(users))
-	for _, u := range users {
-		names[u.ID] = u.Username
+	byID := make(map[int64]*store.User, len(users))
+	for i := range users {
+		names[users[i].ID] = users[i].Username
+		byID[users[i].ID] = &users[i]
 	}
 	ov.Totals.Users = len(users)
 	ov.Totals.Devices = len(devices)
+	now := time.Now()
+	for _, u := range users {
+		if userExpiredByMap(byID, u, now) {
+			ov.Totals.Expired++
+		}
+	}
 	for _, d := range devices {
 		ov.Totals.TotalRx += d.TotalRx
 		ov.Totals.TotalTx += d.TotalTx
@@ -419,6 +479,10 @@ type userOut struct {
 	Online  int   `json:"online"`
 	TotalRx int64 `json:"total_rx"`
 	TotalTx int64 `json:"total_tx"`
+	// Expired is the effective-deadline verdict (own expires_at OR the
+	// owner-admin's, whichever is earlier) so the frontends never have to
+	// resolve the cascade themselves.
+	Expired bool `json:"expired"`
 }
 
 func (a *API) handleAdminListUsers(w http.ResponseWriter, r *http.Request) {
@@ -428,6 +492,14 @@ func (a *API) handleAdminListUsers(w http.ResponseWriter, r *http.Request) {
 		a.errJSON(w, http.StatusInternalServerError, "storage error")
 		return
 	}
+	// Effective-expiry needs the owner's deadline too, and an owner may fall
+	// outside the scoped slice below (an admin is not their own subtree) —
+	// so resolve it against the full list before scoping.
+	byID := make(map[int64]*store.User, len(users))
+	for i := range users {
+		byID[users[i].ID] = &users[i]
+	}
+	now := time.Now()
 	// Scope: the superadmin sees every account; an admin sees only the users
 	// they created (owner_id = their id). The admin themself is NOT included —
 	// their own devices live in /api/me.
@@ -448,7 +520,7 @@ func (a *API) handleAdminListUsers(w http.ResponseWriter, r *http.Request) {
 	stats := make(map[int64]*userOut, len(users))
 	out := make([]userOut, 0, len(users))
 	for _, u := range users {
-		s := userOut{User: u}
+		s := userOut{User: u, Expired: userExpiredByMap(byID, u, now)}
 		stats[u.ID] = &s
 		out = append(out, s)
 	}
@@ -471,6 +543,7 @@ func (a *API) handleAdminCreateUser(w http.ResponseWriter, r *http.Request) {
 		TelegramID *int64 `json:"telegram_id"`
 		Username   string `json:"username"`
 		Role       string `json:"role"`
+		ExpiresAt  string `json:"expires_at"` // RFC3339; only the superadmin's value is honored
 	}
 	if err := decodeJSON(w, r, &body); err != nil {
 		a.errJSON(w, http.StatusBadRequest, err.Error())
@@ -499,6 +572,18 @@ func (a *API) handleAdminCreateUser(w http.ResponseWriter, r *http.Request) {
 	u := &store.User{TelegramID: body.TelegramID, Username: sanitizeName(body.Username, ""), Role: role}
 	if owner > 0 {
 		u.OwnerID = &owner
+	}
+	// Selling access at creation time is the superadmin's move; an admin's
+	// expires_at (if any) is silently ignored — deadlines are set by the
+	// owner of the installation (see docs/billing.md).
+	if id.isSuper() && body.ExpiresAt != "" {
+		ts, err := time.Parse(time.RFC3339, body.ExpiresAt)
+		if err != nil {
+			a.errJSON(w, http.StatusBadRequest, "expires_at must be an RFC3339 timestamp")
+			return
+		}
+		t := ts
+		u.ExpiresAt = &t
 	}
 	if err := a.store.CreateUser(u); err != nil {
 		a.errJSON(w, http.StatusConflict, "user already exists")
@@ -530,14 +615,38 @@ func (a *API) fetchManagedUser(w http.ResponseWriter, r *http.Request) (*store.U
 	return u, caller, true
 }
 
+// patchExpiry decodes the optional expires_at PATCH field, which is
+// tri-state: absent (leave the deadline alone), JSON null (clear = unlimited)
+// or an RFC3339 timestamp string. set tells whether the deadline should be
+// written at all; unix is the value to write (nil = NULL).
+func patchExpiry(raw json.RawMessage) (set bool, unix *int64, err error) {
+	if len(raw) == 0 {
+		return false, nil, nil // field absent: no change
+	}
+	if string(raw) == "null" {
+		return true, nil, nil // explicit null: unlimited
+	}
+	var s string
+	if err := json.Unmarshal(raw, &s); err != nil {
+		return false, nil, errors.New("expires_at must be an RFC3339 timestamp or null")
+	}
+	ts, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		return false, nil, errors.New("expires_at must be an RFC3339 timestamp or null")
+	}
+	v := ts.Unix()
+	return true, &v, nil
+}
+
 func (a *API) handleAdminUpdateUser(w http.ResponseWriter, r *http.Request) {
 	u, caller, ok := a.fetchManagedUser(w, r)
 	if !ok {
 		return
 	}
 	var body struct {
-		Role     *string `json:"role"`
-		Disabled *bool   `json:"disabled"`
+		Role      *string         `json:"role"`
+		Disabled  *bool           `json:"disabled"`
+		ExpiresAt json.RawMessage `json:"expires_at"` // RFC3339 | null; superadmin only
 	}
 	if err := decodeJSON(w, r, &body); err != nil {
 		a.errJSON(w, http.StatusBadRequest, err.Error())
@@ -561,6 +670,31 @@ func (a *API) handleAdminUpdateUser(w http.ResponseWriter, r *http.Request) {
 		if err := a.store.SetUserDisabled(u.ID, *body.Disabled); err != nil {
 			a.errJSON(w, http.StatusNotFound, "user not found")
 			return
+		}
+	}
+	if len(body.ExpiresAt) > 0 {
+		// Selling time is the installation owner's alone: a reseller must not
+		// extend their own or their users' deadline for free.
+		if !caller.isSuper() {
+			a.errJSON(w, http.StatusForbidden, "superadmin only")
+			return
+		}
+		set, unix, err := patchExpiry(body.ExpiresAt)
+		if err != nil {
+			a.errJSON(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if set {
+			if err := a.store.SetUserExpiry(u.ID, unix); err != nil {
+				a.errJSON(w, http.StatusNotFound, "user not found")
+				return
+			}
+			// Apply it to the tunnel right away instead of waiting for the
+			// periodic expiry pass (a past timestamp cuts the peers now, a
+			// renewal or null restores them).
+			a.syncPeers()
+			a.syncXray()
+			a.log.Info("user expiry set", "user_id", u.ID, "expires_at", unix)
 		}
 	}
 	u, err := a.store.GetUser(u.ID)

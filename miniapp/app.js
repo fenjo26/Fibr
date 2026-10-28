@@ -16,9 +16,14 @@
       errNotTelegram: 'Откройте это окно из бота Fibr в Telegram.',
       errAuth: 'Не удалось войти через Telegram. Сообщите админу.',
       errDisabled: 'Ваш аккаунт отключён администратором.',
+      errExpired: 'Подписка истекла. Свяжитесь с администратором, чтобы продлить.',
       errInvite: 'Регистрация только по приглашению. Попросите у админа ссылку-приглашение и откройте её.',
       errGeneric: 'Ошибка запроса',
       deviceLimit: 'Лимит устройств исчерпан',
+      validUntil: 'Действует до {d}',
+      unlimited: 'Бессрочно',
+      shortExpired: 'истёк',
+      validUntilShort: 'до {d}',
       empty: 'Пока нет устройств.\nДобавьте первое — и отсканируйте QR.',
       qrTitle: 'QR-код конфигурации',
       qrHint: 'Отсканируйте в приложении WireGuard/Fibr',
@@ -54,9 +59,14 @@
       errNotTelegram: 'Open this window from the Fibr bot in Telegram.',
       errAuth: 'Telegram sign-in failed. Contact the admin.',
       errDisabled: 'Your account is disabled by the administrator.',
+      errExpired: 'Your subscription has expired. Contact the administrator to renew it.',
       errInvite: 'Sign-up is invite-only. Ask the admin for an invite link and open it.',
       errGeneric: 'Request failed',
       deviceLimit: 'Device limit reached',
+      validUntil: 'Valid until {d}',
+      unlimited: 'Unlimited',
+      shortExpired: 'expired',
+      validUntilShort: 'until {d}',
       empty: 'No devices yet.\nAdd one and scan the QR code.',
       qrTitle: 'Configuration QR code',
       qrHint: 'Scan it in the WireGuard/Fibr app',
@@ -130,6 +140,10 @@
   });
 
   function fail(e) {
+    if (e && e.status === 403 && e.message === 'subscription expired') {
+      showError(t('errExpired')); // deadline passed mid-session (docs/billing.md)
+      return;
+    }
     if (e && e.status === 401) { showError(t('errAuth')); return; }
     alert((e && e.message) || t('errGeneric'));
   }
@@ -175,6 +189,10 @@
             showError(t('errInvite'));
             throw new Error('invite');
           }
+          if (res.status === 403 && msg === 'subscription expired') {
+            showError(t('errExpired'));
+            throw new Error('expired');
+          }
           if (res.status === 403) { showError(t('errDisabled')); throw new Error('disabled'); }
           throw new Error(msg);
         }
@@ -185,7 +203,7 @@
       try { sessionStorage.setItem('fibr-token', token); } catch (e) { /* ignore */ }
       load();
     }).catch(function (e) {
-      if (e && (e.message === 'disabled' || e.message === 'invite')) return;
+      if (e && (e.message === 'disabled' || e.message === 'invite' || e.message === 'expired')) return;
       showError(t('errAuth'));
     });
   }
@@ -216,6 +234,20 @@
     }).catch(fail);
   }
 
+  /* ---------- formatting ---------- */
+
+  function fmtDate(iso) {
+    var d = new Date(iso);
+    if (isNaN(d)) return '—';
+    return d.toLocaleDateString(t.lang === 'ru' ? 'ru-RU' : 'en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+  }
+
+  function fmtDateShort(iso) {
+    var d = new Date(iso);
+    if (isNaN(d)) return '—';
+    return d.toLocaleDateString(t.lang === 'ru' ? 'ru-RU' : 'en-GB', { day: 'numeric', month: 'short' });
+  }
+
   function render() {
     var devices = me.devices || [];
     var online = devices.filter(function (d) { return d.online; }).length;
@@ -225,6 +257,11 @@
     el('sum-devices').textContent = devices.length + (me.max_devices ? ' / ' + me.max_devices : '');
     el('sum-online').textContent = online;
     el('sum-traffic').innerHTML = fmtBytes(rx) + ' · ' + fmtBytes(tx);
+    // Subscription deadline line (docs/billing.md): the superadmin sells time;
+    // an account without a deadline is unlimited.
+    el('sum-expiry').textContent = (me.user && me.user.expires_at)
+      ? t('validUntil', { d: fmtDate(me.user.expires_at) })
+      : t('unlimited');
 
     if (!devices.length) {
       el('devices').innerHTML = '<div class="card empty">' + esc(t('empty')).replace(/\n/g, '<br>') + '</div>';
@@ -311,11 +348,22 @@
       }
       el('users').innerHTML = users.map(function (u) {
         var tg = u.telegram_id ? 'TG ' + u.telegram_id : '—';
+        // Deadline status pill (the admin cannot renew — only the superadmin
+        // sells time, via the admin panel; see docs/billing.md).
+        var expPill;
+        if (u.expired) {
+          expPill = '<span class="pill pill--danger">' + esc(t('shortExpired')) + '</span>';
+        } else if (u.expires_at) {
+          expPill = '<span class="pill pill--ok">' + esc(t('validUntilShort', { d: fmtDateShort(u.expires_at) })) + '</span>';
+        } else {
+          expPill = '<span class="pill pill--off">∞</span>';
+        }
         return '<div class="card device">' +
           '<div class="device-top">' +
           '<div class="grow"><h3>' + esc(u.username || ('#' + u.id)) + '</h3>' +
           '<span class="muted mono user-tg">' + esc(tg) + '</span></div>' +
-          '<span class="pill pill--off">' + esc(t('devicesOf', { n: counts[u.id] || 0 })) + '</span></div>' +
+          '<span class="user-pills">' + expPill +
+          '<span class="pill pill--off">' + esc(t('devicesOf', { n: counts[u.id] || 0 })) + '</span></span></div>' +
           '<div class="device-actions">' +
           '<button class="btn btn--secondary btn--small" data-uact="grant" data-id="' + u.id + '">' + esc(t('btnGrantDevice')) + '</button>' +
           '</div></div>';

@@ -137,6 +137,13 @@ main {
   justify-content: flex-end;
 }
 
+/* Deadline controls under the "Valid until" pill (see docs/billing.md):
+ * left-aligned and tighter than the row actions column. */
+.table .actions--tight {
+  justify-content: flex-start;
+  margin-top: 6px;
+}
+
 .table td .row-id {
   color: var(--faint);
 }

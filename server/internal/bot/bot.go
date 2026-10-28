@@ -125,6 +125,12 @@ func (b *Bot) handleUpdate(ctx context.Context, u tgUpdate) {
 	if user.Disabled {
 		return
 	}
+	// Expired subscriptions are ignored the same way disabled accounts are:
+	// no /start, no app button — silence (the Mini App shows the localized
+	// "subscription expired" screen on sign-in; see docs/billing.md).
+	if b.userExpired(user) {
+		return
+	}
 	lang := pickLang(from.LanguageCode)
 
 	switch firstWord(msg.Text) {
@@ -203,6 +209,18 @@ func (b *Bot) isAdminID(id int64) bool {
 		}
 	}
 	return false
+}
+
+// userExpired reports whether the account's effective subscription deadline
+// (its own expires_at OR its owner-admin's, whichever is earlier) has passed.
+func (b *Bot) userExpired(u *store.User) bool {
+	var ownerExp *time.Time
+	if u.OwnerID != nil {
+		if owner, err := b.store.GetUser(*u.OwnerID); err == nil {
+			ownerExp = owner.ExpiresAt
+		}
+	}
+	return store.ExpiredAt(store.EffectiveExpiry(u.ExpiresAt, ownerExp), time.Now())
 }
 
 // miniAppKeyboard returns the inline button opening the Mini App. Web App
@@ -306,6 +324,7 @@ var texts = map[string]map[string]string{
 		"users":         "Пользователей",
 		"devices":       "Устройств",
 		"online":        "Онлайн",
+		"expiredSubs":   "Истекших подписок",
 		"traffic":       "Трафик",
 		"tunnelRate":    "Туннель",
 	},
@@ -321,6 +340,7 @@ var texts = map[string]map[string]string{
 		"users":         "Users",
 		"devices":       "Devices",
 		"online":        "Online",
+		"expiredSubs":   "Expired subscriptions",
 		"traffic":       "Traffic",
 		"tunnelRate":    "Tunnel",
 	},
@@ -335,11 +355,12 @@ func t(lang, key string, args ...any) string {
 
 func formatStats(lang string, ov *api.Overview) string {
 	wgIn, wgOut := ov.Throughput.WgInBps, ov.Throughput.WgOutBps
-	return fmt.Sprintf("%s\n%s: %d\n%s: %d\n%s: %d\n%s: ↓%s ↑%s\n%s: ↓%s ↑%s",
+	return fmt.Sprintf("%s\n%s: %d\n%s: %d\n%s: %d\n%s: %d\n%s: ↓%s ↑%s\n%s: ↓%s ↑%s",
 		t(lang, "statsHeader"),
 		t(lang, "users"), ov.Totals.Users,
 		t(lang, "devices"), ov.Totals.Devices,
 		t(lang, "online"), ov.Totals.Online,
+		t(lang, "expiredSubs"), ov.Totals.Expired,
 		t(lang, "traffic"), humanBytes(ov.Totals.TotalRx), humanBytes(ov.Totals.TotalTx),
 		t(lang, "tunnelRate"), humanBits(wgIn), humanBits(wgOut),
 	)

@@ -43,6 +43,12 @@
   font-weight: 800;
 }
 
+/* Subscription deadline line under the summary row (see docs/billing.md). */
+.sum-expiry {
+  margin: 10px 0 0;
+  font-size: 13px;
+}
+
 .add-row {
   display: flex;
   gap: 8px;
@@ -198,6 +204,15 @@
 
 .user-tg {
   font-size: 12px;
+}
+
+/* Deadline pill + device count side by side on a user card. */
+.user-pills {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .qr-steps {

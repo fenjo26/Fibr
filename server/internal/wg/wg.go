@@ -247,15 +247,16 @@ func (m *Manager) SyncPeers() error {
 	if m.client == nil || runtime.GOOS != "linux" {
 		return nil
 	}
-	devices, err := m.store.ListDevices(0)
+	// Active devices only: the store query drops disabled devices and the
+	// devices of users (or owner-admins) past their subscription deadline,
+	// which is what actually cuts an expired account's tunnel (see
+	// docs/billing.md).
+	devices, err := m.store.ListActiveDevices(time.Now())
 	if err != nil {
 		return err
 	}
 	peers := make([]wgtypes.PeerConfig, 0, len(devices))
 	for _, d := range devices {
-		if !d.Enabled {
-			continue
-		}
 		// Only "wg" devices are WireGuard peers. Xray devices reuse the key
 		// columns for a UUID (see store.Device) and are served by a separate
 		// xray container.

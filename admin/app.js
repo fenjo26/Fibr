@@ -8,12 +8,12 @@
       loginBtn: 'Войти', logout: 'Выйти',
       tabDash: 'Дашборд', tabUsers: 'Пользователи', tabDevices: 'Устройства',
       stOnline: 'Онлайн', stUsers: 'Пользователи', stDevices: 'Устройства',
-      stTraffic: 'Трафик', stTunnel: 'Туннель сейчас',
+      stExpired: 'Истекших', stTraffic: 'Трафик', stTunnel: 'Туннель сейчас',
       serverCard: 'Сервер', recentCard: 'Активные устройства',
       fPublicKey: 'Публичный ключ', fPort: 'Порт', fHost: 'Endpoint', fSubnet: 'Подсеть',
       fDNS: 'DNS', fMTU: 'MTU', fPassive: 'Режим', passiveOn: 'активный', passiveOff: 'только конфиги (нет kernel WG)',
       thUser: 'Пользователь', thTelegram: 'Telegram', thRole: 'Роль', thDevices: 'Устр-ва',
-      thOwner: 'Кто создал',
+      thOwner: 'Кто создал', thExpiry: 'Действует до',
       thStatus: 'Статус', thTraffic: 'Трафик', thActions: 'Действия',
       thDevice: 'Устройство', thIP: 'IP', thLastSeen: 'Был(а)', thEnabled: 'Вкл',
       phTelegram: 'Telegram ID (необяз.)', phUsername: 'Имя пользователя',
@@ -22,6 +22,11 @@
       online: 'онлайн', offline: 'офлайн', never: 'никогда',
       btnQR: 'QR', btnConfig: 'Конфиг', btnDelete: 'Удалить', btnDisable: 'Откл', btnEnable: 'Вкл',
       btnMakeAdmin: 'Сделать админом', btnMakeUser: 'Сделать пользователем', btnAddDevice: '+ устройство',
+      unlimited: '∞',
+      expiredAgo: 'истёк {n} дн назад',
+      btnPlus30: '+30 дн', btnUntilDate: 'До даты…', btnUnlimited: 'Бессрочно',
+      promptDate: 'Дата окончания (YYYY-MM-DD):',
+      errBadDate: 'Неверный формат даты (нужен YYYY-MM-DD)',
       confirmDeleteUser: 'Удалить пользователя и все его устройства?',
       confirmDeleteDevice: 'Удалить устройство?',
       errAuth: 'Неверный токен', errGeneric: 'Ошибка запроса',
@@ -45,12 +50,12 @@
       loginBtn: 'Sign in', logout: 'Sign out',
       tabDash: 'Dashboard', tabUsers: 'Users', tabDevices: 'Devices',
       stOnline: 'Online', stUsers: 'Users', stDevices: 'Devices',
-      stTraffic: 'Traffic', stTunnel: 'Tunnel now',
+      stExpired: 'Expired', stTraffic: 'Traffic', stTunnel: 'Tunnel now',
       serverCard: 'Server', recentCard: 'Active devices',
       fPublicKey: 'Public key', fPort: 'Port', fHost: 'Endpoint', fSubnet: 'Subnet',
       fDNS: 'DNS', fMTU: 'MTU', fPassive: 'Mode', passiveOn: 'active', passiveOff: 'configs only (no kernel WG)',
       thUser: 'User', thTelegram: 'Telegram', thRole: 'Role', thDevices: 'Devices',
-      thOwner: 'Created by',
+      thOwner: 'Created by', thExpiry: 'Valid until',
       thStatus: 'Status', thTraffic: 'Traffic', thActions: 'Actions',
       thDevice: 'Device', thIP: 'IP', thLastSeen: 'Last seen', thEnabled: 'On',
       phTelegram: 'Telegram ID (optional)', phUsername: 'Username',
@@ -59,6 +64,11 @@
       online: 'online', offline: 'offline', never: 'never',
       btnQR: 'QR', btnConfig: 'Config', btnDelete: 'Delete', btnDisable: 'Disable', btnEnable: 'Enable',
       btnMakeAdmin: 'Make admin', btnMakeUser: 'Make user', btnAddDevice: '+ device',
+      unlimited: '∞',
+      expiredAgo: 'expired {n} d ago',
+      btnPlus30: '+30 d', btnUntilDate: 'Until date…', btnUnlimited: 'Unlimited',
+      promptDate: 'Expiry date (YYYY-MM-DD):',
+      errBadDate: 'Invalid date format (YYYY-MM-DD expected)',
       confirmDeleteUser: 'Delete this user and all their devices?',
       confirmDeleteDevice: 'Delete this device?',
       errAuth: 'Invalid token', errGeneric: 'Request failed',
@@ -201,6 +211,7 @@
       el('st-online').textContent = ov.totals.online;
       el('st-users').textContent = ov.totals.users;
       el('st-devices').textContent = ov.totals.devices;
+      el('st-expired').textContent = ov.totals.expired != null ? ov.totals.expired : '—';
       el('st-traffic').innerHTML = '↓ ' + fmtBytes(ov.totals.total_rx) + ' · ↑ ' + fmtBytes(ov.totals.total_tx);
       el('st-tunnel').innerHTML = '↓ ' + fmtBits(ov.throughput.wg_in_bps) + ' · ↑ ' + fmtBits(ov.throughput.wg_out_bps);
       el('server-host').textContent = ov.server.host + ':' + ov.server.port;
@@ -251,12 +262,47 @@
 
   /* ---------- users ---------- */
 
+  // Last users response, by id — the expiry action handlers below need the
+  // row's current expires_at (e.g. "+30 days" extends a live deadline).
+  var usersById = {};
+
+  function fmtDate(iso) {
+    var d = new Date(iso);
+    if (isNaN(d)) return '—';
+    return d.toLocaleDateString(t.lang === 'ru' ? 'ru-RU' : 'en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+  }
+
+  function daysOver(iso) {
+    var t = new Date(iso).getTime();
+    if (isNaN(t)) return 0;
+    return Math.max(0, Math.floor((Date.now() - t) / 86400000));
+  }
+
+  // "Valid until" cell: green date pill / muted ∞ / red "expired N days ago",
+  // plus the three superadmin renewal actions (see docs/billing.md).
+  function expiryCell(u) {
+    var pill;
+    if (u.expired) {
+      pill = '<span class="pill pill--danger">' + esc(t('expiredAgo', { n: daysOver(u.expires_at) })) + '</span>';
+    } else if (u.expires_at) {
+      pill = '<span class="pill pill--ok">' + esc(fmtDate(u.expires_at)) + '</span>';
+    } else {
+      pill = '<span class="pill pill--off">' + t('unlimited') + '</span>';
+    }
+    return pill + '<div class="actions actions--tight">' +
+      '<button class="btn btn--ghost btn--small" data-act="exp30" data-id="' + u.id + '">' + t('btnPlus30') + '</button>' +
+      '<button class="btn btn--ghost btn--small" data-act="expdate" data-id="' + u.id + '">' + t('btnUntilDate') + '</button>' +
+      (u.expires_at ? '<button class="btn btn--ghost btn--small" data-act="expnull" data-id="' + u.id + '">' + t('btnUnlimited') + '</button>' : '') +
+      '</div>';
+  }
+
   function loadUsers() {
     Promise.all([api('/api/admin/users'), api('/api/admin/devices'), api('/api/admin/overview'), api('/api/admin/invites')]).then(function (res) {
       var users = res[0];
       xrayEnabled = !!(res[2] && res[2].server && res[2].server.xray_enabled);
       var byId = {};
       users.forEach(function (u) { byId[u.id] = u; });
+      usersById = byId;
       var byUser = {};
       (res[1] || []).forEach(function (d) {
         byUser[d.user_id] = byUser[d.user_id] || [];
@@ -265,7 +311,7 @@
 
       el('users-table').innerHTML =
         '<thead><tr><th>ID</th><th>' + t('thUser') + '</th><th>' + t('thTelegram') + '</th>' +
-        '<th>' + t('thRole') + '</th><th>' + t('thOwner') + '</th><th>' + t('thDevices') + '</th><th>' + t('thTraffic') + '</th>' +
+        '<th>' + t('thRole') + '</th><th>' + t('thOwner') + '</th><th>' + t('thExpiry') + '</th><th>' + t('thDevices') + '</th><th>' + t('thTraffic') + '</th>' +
         '<th>' + t('thStatus') + '</th><th></th></tr></thead><tbody>' +
         users.map(function (u) {
           var devs = byUser[u.id] || [];
@@ -294,6 +340,7 @@
             '<td class="mono">' + (u.telegram_id || t('noTG')) + '</td>' +
             '<td>' + rolePill(u.role) + '</td>' +
             '<td>' + owner + '</td>' +
+            '<td>' + expiryCell(u) + '</td>' +
             '<td>' + devs.length + (online ? ' <span class="pill pill--ok">' + online + ' ' + t('online') + '</span>' : '') + '</td>' +
             '<td>↓ ' + fmtBytes(rx) + '<br>↑ ' + fmtBytes(tx) + '</td>' +
             '<td>' + (u.disabled ? '<span class="pill pill--danger">' + t('statusDisabled') + '</span>' : '<span class="pill pill--ok">' + t('statusActive') + '</span>') + '</td>' +
@@ -304,6 +351,36 @@
         }).join('') + '</tbody>';
       renderInvites(res[3] || []);
     }).catch(fail);
+  }
+
+  /* ---------- subscription deadlines (manual monetization) ---------- */
+
+  function patchExpiry(id, value) {
+    api('/api/admin/users/' + id, { method: 'PATCH', body: { expires_at: value } })
+      .then(function () { toast(t('updated')); loadUsers(); }).catch(fail);
+  }
+
+  // "+30 days": extend a still-live deadline, or start counting from today.
+  function extendBy30(u) {
+    var base = Date.now();
+    if (u.expires_at && new Date(u.expires_at).getTime() > base) {
+      base = new Date(u.expires_at).getTime();
+    }
+    patchExpiry(u.id, new Date(base + 30 * 86400000).toISOString());
+  }
+
+  // "Until date…": prompt for YYYY-MM-DD, validate, send end-of-day UTC.
+  function promptUntilDate(u) {
+    var raw = (prompt(t('promptDate'), '') || '').trim();
+    if (!raw) return;
+    var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(raw);
+    if (!m) { toast(t('errBadDate'), true); return; }
+    var d = new Date(+m[1], +m[2] - 1, +m[3], 23, 59, 59);
+    if (d.getFullYear() !== +m[1] || d.getMonth() !== +m[2] - 1 || d.getDate() !== +m[3]) {
+      toast(t('errBadDate'), true);
+      return;
+    }
+    patchExpiry(u.id, d.toISOString());
   }
 
   /* ---------- invites (self-enroll links) ---------- */
@@ -396,6 +473,12 @@
         .then(function () { toast(t('userDeleted')); loadUsers(); }).catch(fail);
     } else if (act === 'adddev') {
       showAddDevice(id);
+    } else if (act === 'exp30') {
+      extendBy30(usersById[id] || {});
+    } else if (act === 'expdate') {
+      promptUntilDate(usersById[id] || {});
+    } else if (act === 'expnull') {
+      patchExpiry(id, null);
     }
   });
 

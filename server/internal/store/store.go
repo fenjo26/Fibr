@@ -30,14 +30,19 @@ const (
 // Mini App open or /start; admins can also create manual (panel-only) users.
 // OwnerID records who created the account (an admin's or the superadmin's
 // user id); it is nil for self-registered and env-promoted accounts.
+//
+// ExpiresAt is the manual-monetization deadline (see docs/billing.md): nil
+// means "no deadline". The deadline that actually governs the account is the
+// earlier of its own ExpiresAt and its owner's — use EffectiveExpiry.
 type User struct {
-	ID         int64     `json:"id"`
-	TelegramID *int64    `json:"telegram_id"`
-	Username   string    `json:"username"`
-	Role       string    `json:"role"` // "user" | "admin" | "superadmin"
-	OwnerID    *int64    `json:"owner_id"`
-	Disabled   bool      `json:"disabled"`
-	CreatedAt  time.Time `json:"created_at"`
+	ID         int64      `json:"id"`
+	TelegramID *int64     `json:"telegram_id"`
+	Username   string     `json:"username"`
+	Role       string     `json:"role"` // "user" | "admin" | "superadmin"
+	OwnerID    *int64     `json:"owner_id"`
+	Disabled   bool       `json:"disabled"`
+	ExpiresAt  *time.Time `json:"expires_at"` // nil = unlimited
+	CreatedAt  time.Time  `json:"created_at"`
 }
 
 // Protocol values for Device.Protocol.
@@ -103,6 +108,7 @@ CREATE TABLE IF NOT EXISTS users (
 	role        TEXT    NOT NULL DEFAULT 'user' CHECK (role IN ('user','admin','superadmin')),
 	owner_id    INTEGER REFERENCES users(id) ON DELETE SET NULL,
 	disabled    INTEGER NOT NULL DEFAULT 0,
+	expires_at  INTEGER,
 	created_at  INTEGER NOT NULL
 );
 
@@ -162,6 +168,10 @@ func Open(path string) (*Store, error) {
 	if err := migrateDevicesProtocol(db); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("migrate devices.protocol: %w", err)
+	}
+	if err := migrateUsersExpiry(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate users.expires_at: %w", err)
 	}
 	return &Store{db: db}, nil
 }
@@ -308,30 +318,69 @@ func migrateDevicesProtocol(db *sql.DB) error {
 	return err
 }
 
+// migrateUsersExpiry adds the users.expires_at column (manual monetization:
+// the deadline until which the account's tunnel keeps working, see
+// docs/billing.md) to databases created before the billing feature. Same
+// pragma-gate pattern as migrateDevicesProtocol: a plain nullable INTEGER
+// column, so ALTER TABLE is enough — no table rebuild needed. Existing rows
+// read back as NULL (= unlimited), which preserves today's behaviour.
+func migrateUsersExpiry(db *sql.DB) error {
+	rows, err := db.Query(`pragma table_info(users)`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	hasExpiry := false
+	for rows.Next() {
+		var cid int
+		var name, colType string
+		var notNull, pk int
+		var dflt any
+		if err := rows.Scan(&cid, &name, &colType, &notNull, &dflt, &pk); err != nil {
+			return err
+		}
+		if name == "expires_at" {
+			hasExpiry = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if hasExpiry {
+		return nil // already migrated (normal case on every start)
+	}
+	_, err = db.Exec(`ALTER TABLE users ADD COLUMN expires_at INTEGER`)
+	return err
+}
+
 // Close closes the database.
 func (s *Store) Close() error { return s.db.Close() }
 
 /* ---------------------------- users ---------------------------- */
 
-const userCols = `id, telegram_id, username, role, owner_id, disabled, created_at`
+const userCols = `id, telegram_id, username, role, owner_id, disabled, expires_at, created_at`
 
 // CreateUser inserts a user; ID and CreatedAt are filled in. OwnerID (if
-// set) records who created the account.
+// set) records who created the account. ExpiresAt (if set) is the account's
+// subscription deadline (nil = unlimited).
 func (s *Store) CreateUser(u *User) error {
 	if u.Role == "" {
 		u.Role = RoleUser
 	}
 	now := time.Now().Unix()
-	var tid, oid any
+	var tid, oid, exp any
 	if u.TelegramID != nil {
 		tid = *u.TelegramID
 	}
 	if u.OwnerID != nil {
 		oid = *u.OwnerID
 	}
+	if u.ExpiresAt != nil {
+		exp = u.ExpiresAt.Unix()
+	}
 	res, err := s.db.Exec(
-		`INSERT INTO users (telegram_id, username, role, owner_id, disabled, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
-		tid, u.Username, u.Role, oid, b2i(u.Disabled), now,
+		`INSERT INTO users (telegram_id, username, role, owner_id, disabled, expires_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		tid, u.Username, u.Role, oid, b2i(u.Disabled), exp, now,
 	)
 	if err != nil {
 		return err
@@ -424,6 +473,42 @@ func (s *Store) SetUsername(id int64, username string) error {
 	return err
 }
 
+// SetUserExpiry sets the account's subscription deadline (unix seconds);
+// a nil unix clears it (= unlimited). Callers are expected to resync peers
+// afterwards so the change is applied to the tunnel (see docs/billing.md).
+func (s *Store) SetUserExpiry(id int64, unix *int64) error {
+	var exp any
+	if unix != nil {
+		exp = *unix
+	}
+	res, err := s.db.Exec(`UPDATE users SET expires_at = ? WHERE id = ?`, exp, id)
+	return touched(res, err)
+}
+
+// EffectiveExpiry resolves the deadline that actually governs an account:
+// its own expires_at OR its owner-admin's, whichever comes first. nil on a
+// side means "no deadline" and is ignored; both nil = unlimited. This is the
+// cascade that makes an unpaid admin's whole branch expire with them.
+func EffectiveExpiry(own, owner *time.Time) *time.Time {
+	switch {
+	case own == nil:
+		return owner
+	case owner == nil:
+		return own
+	case own.Before(*owner):
+		return own
+	default:
+		return owner
+	}
+}
+
+// ExpiredAt reports whether a resolved deadline has passed at now. A nil
+// deadline never expires. The account is expired from the deadline second
+// onwards (deadline <= now).
+func ExpiredAt(deadline *time.Time, now time.Time) bool {
+	return deadline != nil && !deadline.After(now)
+}
+
 // DeleteUser removes a user; their devices are removed by cascade. The caller
 // is responsible for syncing WireGuard peers afterwards. Invites the user
 // consumed keep their "used" state but lose the reference (invites.used_by
@@ -438,10 +523,10 @@ func (s *Store) DeleteUser(id int64) error {
 
 func scanUser(r interface{ Scan(...any) error }) (*User, error) {
 	var u User
-	var tid, oid sql.NullInt64
+	var tid, oid, exp sql.NullInt64
 	var disabled int
 	var created int64
-	if err := r.Scan(&u.ID, &tid, &u.Username, &u.Role, &oid, &disabled, &created); err != nil {
+	if err := r.Scan(&u.ID, &tid, &u.Username, &u.Role, &oid, &disabled, &exp, &created); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
@@ -454,6 +539,10 @@ func scanUser(r interface{ Scan(...any) error }) (*User, error) {
 	if oid.Valid {
 		o := oid.Int64
 		u.OwnerID = &o
+	}
+	if exp.Valid && exp.Int64 > 0 {
+		e := time.Unix(exp.Int64, 0)
+		u.ExpiresAt = &e
 	}
 	u.Disabled = disabled != 0
 	u.CreatedAt = time.Unix(created, 0)
@@ -530,6 +619,64 @@ func (s *Store) ListDevices(userID int64) ([]Device, error) {
 func (s *Store) SetDeviceEnabled(id int64, enabled bool) error {
 	res, err := s.db.Exec(`UPDATE devices SET enabled = ? WHERE id = ?`, b2i(enabled), id)
 	return touched(res, err)
+}
+
+// ListActiveDevices returns the devices whose tunnel is still paid for and
+// therefore must stay on the WireGuard interface: device enabled, the owning
+// user not past their subscription deadline and, for reseller users, the
+// creating admin's branch not past its own either (EffectiveExpiry cascade;
+// see docs/billing.md). Expiry filtering lives here so callers (wg sync)
+// stay dumb. Xray devices are included — the xray manager applies its own
+// protocol filter on top.
+func (s *Store) ListActiveDevices(now time.Time) ([]Device, error) {
+	rows, err := s.db.Query(`SELECT d.id, d.user_id, d.name, d.protocol, d.public_key, d.private_key, d.preshared_key, d.ipv4,
+		d.enabled, d.created_at, d.last_handshake, d.last_rx, d.last_tx, d.total_rx, d.total_tx
+		FROM devices d
+		JOIN users u ON u.id = d.user_id
+		LEFT JOIN users o ON o.id = u.owner_id
+		WHERE d.enabled = 1
+		  AND (u.expires_at IS NULL OR u.expires_at > ?)
+		  AND (o.expires_at IS NULL OR o.expires_at > ?)
+		ORDER BY d.id`,
+		now.Unix(), now.Unix())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Device
+	for rows.Next() {
+		d, err := scanDevice(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *d)
+	}
+	return out, rows.Err()
+}
+
+// ListExpiredUserIDs returns the ids of every account whose effective
+// deadline (own expires_at OR owner's, whichever is earlier) has passed.
+// This is exactly the set whose devices ListActiveDevices drops.
+func (s *Store) ListExpiredUserIDs(now time.Time) ([]int64, error) {
+	rows, err := s.db.Query(`SELECT u.id FROM users u
+		LEFT JOIN users o ON o.id = u.owner_id
+		WHERE (u.expires_at IS NOT NULL AND u.expires_at <= ?)
+		   OR (o.expires_at IS NOT NULL AND o.expires_at <= ?)
+		ORDER BY u.id`,
+		now.Unix(), now.Unix())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
 }
 
 // DeleteDevice removes a device.
