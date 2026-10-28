@@ -115,25 +115,22 @@ grep FIBR_ADMIN_TOKEN /opt/fibr/install/.env
 2. Узнайте свой числовой Telegram ID — одним из способов:
    - напишите `/id` вашему боту Fibr после его запуска (шаг 3 ниже);
    - или откройте [@userinfobot](https://t.me/userinfobot) — он покажет `Id`.
-3. Впишите оба значения в `/opt/fibr/install/.env`:
-
-   ```ini
-   FIBR_TELEGRAM_BOT_TOKEN=1234567:AA...
-   FIBR_ADMIN_TELEGRAM_IDS=12345678
-   ```
-
-   `FIBR_ADMIN_TELEGRAM_IDS` — список ID через запятую; перечисленные
-   пользователи при первом сообщении боту автоматически получают роль
-   админа (и команду `/stats`). Подробнее — в [telegram-bot.md](telegram-bot.md).
-4. Перезапустите контейнеры, чтобы бот считал настройки:
+3. Подключите бота **той же командой установки** — файлы править руками
+   не нужно (установщик безопасно обновит уже работающий сервер):
 
    ```bash
-   docker compose -f /opt/fibr/install/docker-compose.yml up -d
+   curl -fsSL https://raw.githubusercontent.com/fenjo26/Fibr/main/install/install.sh \
+     | bash -s -- --domain vpn.example.com \
+         --bot-token 1234567:AA... \
+         --admin-tg 12345678
    ```
 
-5. Вернитесь в BotFather: `/mybots` → ваш бот → **Bot Settings** →
+   `--admin-tg` — список ID через запятую; перечисленные пользователи при
+   первом сообщении боту автоматически получают роль суперадмина (и команду
+   `/stats`). Подробнее — в [telegram-bot.md](telegram-bot.md).
+4. Вернитесь в BotFather: `/mybots` → ваш бот → **Bot Settings** →
    **Menu Button** → укажите `https://vpn.example.com/miniapp/`.
-6. Откройте бота в Telegram → **Start** → кнопка «Открыть Fibr».
+5. Откройте бота в Telegram → **Start** → кнопка «Открыть Fibr».
 
 Mini App работает только по HTTPS-домену — это ограничение платформы
 Telegram (кнопки Web App требуют https-URL), поэтому шаг недоступен в
