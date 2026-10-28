@@ -34,6 +34,7 @@
       greeting: 'Привет, {name}!',
       loginHint: 'Войдите тем же аккаунтом Telegram, что и в боте Fibr — пароль не нужен.',
       loginFoot: 'Вход подтверждает Telegram, мы не видим ваш пароль — его здесь просто нет.',
+      openInTg: 'Не получается войти? Открыть в Telegram',
       back: 'Назад ко входу',
       logout: 'Выйти',
       errNoBot: 'Бот ещё не настроен. Попросите администратора задать FIBR_TELEGRAM_BOT_TOKEN.',
@@ -105,6 +106,7 @@
       greeting: 'Hi, {name}!',
       loginHint: 'Sign in with the same Telegram account you use in the Fibr bot — no password needed.',
       loginFoot: 'Telegram confirms the sign-in; there is simply no password here to leak.',
+      openInTg: 'Cannot sign in? Open in Telegram',
       back: 'Back to sign in',
       logout: 'Sign out',
       errNoBot: 'The bot is not configured yet. Ask the administrator to set FIBR_TELEGRAM_BOT_TOKEN.',
@@ -301,6 +303,19 @@
       s.setAttribute('data-auth-url', window.location.origin + '/cabinet/');
       s.async = true;
       el('tg-widget').appendChild(s);
+      // Fallback when the widget cannot work ("Bot domain invalid" until
+      // /setdomain is done in @BotFather, blocked telegram.org…): the same
+      // invite/referral through the bot, which opens the Mini App.
+      var inv = null, ref = null;
+      try { inv = localStorage.getItem(INVITE_KEY); ref = localStorage.getItem(REF_KEY); } catch (e) { /* ignore */ }
+      var start = inv ? 'inv_' + inv : (ref ? 'ref_' + ref : '');
+      var a = document.createElement('a');
+      a.href = 'https://t.me/' + encodeURIComponent(info.bot_username) + (start ? '?start=' + encodeURIComponent(start) : '');
+      a.className = 'btn btn--tertiary btn--small';
+      a.style.display = 'inline-block';
+      a.style.marginTop = '12px';
+      a.textContent = t('openInTg');
+      el('tg-widget').parentNode.insertBefore(a, el('tg-widget').nextSibling);
     }).catch(function () {
       el('login-hint').textContent = t('errAuth');
     });
