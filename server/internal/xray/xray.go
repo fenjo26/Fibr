@@ -394,9 +394,27 @@ func (m *Manager) SyncClients() error {
 	if err := os.Rename(tmp, path); err != nil {
 		return err
 	}
+	m.ensureAccessLog()
 	m.log.Info("xray config written", "path", path, "clients", len(uuids))
 	m.applyLive(uuids)
 	return nil
+}
+
+// ensureAccessLog pre-creates the access log world-writable: the xray
+// container runs as a non-root user and cannot create files in the
+// root-owned /data/xray directory fibr made ("access.log: permission
+// denied" -> xray restart loop). Opening an existing writable file works.
+func (m *Manager) ensureAccessLog() {
+	p := filepath.Join(filepath.Dir(m.ConfigPath()), "access.log")
+	f, err := os.OpenFile(p, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o666)
+	if err != nil {
+		m.log.Warn("cannot create xray access log", "path", p, "error", err)
+		return
+	}
+	f.Close()
+	if err := os.Chmod(p, 0o666); err != nil { // umask stripped the bits
+		m.log.Warn("cannot chmod xray access log", "path", p, "error", err)
+	}
 }
 
 // AccessLogPath is where xray writes its access log (the /data volume is

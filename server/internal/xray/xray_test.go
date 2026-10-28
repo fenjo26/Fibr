@@ -347,3 +347,19 @@ func TestGenerateRealityKeypair(t *testing.T) {
 		t.Fatal("private and public halves must differ")
 	}
 }
+
+// TestSyncClientsAccessLogWritable: the access log must exist and be
+// world-writable before xray (a non-root container user) starts.
+func TestSyncClientsAccessLogWritable(t *testing.T) {
+	m, _, cfg := newTestManager(t, true)
+	if err := m.SyncClients(); err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+	fi, err := os.Stat(filepath.Join(cfg.DataDir, "xray", "access.log"))
+	if err != nil {
+		t.Fatalf("access log missing: %v", err)
+	}
+	if fi.Mode().Perm()&0o002 == 0 {
+		t.Fatalf("access log not world-writable: %v", fi.Mode())
+	}
+}
