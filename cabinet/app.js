@@ -76,6 +76,9 @@
       dnsAllow: 'Никогда не блокировать (ваши сайты)',
       dnsAllowPh: 'example.com, site.ru — через запятую',
       dnsAllowHint: 'Эти сайты открываются всегда — что бы ни включил администратор сервера.',
+      gamesBtn: '🎮 Игры',
+      gamesModalTitle: '🎮 Игровой режим',
+      gamesToggleAll: 'Выбрать все / Снять',
       gamesTitle: '🎮 Игровой режим',
       gamesHint: 'Отдельный туннель только для игрового трафика: маршрут до игровых серверов идёт через VPN и пинг в играх стабильнее, а весь остальной интернет летит напрямую, как без VPN.',
       gamesDevice: 'Устройство', gamesPick: 'Выберите игры', gamesQR: 'QR игрового туннеля',
@@ -140,6 +143,14 @@
       refPayout: 'Вывод средств',
       refContactLabel: 'Связь с администратором',
       errXrayDisabled: 'Xray выключен на сервере',
+      tvBtn: '📺 Подключить телевизор',
+      tvTitle: 'Подключить телевизор',
+      tvHint: 'На экране ТВ в приложении Fibr показан код (например, 2AB34C). Введите его — ТВ подключится сам.',
+      tvCodeField: 'Код с экрана ТВ',
+      tvNameDefault: 'Телевизор',
+      tvNew: 'Создать новое устройство для ТВ',
+      tvExisting: 'Или отдайте телевизору одно из существующих:',
+      tvDone: 'Телевизор подключён! На экране ТВ появится туннель.',
       /* app access key (server login for the Fibr app) */
       keyTitle: 'Ссылка для входа',
       keyHint: 'Личная ссылка: входит в этот кабинет с любого устройства и в приложение Fibr (вставьте её в «Ключ доступа»). Никому не передавайте.',
@@ -200,6 +211,9 @@
       dnsAllow: 'Never block (your sites)',
       dnsAllowPh: 'example.com, site.ru — comma separated',
       dnsAllowHint: 'These sites always open — no matter what the server administrator enables.',
+      gamesBtn: '🎮 Gaming',
+      gamesModalTitle: '🎮 Game mode',
+      gamesToggleAll: 'Select / Deselect all',
       gamesTitle: '🎮 Game mode',
       gamesHint: 'A separate tunnel for game traffic only: the route to the game servers goes through the VPN, keeping in-game ping stable, while everything else flows directly, as without a VPN.',
       gamesDevice: 'Device', gamesPick: 'Pick games', gamesQR: 'Game tunnel QR',
@@ -264,6 +278,14 @@
       refPayout: 'Withdrawals',
       refContactLabel: 'Contact the administrator',
       errXrayDisabled: 'Xray is disabled on the server',
+      tvBtn: '📺 Connect a TV',
+      tvTitle: 'Connect a TV',
+      tvHint: 'The Fibr app on the TV shows a code (e.g. 2AB34C). Enter it here — the TV connects by itself.',
+      tvCodeField: 'Code from the TV screen',
+      tvNameDefault: 'TV',
+      tvNew: 'Create a new device for the TV',
+      tvExisting: 'Or assign one of your existing devices:',
+      tvDone: 'TV connected! The tunnel appears on the TV screen.',
       /* app access key (server login for the Fibr app) */
       keyTitle: 'Login link',
       keyHint: 'Your personal link: signs in to this cabinet from any device and to the Fibr app (paste it into “Access key”). Do not share it.',
@@ -740,6 +762,9 @@
       var dnsBtn = (me.dns_enabled && d.protocol !== 'xray')
         ? '<button class="btn btn--secondary btn--small" data-act="dns" data-id="' + d.id + '">' + t('dnsBtn') + '</button>'
         : '';
+      var gamesBtn = (me.games_enabled && d.protocol !== 'xray')
+        ? '<button class="btn btn--secondary btn--small" data-act="game" data-id="' + d.id + '">' + t('gamesBtn') + '</button>'
+        : '';
       return '<div class="card device">' +
         '<div class="device-top">' +
         '<span class="dot ' + (d.online ? 'dot--on' : 'dot--off') + '"></span>' +
@@ -754,6 +779,7 @@
         '<button class="btn btn--small" data-act="dl" data-id="' + d.id + '">' + t('btnDownload') + '</button>' +
         (me.user && me.user.telegram_id ? '<button class="btn btn--secondary btn--small" data-act="send" data-id="' + d.id + '">' + t('btnSendTg') + '</button>' : '') +
         dnsBtn +
+        gamesBtn +
         '<button class="btn btn--tertiary btn--small" data-act="cfg" data-id="' + d.id + '">' + t('btnConfig') + '</button>' +
         '<button class="btn btn--danger-ghost btn--small" data-act="del" data-id="' + d.id + '" data-name="' + esc(d.name) + '">' + t('btnDelete') + '</button>' +
         '</div></div></div>';
@@ -763,91 +789,96 @@
 
   /* ---------- game mode (server: internal/api/dnsgames.go) ---------- */
 
-  // renderGamesCard shows the game-mode card: pick games, pick a wg/awg
-  // device, get a QR of a SECOND tunnel whose AllowedIPs are the selected
-  // games' CIDRs (docs/dns-games.md §2). Hidden while the catalog is off or
-  // the account holds no wireguard-family device.
   var gamesCatalog = null;
 
   function renderGamesCard() {
     var box = el('games-section');
-    if (!me || !me.games_enabled) { box.innerHTML = ''; return; }
-    var devs = (me.devices || []).filter(function (d) { return d.protocol !== 'xray'; });
-    if (!devs.length) { box.innerHTML = ''; return; }
+    if (box) box.innerHTML = '';
+  }
+
+  function downloadGameConf(devId, gameIds, format) {
+    var url = '/api/me/devices/' + devId + '/game-config?games=' + encodeURIComponent(gameIds.join(','));
+    if (format) url += '&format=' + encodeURIComponent(format);
+    fetch(url, { headers: { Authorization: 'Bearer ' + token } })
+      .then(function (res) {
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        var cd = res.headers.get('Content-Disposition') || '';
+        var m = cd.match(/filename="?([^"]+)"?/);
+        return res.text().then(function (text) { return { text: text, name: m ? m[1] : 'fibr-game.conf' }; });
+      })
+      .then(function (f) {
+        var a = document.createElement('a');
+        a.href = URL.createObjectURL(new Blob([f.text], { type: 'application/octet-stream' }));
+        a.download = f.name;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+      })
+      .catch(fail);
+  }
+
+  function gameModal(d) {
     if (!gamesCatalog) {
       fetch('/api/games').then(function (r) { return r.json(); }).then(function (list) {
         gamesCatalog = list || [];
-        renderGamesCard();
-      }).catch(function () { box.innerHTML = ''; });
+        gameModal(d);
+      }).catch(fail);
       return;
     }
-    if (!gamesCatalog.length) { box.innerHTML = ''; return; }
-    var name = function (g) { return (t.lang === 'ru' && g.name_ru) ? g.name_ru : g.name; };
-    box.innerHTML = '<div class="card">' +
-      '<h3>' + esc(t('gamesTitle')) + '</h3>' +
-      '<p class="muted">' + esc(t('gamesHint')) + '</p>' +
-      '<p class="muted" style="margin-top:8px">' + esc(t('gamesPick')) + '</p>' +
-      '<div class="dns-opts">' + gamesCatalog.map(function (g) {
-        return '<label class="dns-opt"><input type="checkbox" class="game-chk" value="' + esc(g.id) + '"> <span>' + esc(name(g)) + '</span></label>';
-      }).join('') + '</div>' +
-      '<label class="dns-times" style="margin-top:6px"><span>' + esc(t('gamesDevice')) + '</span>' +
-      '<select class="input" id="game-dev">' + devs.map(function (d) {
-        return '<option value="' + d.id + '">' + esc(d.name) + '</option>';
-      }).join('') + '</select></label>' +
-      '<div class="modal-actions" style="margin-top:12px;display:flex;flex-wrap:wrap;gap:8px">' +
-      '<button class="btn" id="game-qr">' + esc(t('gamesQR')) + '</button>' +
-      '<button class="btn btn-secondary" id="game-dl">' + esc(t('gamesDlConf')) + '</button>' +
-      '<button class="btn btn-secondary" id="game-pc">' + esc(t('gamesDlPC')) + '</button>' +
-      '</div>' +
-      '<p class="muted" style="margin-top:8px;font-size:12px">' + esc(t('gamesPCHint')) + '</p>' +
-      '<div id="game-diag" style="margin-top:12px;padding:10px 12px;border:1px solid var(--hairline);border-radius:var(--r-md);background:var(--surface);font-size:12px;display:none"></div>' +
-      '</div>';
-
-    function downloadGameConf(devId, gameIds, format) {
-      var url = '/api/me/devices/' + devId + '/game-config?games=' + encodeURIComponent(gameIds.join(','));
-      if (format) url += '&format=' + encodeURIComponent(format);
-      fetch(url, { headers: { Authorization: 'Bearer ' + token } })
-        .then(function (res) {
-          if (!res.ok) throw new Error('HTTP ' + res.status);
-          var cd = res.headers.get('Content-Disposition') || '';
-          var m = cd.match(/filename="?([^"]+)"?/);
-          return res.text().then(function (text) { return { text: text, name: m ? m[1] : 'fibr-game.conf' }; });
-        })
-        .then(function (f) {
-          var a = document.createElement('a');
-          a.href = URL.createObjectURL(new Blob([f.text], { type: 'application/octet-stream' }));
-          a.download = f.name;
-          document.body.appendChild(a);
-          a.click();
-          a.remove();
-        })
-        .catch(fail);
+    if (!gamesCatalog.length) {
+      alert(t('gamesNeed'));
+      return;
     }
+    var name = function (g) { return (t.lang === 'ru' && g.name_ru) ? g.name_ru : g.name; };
+    var html = '<h3>' + esc(t('gamesModalTitle')) + ' — ' + esc(d.name) + '</h3>' +
+      '<p class="muted modal-sub">' + esc(t('gamesHint')) + '</p>' +
+      '<div style="display:flex;justify-content:space-between;align-items:center;margin:10px 0 6px">' +
+      '<span style="font-weight:700;font-size:13px">' + esc(t('gamesPick')) + '</span>' +
+      '<a href="#" id="game-toggle-all" style="font-size:12px;color:var(--accent,#4da6ff);text-decoration:none">' + esc(t('gamesToggleAll')) + '</a>' +
+      '</div>' +
+      '<div class="dns-opts" style="max-height:220px;overflow-y:auto">' + gamesCatalog.map(function (g) {
+        return '<label class="dns-opt"><input type="checkbox" class="game-chk" value="' + esc(g.id) + '" checked> <span>' + esc(name(g)) + '</span></label>';
+      }).join('') + '</div>' +
+      '<div id="game-modal-diag" style="margin-top:10px;padding:8px 12px;border:1px solid var(--hairline);border-radius:var(--r-md);background:var(--surface);font-size:12px;display:none"></div>' +
+      '<div class="modal-actions" style="margin-top:14px;display:flex;flex-wrap:wrap;gap:8px">' +
+      '<button class="btn" id="modal-game-qr">📱 ' + esc(t('gamesQR')) + '</button>' +
+      '<button class="btn btn-secondary" id="modal-game-dl">📥 ' + esc(t('gamesDlConf')) + '</button>' +
+      '<button class="btn btn-secondary" id="modal-game-pc">' + esc(t('gamesDlPC')) + '</button>' +
+      '</div>' +
+      '<p class="muted" style="margin-top:10px;font-size:12px">' + esc(t('gamesImport')) + '<br><br>' + esc(t('gamesPCHint')) + '</p>';
+
+    openModal(html);
+
+    var allChecked = true;
+    el('game-toggle-all').addEventListener('click', function (e) {
+      e.preventDefault();
+      allChecked = !allChecked;
+      Array.prototype.forEach.call(document.querySelectorAll('.game-chk'), function (c) { c.checked = allChecked; });
+    });
 
     var t0 = Date.now();
     fetch('/api/dns/status').then(function () {
       var clientPing = Date.now() - t0;
       fetch('/api/games/diagnostics').then(function (r) { return r.json(); }).then(function (diag) {
-        var dbox = el('game-diag');
+        var dbox = el('game-modal-diag');
         if (!dbox || !diag || !diag.hubs || !diag.hubs.length) return;
         var validHubs = diag.hubs.filter(function (h) { return h.rtt_ms >= 0; });
         var best = validHubs.sort(function (a, b) { return a.rtt_ms - b.rtt_ms; })[0];
         var totalEst = best ? (clientPing + best.rtt_ms) : clientPing;
         var badge = totalEst <= 45 ? '🟢 ' + esc(t('gamesDiagOptimal')) : '🟡 ' + esc(t('gamesDiagGood'));
         dbox.style.display = 'block';
-        dbox.innerHTML = '<div style="font-weight:700;margin-bottom:4px">⚡ ' + esc(t('gamesDiagTitle')) + ' — ' + badge + '</div>' +
+        dbox.innerHTML = '<div style="font-weight:700;margin-bottom:2px">⚡ ' + esc(t('gamesDiagTitle')) + ' — ' + badge + '</div>' +
           '<div style="color:var(--muted)">' + esc(t('gamesDiagPCtoVPS')) + ': <b>' + clientPing + ' ms</b> | ' +
           esc(t('gamesDiagVPStoHub')) + ' (' + (best ? esc(best.city) : 'EU') + '): <b>' + (best ? best.rtt_ms : '~5') + ' ms</b></div>' +
-          '<div style="margin-top:4px">' + esc(t('gamesDiagTotal')) + ': <b style="color:var(--accent,#4da6ff)">~' + totalEst + ' ms</b></div>';
+          '<div style="margin-top:2px">' + esc(t('gamesDiagTotal')) + ': <b style="color:var(--accent,#4da6ff)">~' + totalEst + ' ms</b></div>';
       }).catch(function () {});
     }).catch(function () {});
 
-    el('game-qr').addEventListener('click', function () {
+    el('modal-game-qr').addEventListener('click', function () {
       var ids = [];
       Array.prototype.forEach.call(document.querySelectorAll('.game-chk:checked'), function (c) { ids.push(c.value); });
       if (!ids.length) { alert(t('gamesNeed')); return; }
-      var dev = el('game-dev').value;
-      fetch('/api/me/devices/' + dev + '/game-qr.png?games=' + encodeURIComponent(ids.join(',')),
+      fetch('/api/me/devices/' + d.id + '/game-qr.png?games=' + encodeURIComponent(ids.join(',')),
         { headers: { Authorization: 'Bearer ' + token } })
         .then(function (res) {
           if (!res.ok) throw new Error('HTTP ' + res.status);
@@ -855,27 +886,27 @@
         })
         .then(function (blob) {
           var url = URL.createObjectURL(blob);
-          openModal('<h3>' + esc(t('gamesTitle')) + '</h3>' +
+          openModal('<h3>' + esc(t('gamesTitle')) + ' — ' + esc(d.name) + '</h3>' +
             '<p class="muted modal-sub">' + esc(t('gamesImport')) + '</p>' +
-            '<div class="qr-wrap"><img src="' + url + '" alt="QR"></div>');
+            '<div class="qr-wrap"><img src="' + url + '" alt="QR"></div>' +
+            '<div class="modal-actions" style="margin-top:10px"><button class="btn" id="qr-back">' + esc(t('close')) + '</button></div>');
+          el('qr-back').addEventListener('click', function () { gameModal(d); });
         })
         .catch(fail);
     });
 
-    el('game-dl').addEventListener('click', function () {
+    el('modal-game-dl').addEventListener('click', function () {
       var ids = [];
       Array.prototype.forEach.call(document.querySelectorAll('.game-chk:checked'), function (c) { ids.push(c.value); });
       if (!ids.length) { alert(t('gamesNeed')); return; }
-      var dev = el('game-dev').value;
-      downloadGameConf(dev, ids, '');
+      downloadGameConf(d.id, ids, '');
     });
 
-    el('game-pc').addEventListener('click', function () {
+    el('modal-game-pc').addEventListener('click', function () {
       var ids = [];
       Array.prototype.forEach.call(document.querySelectorAll('.game-chk:checked'), function (c) { ids.push(c.value); });
       if (!ids.length) { alert(t('gamesNeed')); return; }
-      var dev = el('game-dev').value;
-      downloadGameConf(dev, ids, 'wiresock');
+      downloadGameConf(d.id, ids, 'wiresock');
     });
   }
 
@@ -935,6 +966,46 @@
   el('guide-open').textContent = '❓ ' + window.Fibr.guideTitle(t.lang);
   el('guide-open').addEventListener('click', showGuide);
 
+  function tvModal(code) {
+    var wg = (me.devices || []).filter(function (d) { return d.protocol !== 'xray'; });
+    var existing = wg.length
+      ? '<p class="muted modal-sub">' + esc(t('tvExisting')) + '</p>' +
+        '<div class="tv-devices">' + wg.map(function (d) {
+          return '<button class="btn btn--tertiary btn--small" data-tvdev="' + d.id + '" style="margin:0 6px 6px 0">' + esc(d.name) + '</button>';
+        }).join('') + '</div>'
+      : '';
+    openModal('<h3>' + esc(t('tvTitle')) + '</h3>' +
+      '<p class="muted modal-sub">' + esc(t('tvHint')) + '</p>' +
+      '<input class="input mono" id="tv-code" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="12" placeholder="' + esc(t('tvCodeField')) + '" value="' + esc(code || '') + '" style="width:100%;margin-bottom:8px;text-transform:uppercase">' +
+      '<input class="input" id="tv-name" maxlength="32" value="' + esc(t('tvNameDefault')) + '" style="width:100%;margin-bottom:8px">' +
+      '<button class="btn" id="tv-new" style="width:100%;margin-bottom:12px">' + esc(t('tvNew')) + '</button>' +
+      existing +
+      '<p class="muted" id="tv-status"></p>' +
+      '<div class="modal-actions"><button class="btn btn--tertiary" id="tv-close">' + esc(t('close')) + '</button></div>');
+    function go(body) {
+      var c = (el('tv-code').value || '').trim();
+      if (!c) { el('tv-code').focus(); return; }
+      el('tv-status').textContent = '…';
+      api('/api/me/pair/' + encodeURIComponent(c), { method: 'POST', body: body }).then(function () {
+        el('tv-status').textContent = t('tvDone');
+        load();
+      }).catch(function (e) {
+        el('tv-status').textContent = e.message || String(e);
+      });
+    }
+    el('tv-new').addEventListener('click', function () {
+      go({ name: (el('tv-name').value || '').trim() || t('tvNameDefault') });
+    });
+    Array.prototype.forEach.call(document.querySelectorAll('[data-tvdev]'), function (b) {
+      b.addEventListener('click', function () { go({ device_id: Number(b.getAttribute('data-tvdev')) }); });
+    });
+    el('tv-close').addEventListener('click', closeModal);
+  }
+  if (el('tv-connect')) {
+    el('tv-connect').textContent = t('tvBtn');
+    el('tv-connect').addEventListener('click', function () { tvModal(''); });
+  }
+
   el('devices').addEventListener('click', function (e) {
     var btn = e.target.closest('button[data-act]');
     if (!btn) return;
@@ -950,6 +1021,10 @@
     else if (act === 'dns') {
       var dd = (me.devices || []).filter(function (x) { return String(x.id) === String(id); })[0];
       if (dd) dnsModal(dd);
+    }
+    else if (act === 'game') {
+      var gd = (me.devices || []).filter(function (x) { return String(x.id) === String(id); })[0];
+      if (gd) gameModal(gd);
     }
     else if (act === 'del') {
       if (!confirm(t('confirmDelete', { name: btn.getAttribute('data-name') }))) return;

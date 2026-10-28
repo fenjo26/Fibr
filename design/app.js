@@ -194,8 +194,13 @@ window.Fibr = (function () {
           'Можно и проще: нажмите на файл .conf в Telegram → <b>«Открыть в…»</b> → Fibr.'
         ]],
         ['📺 Телевизор (Android TV)', [
-          'Установите на ТВ приложение Fibr (файл из команды <b>/app</b> — через флешку или «Send Files to TV»).',
-          'Откройте Fibr на ТВ — на экране появится <b>QR-код</b> и короткий код.',
+          '<b>Установите приложение Fibr на ТВ</b> (выберите любой удобный вариант):' +
+            '<ul style="margin:6px 0 6px;padding-left:18px;list-style:disc">' +
+            '<li><b>Через флешку:</b> скачайте APK-файл <a href="/tv.apk" target="_blank" download><code>{host}/tv.apk</code></a> (или файл из бота командой <b>/app</b>), скопируйте на флешку, вставьте её в ТВ и запустите установку через любой файловый менеджер.</li>' +
+            '<li><b>Без флешки — через Downloader (рекомендуется):</b> если флешки нет, установите на ТВ из Google Play приложение <a href="https://play.google.com/store/apps/details?id=com.esaba.downloader" target="_blank" rel="noopener"><b>Downloader by AFTVnews</b></a>. Откройте его, введите в адресную строку <code>{host}/tv.apk</code> и нажмите <b>Go</b> — приложение скачается и сразу начнётся установка.</li>' +
+            '<li><b>Без флешки — с телефона («Send Files to TV»):</b> установите приложение <b>Send Files to TV</b> на телефон и ТВ. Скачайте APK на телефон (ссылка выше или <b>/app</b> в боте) и перешлите файл на телевизор по домашней сети.</li>' +
+            '</ul>',
+          'Откройте Fibr на ТВ — на экране появится <b>QR-код</b> и 6-значный код привязки.',
           'Отсканируйте QR камерой телефона → откроется бот → «Открыть Fibr» → <b>«Новое устройство для ТВ»</b>.',
           'Без камеры: здесь нажмите <b>«📺 Подключить телевизор»</b> и введите код с экрана ТВ.',
           'Телевизор подключится сам через пару секунд.'
@@ -248,10 +253,15 @@ window.Fibr = (function () {
           'Even simpler: tap the .conf in Telegram → <b>“Open in…”</b> → Fibr.'
         ]],
         ['📺 TV (Android TV)', [
-          'Install Fibr on the TV (the file from <b>/app</b> — via a USB stick or “Send Files to TV”).',
-          'Open Fibr on the TV — a <b>QR code</b> and a short code appear.',
+          '<b>Install the Fibr app on your TV</b> (choose any convenient option):' +
+            '<ul style="margin:6px 0 6px;padding-left:18px;list-style:disc">' +
+            '<li><b>Via a USB flash drive:</b> download the APK <a href="/tv.apk" target="_blank" download><code>{host}/tv.apk</code></a> (or send <b>/app</b> to the bot), copy it to a flash drive, plug it into the TV, and run the installation via any file manager.</li>' +
+            '<li><b>Without a flash drive — via Downloader (recommended):</b> if you don’t have a USB drive, install <a href="https://play.google.com/store/apps/details?id=com.esaba.downloader" target="_blank" rel="noopener"><b>Downloader by AFTVnews</b></a> from Google Play on your TV. Open it, enter <code>{host}/tv.apk</code> in the address bar, and click <b>Go</b> — the app will download and prompt to install.</li>' +
+            '<li><b>Without a flash drive — from phone («Send Files to TV»):</b> install <b>Send Files to TV</b> on your phone and TV. Download the APK to your phone (via the link above or <b>/app</b> in the bot) and transfer it to the TV over Wi-Fi.</li>' +
+            '</ul>',
+          'Open Fibr on the TV — a <b>QR code</b> and a 6-character pairing code will appear on screen.',
           'Scan the QR with your phone camera → the bot opens → “Open Fibr” → <b>“New device for the TV”</b>.',
-          'No camera: tap <b>“📺 Connect a TV”</b> here and type the code from the TV.',
+          'Without a camera: tap <b>“📺 Connect a TV”</b> here and enter the code from the TV screen.',
           'The TV connects by itself in a couple of seconds.'
         ]],
         ['✅ Check it, and if it does not work', [
@@ -271,6 +281,9 @@ window.Fibr = (function () {
   // Strings are trusted constants above (they carry <b> markup).
   function guideHTML(lang, opts) {
     var g = GUIDE[lang === 'ru' ? 'ru' : 'en'];
+    var host = (typeof window !== 'undefined' && window.location && window.location.host)
+      ? window.location.host
+      : (lang === 'ru' ? 'ваш-домен' : 'your-domain');
     var first = !opts || opts.firstOpen !== false;
     var sections = opts && opts.web ? [g.web].concat(g.sections.slice(1)) : g.sections;
     return '<h3>' + g.title + '</h3>' +
@@ -278,7 +291,9 @@ window.Fibr = (function () {
       '<div class="guide">' + sections.map(function (sec, i) {
         return '<details class="guide-sec"' + (i === 0 && first ? ' open' : '') + '>' +
           '<summary>' + sec[0] + '</summary>' +
-          '<ol class="qr-steps">' + sec[1].map(function (step) { return '<li>' + step + '</li>'; }).join('') + '</ol>' +
+          '<ol class="qr-steps">' + sec[1].map(function (step) {
+            return '<li>' + step.replace(/\{host\}/g, esc(host)) + '</li>';
+          }).join('') + '</ol>' +
           '</details>';
       }).join('') + '</div>';
   }
