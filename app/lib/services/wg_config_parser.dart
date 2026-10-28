@@ -76,6 +76,9 @@ class WgConfigParser {
     final peers = <WgPeer>[];
 
     var section = ''; // '' | 'interface' | 'peer'
+    // Whether an [Interface] section was seen; `iface` itself is only built
+    // after the loop, so it cannot double as this flag.
+    var sawInterface = false;
     final ifaceValues = <String, String>{};
     final peerValues = <String, String>{};
 
@@ -108,12 +111,13 @@ class WgConfigParser {
         }
         final name = line.substring(1, line.length - 1).trim().toLowerCase();
         if (name == 'interface') {
-          if (iface != null) {
+          if (sawInterface) {
             throw const WgConfigFormatException('duplicate [Interface] section');
           }
+          sawInterface = true;
           section = 'interface';
         } else if (name == 'peer') {
-          if (iface == null) {
+          if (!sawInterface) {
             throw const WgConfigFormatException('[Peer] before [Interface]');
           }
           finishPeer();

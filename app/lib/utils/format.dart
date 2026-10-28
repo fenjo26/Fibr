@@ -8,11 +8,12 @@ String formatBytes(num? b) {
   if (b < 1024) return '$b B';
   const units = ['KB', 'MB', 'GB', 'TB', 'PB'];
   var u = -1;
+  num n = b;
   do {
-    b /= 1024;
+    n /= 1024;
     u++;
-  } while (b >= 1024 && u < units.length - 1);
-  final v = b >= 100 ? b.toStringAsFixed(0) : b.toStringAsFixed(1);
+  } while (n >= 1024 && u < units.length - 1);
+  final v = n >= 100 ? n.toStringAsFixed(0) : n.toStringAsFixed(1);
   return '$v ${units[u]}';
 }
 

@@ -49,7 +49,7 @@ class WireGuardFlutterEngine implements TunnelEngine {
 
   static const _interfaceName = 'wg0';
 
-  final WireGuardFlutter _wg = WireGuardFlutter.instance;
+  final WireGuardFlutterInterface _wg = WireGuardFlutter.instance;
   final _status = StreamController<TunnelStatus>.broadcast();
 
   bool _initialized = false;
@@ -284,8 +284,9 @@ class TunnelController extends ChangeNotifier {
 
   @override
   void dispose() {
-    if (_engine is WireGuardFlutterEngine) {
-      (_engine as WireGuardFlutterEngine).dispose();
+    final engine = _engine;
+    if (engine is WireGuardFlutterEngine) {
+      engine.dispose();
     }
     super.dispose();
   }
