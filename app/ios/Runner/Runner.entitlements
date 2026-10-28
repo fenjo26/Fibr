@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Packet tunnel provider for WireGuardKit (wireguard_flutter).
+	     Attach this file to the Runner target in Xcode: Signing &
+	     Capabilities -> + Capability -> Network Extensions (see README,
+	     "iOS: ручная настройка"). -->
+	<key>com.apple.developer.network-extension</key>
+	<array>
+		<string>packet-tunnel-provider</string>
+	</array>
+</dict>
+</plist>
