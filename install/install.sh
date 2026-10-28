@@ -347,7 +347,11 @@ docker compose up -d --build
 info "waiting for the API to come up..."
 OK=0
 for _ in $(seq 1 30); do
-  if docker compose exec -T fibr wget -qO- http://127.0.0.1:8080/api/health >/dev/null 2>&1; then
+  # </dev/null is load-bearing: with `curl | bash` the script itself arrives
+  # via stdin, and `docker compose exec` attaches to that same stdin — without
+  # the redirect it drains the rest of the script and bash exits silently,
+  # skipping the summary. (Same class of bug as ssh/docker -i eating input.)
+  if docker compose exec -T fibr wget -qO- http://127.0.0.1:8080/api/health >/dev/null 2>&1 </dev/null; then
     OK=1; break
   fi
   sleep 2
