@@ -3,13 +3,16 @@ import 'dart:convert';
 
 import 'package:flutter/services.dart';
 
-/// fibr://import/<base64 wg-quick config> deep links.
+/// fibr://import/<base64 wg-quick config> and fibr://join/<base64 join url>
+/// deep links.
 ///
-/// The payload is standard or URL-safe base64 of the whole wg-quick config
-/// (URL-safe alphabet and stripped padding recommended); percent-encoding is
-/// decoded first. Platform wiring: Android — MainActivity.kt; iOS —
-/// AppDelegate.swift snippet in README (flutter create overwrites nothing,
-/// so paste it manually).
+/// The import payload is standard or URL-safe base64 of the whole wg-quick
+/// config (URL-safe alphabet and stripped padding recommended); percent-
+/// encoding is decoded first. The join payload is the base64 of a full
+/// https://<host>/join/<code> URL — the quick-connect flow exchanges it for
+/// the config (join_service.dart). Platform wiring: Android —
+/// MainActivity.kt; iOS — AppDelegate.swift snippet in README (flutter
+/// create overwrites nothing, so paste it manually).
 class DeepLinkService {
   static const _method = MethodChannel('fibr/deeplink');
   static const _events = EventChannel('fibr/deeplink/events');
@@ -54,6 +57,36 @@ class DeepLinkService {
     }
 
     // Accept both alphabets; restore stripped padding.
+    payload = payload.replaceAll('-', '+').replaceAll('_', '/');
+    final pad = payload.length % 4;
+    if (pad > 0) payload += '=' * (4 - pad);
+    try {
+      return utf8.decode(base64.decode(payload));
+    } on FormatException {
+      return null;
+    } on ArgumentError {
+      return null;
+    }
+  }
+
+  /// fibr://join/<base64 url> -> the https://<host>/join/<code> URL, or null
+  /// if the url is not a Fibr join link / the payload does not decode.
+  static String? decodeJoinLink(String url) {
+    final Uri uri;
+    try {
+      uri = Uri.parse(url);
+    } on FormatException {
+      return null;
+    }
+    if (uri.scheme != 'fibr' || uri.host != 'join') return null;
+
+    var payload = uri.path.replaceFirst('/', '');
+    if (payload.isEmpty) return null;
+    try {
+      payload = Uri.decodeComponent(payload);
+    } on FormatException {
+      // keep raw — the sender may not have percent-encoded
+    }
     payload = payload.replaceAll('-', '+').replaceAll('_', '/');
     final pad = payload.length % 4;
     if (pad > 0) payload += '=' * (4 - pad);

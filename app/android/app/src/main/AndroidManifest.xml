@@ -38,12 +38,14 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
 
-            <!-- fibr://import/<base64 wg-quick config> -->
+            <!-- fibr://import/<base64 wg-quick config> and
+                 fibr://join/<base64 join url> (quick-connect). -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="fibr" android:host="import" />
+                <data android:scheme="fibr" android:host="join" />
             </intent-filter>
         </activity>
 

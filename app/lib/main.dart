@@ -7,6 +7,7 @@ import 'l10n/app_localizations.dart';
 import 'screens/add_tunnel_screen.dart';
 import 'screens/tunnel_list_screen.dart';
 import 'services/deep_link_service.dart';
+import 'services/join_service.dart';
 import 'services/settings_service.dart';
 import 'services/tunnel_service.dart';
 import 'theme/app_theme.dart';
@@ -58,6 +59,19 @@ class _FibrAppState extends State<FibrApp> {
   }
 
   void _handleLink(String url) {
+    // fibr://join/<base64 url> — quick-connect landing button: exchange the
+    // code for the config (docs/join.md). The https join link itself may
+    // also arrive here from other apps.
+    final joinUrl =
+        DeepLinkService.decodeJoinLink(url) ?? JoinService.extractJoinUrl(url);
+    if (joinUrl != null) {
+      _navKey.currentState?.push(
+        MaterialPageRoute<void>(
+          builder: (_) => AddTunnelScreen(initialJoinUrl: joinUrl),
+        ),
+      );
+      return;
+    }
     final config = DeepLinkService.decodeImportLink(url);
     if (config == null) return;
     _navKey.currentState?.push(

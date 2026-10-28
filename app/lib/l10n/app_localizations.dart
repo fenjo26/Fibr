@@ -77,6 +77,23 @@ class AppLocalizations {
         'Туннель «{name}» обновлён — переподключитесь, чтобы применить новый сервер',
     'errInvalidConfig': 'Не удалось разобрать конфиг: {msg}',
     'errQrNotConfig': 'QR не похож на конфиг WireGuard',
+    // Quick-connect (join codes)
+    'importCode': 'По коду',
+    'joinHint':
+        'Вставьте ссылку из Mini App («Код» у устройства) или введите код и адрес сервера.',
+    'joinCodeField': 'Ссылка или код',
+    'joinCodeHint': 'https://vpn.example.com/join/Ab3xK9',
+    'joinServerField': 'Сервер (для ввода только кода)',
+    'joinServerHint': 'vpn.example.com',
+    'joinBtn': 'Получить конфиг',
+    'joinBusy': 'Обмениваю код…',
+    'errJoinNotFound': 'Код не найден — проверьте ввод',
+    'errJoinGone': 'Код уже использован или истёк — попросите новый',
+    'errJoinForbidden': 'Подписка аккаунта истекла или устройство отключено',
+    'errJoinNetwork': 'Сервер недоступен — проверьте адрес и сеть',
+    'errJoinBad': 'Не похоже на ссылку или код подключения',
+    'errJoinVless':
+        'Это Xray-устройство: приложение работает с WireGuard, ссылка vless:// — на странице кода',
     // Common
     'btnConfig': 'Конфиг',
     'btnDelete': 'Удалить',
@@ -161,6 +178,23 @@ class AppLocalizations {
         'Tunnel "{name}" updated — reconnect to apply the new server',
     'errInvalidConfig': 'Could not parse the config: {msg}',
     'errQrNotConfig': 'The QR code does not look like a WireGuard config',
+    // Quick-connect (join codes)
+    'importCode': 'By code',
+    'joinHint':
+        'Paste the link from the Mini App (the "Code" button on a device), or type the code and the server address.',
+    'joinCodeField': 'Link or code',
+    'joinCodeHint': 'https://vpn.example.com/join/Ab3xK9',
+    'joinServerField': 'Server (when typing just the code)',
+    'joinServerHint': 'vpn.example.com',
+    'joinBtn': 'Get config',
+    'joinBusy': 'Exchanging the code…',
+    'errJoinNotFound': 'Code not found — check the input',
+    'errJoinGone': 'The code was already used or has expired — ask for a new one',
+    'errJoinForbidden': 'The subscription expired or the device is disabled',
+    'errJoinNetwork': 'Server unreachable — check the address and network',
+    'errJoinBad': 'This does not look like a join link or code',
+    'errJoinVless':
+        'This is an Xray device: the app speaks WireGuard; the vless:// link is on the code page',
     // Common
     'btnConfig': 'Config',
     'btnDelete': 'Delete',
