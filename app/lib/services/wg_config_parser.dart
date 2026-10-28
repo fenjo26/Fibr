@@ -83,9 +83,10 @@ class WgConfig {
   /// address.
   String? get subnetGatewayV4 {
     final bytes = _subnetGatewayBytes(InternetAddressType.IPv4);
-    if (bytes == null) return null;
-    return InternetAddress.fromRawBytes(bytes, type: InternetAddressType.IPv4)
-        .address;
+    if (bytes == null || bytes.length != 4) return null;
+    // dart:io has no public raw-bytes constructor — format the dotted quad
+    // by hand.
+    return bytes.join('.');
   }
 
   /// Whether any DNS server of the config IS the tunnel gateway — how a
