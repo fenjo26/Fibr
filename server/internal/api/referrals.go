@@ -16,10 +16,11 @@ import (
 	"github.com/fenjo26/Fibr/internal/store"
 )
 
-// ReferralLink renders the shareable enrollment link for a referral code —
-// the same dev-mode rules as InviteLink: without a public domain it stays a
+// ReferralWebLink renders the site enrollment link: /cabinet/ stashes ?ref=
+// in localStorage and attributes it at signup (cabinet/app.js stashParams).
+// The same dev-mode rules as InviteLink: without a public domain it stays a
 // relative path (still copyable in the panel).
-func ReferralLink(domain, code string) string {
+func ReferralWebLink(domain, code string) string {
 	d := strings.TrimSpace(domain)
 	if i := strings.Index(d, "://"); i >= 0 {
 		d = d[i+3:]
@@ -27,19 +28,19 @@ func ReferralLink(domain, code string) string {
 	d = strings.TrimSuffix(strings.TrimSpace(d), "/")
 	if d == "" || d == "localhost" || strings.HasPrefix(d, "localhost:") ||
 		d == "127.0.0.1" || strings.HasPrefix(d, "127.0.0.1:") {
-		return "/miniapp/?ref=" + code
+		return "/cabinet/?ref=" + code
 	}
-	return "https://" + d + "/miniapp/?ref=" + code
+	return "https://" + d + "/cabinet/?ref=" + code
 }
 
 // ReferralShareLink: the bot deep link t.me/<bot>?start=ref_CODE when the
 // bot username is known (opens Telegram, the bot hands over a Mini App
-// button with the code), else ReferralLink.
+// button with the code), else ReferralWebLink.
 func ReferralShareLink(domain, botUsername, code string) string {
 	if b := strings.TrimPrefix(strings.TrimSpace(botUsername), "@"); b != "" {
 		return "https://t.me/" + b + "?start=ref_" + code
 	}
-	return ReferralLink(domain, code)
+	return ReferralWebLink(domain, code)
 }
 
 // handleMeReferrals serves the caller's referral card: code, share link,
@@ -67,8 +68,13 @@ func (a *API) handleMeReferrals(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"code":         u.ReferralCode,
+		"code": u.ReferralCode,
+		// The site is the primary referral door: web_link comes first in
+		// the UIs, tg_link second (the bot deep link, kept for Telegram-
+		// native sharing). `link` stays the bot link for older clients.
 		"link":         ReferralShareLink(a.cfg.Domain, a.botName(), u.ReferralCode),
+		"web_link":     ReferralWebLink(a.cfg.Domain, u.ReferralCode),
+		"tg_link":      ReferralShareLink(a.cfg.Domain, a.botName(), u.ReferralCode),
 		"enabled":      rs.Enabled,
 		"currency":     rs.Currency,
 		"percent_l1":   rs.PercentL1,

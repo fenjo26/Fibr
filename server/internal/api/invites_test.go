@@ -332,4 +332,13 @@ func TestInviteShareLink(t *testing.T) {
 	if got, want := ReferralShareLink("vpn.example.com", "fibr_bot", "R1"), "https://t.me/fibr_bot?start=ref_R1"; got != want {
 		t.Errorf("referral: %q, want %q", got, want)
 	}
+	if got, want := ReferralWebLink("vpn.example.com", "R1"), "https://vpn.example.com/cabinet/?ref=R1"; got != want {
+		t.Errorf("referral web: %q, want %q", got, want)
+	}
+	if got, want := ReferralWebLink("https://vpn.example.com/", "R1"), "https://vpn.example.com/cabinet/?ref=R1"; got != want {
+		t.Errorf("referral web with scheme: %q, want %q", got, want)
+	}
+	if got, want := ReferralWebLink("localhost:8080", "R1"), "/cabinet/?ref=R1"; got != want {
+		t.Errorf("referral web dev: %q, want %q", got, want)
+	}
 }
