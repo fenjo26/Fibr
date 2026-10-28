@@ -68,3 +68,30 @@ func TestIPv6ForDerivesFromIPv4(t *testing.T) {
 		}
 	}
 }
+
+func TestAWGConfig(t *testing.T) {
+	t.Setenv("FIBR_ADMIN_TOKEN", "x")
+	t.Setenv("FIBR_SECRET", "x")
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !c.AWGEnabled || !c.SecondAWG() || c.AWGPort != 51821 {
+		t.Fatalf("awg defaults: %+v", c)
+	}
+	a, err := c.AWGConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.WGEngine != EngineAWG || a.WGInterface != "awg0" || a.WGPort != 51821 ||
+		a.ServerIP != "10.9.0.1" || a.ServerIP6 != "fd42:f1b3::1" || a.IPv6For("10.9.0.7") != "fd42:f1b3::7" {
+		t.Fatalf("awg tunnel config: %+v", a)
+	}
+	if c.WGInterface != "wg0" || c.Subnet != "10.8.0.0/24" {
+		t.Fatal("AWGConfig must not mutate the main config")
+	}
+	t.Setenv("FIBR_WG_ENGINE", "awg")
+	if c, _ := Load(); c.SecondAWG() {
+		t.Fatal("no second tunnel when the whole server already runs awg")
+	}
+}

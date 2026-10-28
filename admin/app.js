@@ -232,6 +232,7 @@
   try { token = localStorage.getItem(TOKEN_KEY); } catch (e) { /* ignore */ }
   var api = window.Fibr.makeApi(function () { return token; });
   var xrayEnabled = false; // refreshed from the overview on each users-tab load
+  var awgEnabled = false;
 
   var el = function (id) { return document.getElementById(id); };
   var refreshTimer = null;
@@ -449,6 +450,7 @@
   }
 
   function protoPill(p) {
+    if (p === 'awg') return '<span class="pill pill--live">AWG</span>';
     return p === 'xray'
       ? '<span class="pill pill--live">' + t('protXray') + '</span>'
       : '<span class="pill pill--off">' + t('protWG') + '</span>';
@@ -505,6 +507,7 @@
     Promise.all([api('/api/admin/users'), api('/api/admin/devices'), api('/api/admin/overview'), api('/api/admin/invites')]).then(function (res) {
       var users = res[0];
       xrayEnabled = !!(res[2] && res[2].server && res[2].server.xray_enabled);
+      awgEnabled = !!(res[2] && res[2].server && res[2].server.awg_enabled);
       var byId = {};
       users.forEach(function (u) { byId[u.id] = u; });
       usersById = byId;
@@ -966,7 +969,8 @@
   /* Issue a device for a user: name + protocol, then jump straight to the QR. */
   function showAddDevice(userId) {
     var protoOptions = '<option value="wg">' + t('protWG') + ' — WireGuard</option>' +
-      (xrayEnabled ? '<option value="xray">' + t('protXray') + ' — VLESS/Reality</option>' : '');
+      (xrayEnabled ? '<option value="xray">' + t('protXray') + ' — VLESS/Reality</option>' : '') +
+      (awgEnabled ? '<option value="awg">AWG — AmneziaWG (AmneziaVPN)</option>' : '');
     openModal('<h3>' + esc(t('addDevTitle')) + '</h3>' +
       '<p class="muted modal-sub">' + esc(t('fieldName')) + '</p>' +
       '<input class="input" id="nd-name" maxlength="32" value="device">' +

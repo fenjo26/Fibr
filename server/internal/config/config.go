@@ -57,6 +57,16 @@ type Config struct {
 	XrayDest    string // FIBR_XRAY_DEST, Reality fallback target, defaults to SNI:443
 	XrayShortID string // FIBR_XRAY_SHORT_ID, hex short id shared by all clients
 
+	// AmneziaWG as a per-device protocol: a second tunnel (awg0) next to the
+	// plain WireGuard one, on its own UDP port and subnet, served by the
+	// bundled amneziawg-go daemon. On by default. When the whole server
+	// already runs FIBR_WG_ENGINE=awg the second tunnel is not needed.
+	AWGEnabled   bool   // FIBR_AWG_ENABLED (default true)
+	AWGPort      int    // FIBR_AWG_PORT, UDP (default 51821)
+	AWGInterface string // FIBR_AWG_IFACE (default awg0)
+	AWGSubnet    string // FIBR_AWG_SUBNET (default 10.9.0.0/24)
+	AWGSubnet6   string // FIBR_AWG_SUBNET6 (default fd42:f1b3::/64)
+
 	// Live control + sharing limit (internal/xray/api.go, limiter.go).
 	XrayAPIAddr  string        // FIBR_XRAY_API: xray's gRPC API, default "xray:10085" (compose service); "off" disables
 	XrayIPLimit  int           // FIBR_XRAY_IP_LIMIT: distinct source IPs per VLESS link inside the window; 0 = no limit
@@ -136,6 +146,14 @@ func Load() (*Config, error) {
 	c.XraySNI = strings.TrimSpace(os.Getenv("FIBR_XRAY_SNI"))
 	c.XrayDest = strings.TrimSpace(os.Getenv("FIBR_XRAY_DEST"))
 	c.XrayShortID = strings.TrimSpace(os.Getenv("FIBR_XRAY_SHORT_ID"))
+	c.AWGEnabled = getenvBool("FIBR_AWG_ENABLED", true)
+	c.AWGPort = getenvInt("FIBR_AWG_PORT", 51821)
+	c.AWGInterface = getenv("FIBR_AWG_IFACE", "awg0")
+	c.AWGSubnet = getenv("FIBR_AWG_SUBNET", "10.9.0.0/24")
+	c.AWGSubnet6 = getenv("FIBR_AWG_SUBNET6", "fd42:f1b3::/64")
+	if c.AWGPort < 1 || c.AWGPort > 65535 {
+		return nil, fmt.Errorf("FIBR_AWG_PORT: %d out of range", c.AWGPort)
+	}
 	c.XrayAPIAddr = getenv("FIBR_XRAY_API", "xray:10085")
 	c.XrayIPLimit = getenvInt("FIBR_XRAY_IP_LIMIT", 2)
 	c.XrayIPWindow = getenvDuration("FIBR_XRAY_IP_WINDOW", 2*time.Minute)
@@ -185,6 +203,37 @@ func Load() (*Config, error) {
 	c.ServerIP6 = server6.String()
 
 	return c, nil
+}
+
+// SecondAWG reports whether the separate AmneziaWG tunnel runs (the whole
+// server is not already in awg engine mode).
+func (c *Config) SecondAWG() bool { return c.AWGEnabled && c.WGEngine != EngineAWG }
+
+// AWGConfig is the configuration of the second (AmneziaWG) tunnel: a copy
+// of this one with the engine, interface, port and subnets swapped. Host,
+// DNS, MTU and everything else stay shared.
+func (c *Config) AWGConfig() (*Config, error) {
+	cc := *c
+	cc.WGEngine = EngineAWG
+	cc.WGInterface = c.AWGInterface
+	cc.WGPort = c.AWGPort
+	cc.Subnet = c.AWGSubnet
+	cc.Subnet6 = c.AWGSubnet6
+	ip, err := serverIPForSubnet(cc.Subnet)
+	if err != nil {
+		return nil, fmt.Errorf("FIBR_AWG_SUBNET: %w", err)
+	}
+	cc.ServerIP = ip
+	ip6, ip6net, err := net.ParseCIDR(cc.Subnet6)
+	if err != nil || ip6.To4() != nil {
+		return nil, fmt.Errorf("FIBR_AWG_SUBNET6: an IPv6 ULA /64 is expected, got %s", cc.Subnet6)
+	}
+	cc.Subnet6 = ip6net.String()
+	s6 := make(net.IP, net.IPv6len)
+	copy(s6, ip6.To16())
+	s6[15] = 1
+	cc.ServerIP6 = s6.String()
+	return &cc, nil
 }
 
 // IPv6For returns the device's IPv6 address: the ULA prefix with the host

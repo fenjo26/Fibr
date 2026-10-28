@@ -41,6 +41,7 @@ type Manager struct {
 	subnet   *net.IPNet
 	extIface string
 	awg      *awg.Params // non-nil when FIBR_WG_ENGINE=awg
+	serves   string      // device protocol this tunnel carries: "wg" or "awg"
 
 	mu          sync.Mutex
 	samples     []ifaceSample
@@ -61,7 +62,7 @@ func New(cfg *config.Config, st *store.Store, log *slog.Logger) (*Manager, error
 		return nil, fmt.Errorf("subnet: %w", err)
 	}
 
-	m := &Manager{cfg: cfg, store: st, log: log, subnet: ipnet, extIface: "eth0"}
+	m := &Manager{cfg: cfg, store: st, log: log, subnet: ipnet, extIface: "eth0", serves: store.ProtocolWG}
 
 	// Server keypair lives in the settings table, generated once.
 	privStr, err := st.GetSetting(settingServerKey)
@@ -107,6 +108,25 @@ func New(cfg *config.Config, st *store.Store, log *slog.Logger) (*Manager, error
 	}
 	return m, nil
 }
+
+// NewAWG creates the manager of the second, AmneziaWG tunnel: the devices
+// with protocol "awg" on cfg.AWGConfig()'s interface/port/subnet. It shares
+// the server keypair with the main tunnel (same settings row).
+func NewAWG(base *config.Config, st *store.Store, log *slog.Logger) (*Manager, error) {
+	cfg, err := base.AWGConfig()
+	if err != nil {
+		return nil, err
+	}
+	m, err := New(cfg, st, log.With("tunnel", cfg.WGInterface))
+	if err != nil {
+		return nil, err
+	}
+	m.serves = store.ProtocolAWG
+	return m, nil
+}
+
+// Config is the tunnel's own configuration (the AWG tunnel's differs).
+func (m *Manager) Config() *config.Config { return m.cfg }
 
 // PublicKey returns the server's WireGuard public key.
 func (m *Manager) PublicKey() string { return m.pubKey.String() }
@@ -260,10 +280,15 @@ func (m *Manager) SyncPeers() error {
 	}
 	peers := make([]wgtypes.PeerConfig, 0, len(devices))
 	for _, d := range devices {
-		// Only "wg" devices are WireGuard peers. Xray devices reuse the key
-		// columns for a UUID (see store.Device) and are served by a separate
-		// xray container.
-		if d.Protocol != "" && d.Protocol != store.ProtocolWG {
+		// Each tunnel carries its own devices: "wg" ones on the main
+		// interface, "awg" ones on the AmneziaWG tunnel. Xray devices reuse
+		// the key columns for a UUID (see store.Device) and are served by a
+		// separate xray container.
+		proto := d.Protocol
+		if proto == "" {
+			proto = store.ProtocolWG
+		}
+		if proto != m.serves {
 			continue
 		}
 		pub, err := wgtypes.ParseKey(d.PublicKey)

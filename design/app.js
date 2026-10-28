@@ -178,7 +178,8 @@ window.Fibr = (function () {
           'Получите файл: кнопка <b>«Скачать файл»</b> у устройства (или «Файл в Telegram» / <b>/new</b> в боте).',
           'В AmneziaVPN нажмите <b>«Файл с настройками подключения»</b> и выберите этот файл (он в папке Telegram / Загрузки).',
           'Или нажмите <b>«QR-код»</b> и наведите камеру на QR с другого экрана.',
-          'Нажмите <b>«Подключиться»</b>.'
+          'Нажмите <b>«Подключиться»</b>.',
+          'Если обычный WireGuard блокируют — создайте устройство с протоколом <b>AmneziaWG</b> (это WireGuard с маскировкой) и откройте его файл так же. Он работает только в AmneziaVPN.'
         ]],
         ['🔳 По QR-коду (нужен второй экран)', [
           'Откройте этот кабинет на компьютере или другом телефоне.',
@@ -231,7 +232,8 @@ window.Fibr = (function () {
           'Get the file: <b>“Download file”</b> on the device (or “File to Telegram” / <b>/new</b> in the bot).',
           'In AmneziaVPN tap <b>“File with connection settings”</b> and pick that file (Telegram / Downloads folder).',
           'Or tap <b>“QR code”</b> and point the camera at the QR on another screen.',
-          'Tap <b>“Connect”</b>.'
+          'Tap <b>“Connect”</b>.',
+          'If plain WireGuard is blocked — create an <b>AmneziaWG</b> device (masked WireGuard) and open its file the same way. It works in AmneziaVPN only.'
         ]],
         ['🔳 With a QR code (needs a second screen)', [
           'Open this page on a computer or another phone.',

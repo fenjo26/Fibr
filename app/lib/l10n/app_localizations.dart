@@ -202,6 +202,7 @@ class AppLocalizations {
     'btnCreate': 'Создать',
     // Xray honesty plate (no tunnel in this client)
     'xrayPlate': 'Туннель недоступен: это Xray-устройство — откройте его ссылку в v2rayNG/Hiddify',
+    'awgPlate': 'Туннель недоступен: это устройство AmneziaWG — его файл открывается в приложении AmneziaVPN',
     'xrayCreatedPlate':
         'Устройство Xray создано. Ссылку vless:// возьмите в мини-приложении (QR у устройства) — приложение Fibr подключает только WireGuard.',
     // Account section in settings
@@ -406,6 +407,7 @@ class AppLocalizations {
     'btnCreate': 'Create',
     // Xray honesty plate (no tunnel in this client)
     'xrayPlate': 'No tunnel here: this is an Xray device — open its link in v2rayNG/Hiddify',
+    'awgPlate': 'No tunnel here: this is an AmneziaWG device — its file opens in the AmneziaVPN app',
     'xrayCreatedPlate':
         'Xray device created. Take the vless:// link from the Mini App (the device QR) — the Fibr app tunnels WireGuard only.',
     // Account section in settings

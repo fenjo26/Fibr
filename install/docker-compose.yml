@@ -14,6 +14,8 @@ services:
       - /dev/net/tun:/dev/net/tun # fallback for wireguard-go userspace
     ports:
       - "${FIBR_WG_PORT:-51820}:${FIBR_WG_PORT:-51820}/udp"
+      # AmneziaWG as a per-device protocol (second tunnel, docs/awg.md).
+      - "${FIBR_AWG_PORT:-51821}:${FIBR_AWG_PORT:-51821}/udp"
     volumes:
       - fibr-data:/data
       # Client binaries for the bot's /app command (Telegram-side APK

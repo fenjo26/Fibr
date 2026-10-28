@@ -69,9 +69,21 @@ func (a *API) DeviceSlots(userID int64) (used, limit int, err error) {
 	return len(devices), limit, err
 }
 
+// ErrAWGDisabled: the AmneziaWG tunnel is not running on this server.
+var ErrAWGDisabled = errors.New("amneziawg protocol is disabled on this server")
+
 // IssueDeviceFile provisions a new WireGuard device for the account and
 // returns its config file. ErrDeviceLimit when the account is full.
 func (a *API) IssueDeviceFile(userID int64, name string) (filename string, data []byte, err error) {
+	return a.IssueDeviceFileProto(userID, name, store.ProtocolWG)
+}
+
+// IssueDeviceFileProto is IssueDeviceFile for "wg" or "awg" (AmneziaWG:
+// the file opens in AmneziaVPN, the bot's /amnezia).
+func (a *API) IssueDeviceFileProto(userID int64, name, protocol string) (filename string, data []byte, err error) {
+	if protocol == store.ProtocolAWG && a.awgm == nil {
+		return "", nil, ErrAWGDisabled
+	}
 	used, limit, err := a.DeviceSlots(userID)
 	if err != nil {
 		return "", nil, err
@@ -79,7 +91,7 @@ func (a *API) IssueDeviceFile(userID int64, name string) (filename string, data 
 	if used >= limit {
 		return "", nil, ErrDeviceLimit
 	}
-	d, err := a.provisionDevice(userID, sanitizeName(name, fmt.Sprintf("device-%d", used+1)), store.ProtocolWG)
+	d, err := a.provisionDevice(userID, sanitizeName(name, fmt.Sprintf("device-%d", used+1)), protocol)
 	if err != nil {
 		return "", nil, err
 	}

@@ -61,7 +61,9 @@
       phName: 'Название устройства (телефон, ноутбук…)',
       devicesHint: 'Одно устройство = один телефон, ноутбук или ТВ. Добавьте по одному на каждый. Не знаете, как подключить? Нажмите «Как подключиться» — там пошагово для WireGuard, AmneziaVPN, QR и телевизора.',
       protoWG: 'WireGuard — быстрый', protoVless: 'VLESS — если блокируют', protoVlessOff: 'VLESS (выключен на сервере)',
-      protoHint: 'WireGuard — обычный и самый быстрый. VLESS — если WireGuard блокируют (мобильные сети, Wi-Fi на работе).',
+      protoAWG: 'AmneziaWG — для AmneziaVPN', protoAWGOff: 'AmneziaWG (выключен на сервере)',
+      qrHintAWG: 'Конфиг AmneziaWG — отсканируйте в приложении AmneziaVPN («QR-код») или скачайте файл',
+      protoHint: 'WireGuard — обычный и самый быстрый (WireGuard, AmneziaVPN, Fibr). VLESS — если WireGuard блокируют (v2rayNG, Hiddify, AmneziaVPN). AmneziaWG — WireGuard с маскировкой, только для AmneziaVPN.',
       btnSendTg: 'Файл в Telegram', sentTg: 'Файл отправлен в чат с ботом ✅',
       errSendTg: 'Не удалось отправить. Откройте чат с ботом в Telegram, нажмите «Старт» и повторите.',
       addDevice: 'Добавить',
@@ -154,7 +156,9 @@
       phName: 'Device name (phone, laptop…)',
       devicesHint: 'One device = one phone, laptop or TV. Add one for each. Not sure how to connect? Tap “How to connect” — step by step for WireGuard, AmneziaVPN, QR and TV.',
       protoWG: 'WireGuard — fast', protoVless: 'VLESS — if blocked', protoVlessOff: 'VLESS (off on this server)',
-      protoHint: 'WireGuard is the normal, fastest one. VLESS is for networks that block WireGuard (mobile, office Wi-Fi).',
+      protoAWG: 'AmneziaWG — for AmneziaVPN', protoAWGOff: 'AmneziaWG (off on this server)',
+      qrHintAWG: 'AmneziaWG config — scan it in the AmneziaVPN app (“QR code”) or download the file',
+      protoHint: 'WireGuard is the normal, fastest one (WireGuard, AmneziaVPN, Fibr apps). VLESS is for networks that block WireGuard (v2rayNG, Hiddify, AmneziaVPN). AmneziaWG is masked WireGuard, AmneziaVPN only.',
       btnSendTg: 'File to Telegram', sentTg: 'The file is in your chat with the bot ✅',
       errSendTg: 'Could not send. Open the bot chat in Telegram, press Start and try again.',
       addDevice: 'Add',
@@ -616,7 +620,10 @@
       wgOpt.textContent = t('protoWG');
       xOpt.textContent = me.xray_enabled ? t('protoVless') : t('protoVlessOff');
       xOpt.disabled = !me.xray_enabled;
-      if (!me.xray_enabled) proto.value = 'wg';
+      var aOpt = proto.querySelector('option[value="awg"]');
+      aOpt.textContent = me.awg_enabled ? t('protoAWG') : t('protoAWGOff');
+      aOpt.disabled = !me.awg_enabled;
+      if ((proto.value === 'xray' && !me.xray_enabled) || (proto.value === 'awg' && !me.awg_enabled)) proto.value = 'wg';
       proto.title = t('protoHint');
       el('greeting').textContent = t('greeting', { name: (data.user && data.user.username) || '' });
       showView('app-view');
@@ -667,8 +674,10 @@
       var ago = d.last_handshake ? fmtAgo(d.last_handshake, t.lang) : null;
       var seen = ago ? t('lastSeen', { ago: ago }) : t('never');
       var proto = d.protocol === 'xray'
-        ? '<span class="pill pill--live proto-pill">Xray</span>'
-        : '<span class="pill pill--off proto-pill">WG</span>';
+        ? '<span class="pill pill--live proto-pill">VLESS</span>'
+        : d.protocol === 'awg'
+          ? '<span class="pill pill--live proto-pill">AWG</span>'
+          : '<span class="pill pill--off proto-pill">WG</span>';
       return '<div class="card device">' +
         '<div class="device-top">' +
         '<span class="dot ' + (d.online ? 'dot--on' : 'dot--off') + '"></span>' +
@@ -974,7 +983,7 @@
   /* ---------- qr & config ---------- */
 
   function qrSteps(protocol) {
-    if (protocol === 'xray') return '';
+    if (protocol === 'xray' || protocol === 'awg') return ''; // the hint above says where
     return '<ol class="qr-steps muted">' +
       '<li>' + esc(t('qrStep1')) + '</li>' +
       '<li>' + esc(t('qrStep2')) + '</li>' +
@@ -982,7 +991,7 @@
   }
 
   function qrModal(url, protocol) {
-    var hint = protocol === 'xray' ? t('qrHintXray') : t('qrHint');
+    var hint = protocol === 'xray' ? t('qrHintXray') : protocol === 'awg' ? t('qrHintAWG') : t('qrHint');
     openModal('<h3>' + esc(t('qrTitle')) + '</h3>' +
       '<p class="muted modal-sub">' + esc(hint) + '</p>' +
       '<div class="qr-wrap"><img src="' + url + '" alt="QR"></div>' +

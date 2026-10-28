@@ -77,6 +77,9 @@ const (
 	// IPv4 is still allocated (the column is UNIQUE NOT NULL) but is unused
 	// by the protocol. No per-device stats exist for xray in this MVP.
 	ProtocolXray = "xray"
+	// ProtocolAWG: an AmneziaWG peer on the second tunnel (awg0, own port
+	// and subnet). Key columns as for "wg".
+	ProtocolAWG = "awg"
 )
 
 // Device is one VPN credential owned by a user: a WireGuard peer (Protocol
@@ -156,7 +159,7 @@ CREATE TABLE IF NOT EXISTS devices (
 	id             INTEGER PRIMARY KEY AUTOINCREMENT,
 	user_id        INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
 	name           TEXT    NOT NULL,
-	protocol       TEXT    NOT NULL DEFAULT 'wg' CHECK (protocol IN ('wg','xray')),
+	protocol       TEXT    NOT NULL DEFAULT 'wg' CHECK (protocol IN ('wg','xray','awg')),
 	public_key     TEXT    NOT NULL UNIQUE,
 	private_key    TEXT    NOT NULL,
 	preshared_key  TEXT    NOT NULL DEFAULT '',
@@ -281,6 +284,10 @@ func Open(path string) (*Store, error) {
 	if err := migrateUsersAccessToken(db); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("migrate users.access_token_hash: %w", err)
+	}
+	if err := migrateDevicesProtocolAWG(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate devices.protocol awg: %w", err)
 	}
 	if err := migrateUsersLogin(db); err != nil {
 		db.Close()

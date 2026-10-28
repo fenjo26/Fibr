@@ -57,11 +57,11 @@ class _HomeScreenState extends State<HomeScreen> {
       );
       return;
     }
-    if (device.isXray) {
+    if (device.isForeign) {
       // Honest plate: a vless:// link cannot run through this client's
       // WireGuard engine.
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(l10n.t('xrayPlate'))),
+        SnackBar(content: Text(l10n.t(device.plateKey))),
       );
       return;
     }
@@ -79,7 +79,7 @@ class _HomeScreenState extends State<HomeScreen> {
       if (!mounted) return;
       if (!ok) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(l10n.t('xrayPlate'))),
+          SnackBar(content: Text(l10n.t(device.plateKey))),
         );
         return;
       }
@@ -196,10 +196,10 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                 ),
               ),
-              if (device != null && device.isXray) ...[
+              if (device != null && device.isForeign) ...[
                 const SizedBox(height: 8),
                 Text(
-                  l10n.t('xrayPlate'),
+                  l10n.t(device.plateKey),
                   textAlign: TextAlign.center,
                   style: TextStyle(
                     color: FibrColors.of(context).faint,

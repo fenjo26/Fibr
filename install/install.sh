@@ -191,11 +191,12 @@ if command -v ufw >/dev/null && ufw status 2>/dev/null | grep -q "Status: active
   ufw allow 80/tcp  >/dev/null
   ufw allow 443/tcp >/dev/null
   ufw allow "$WG_PORT/udp" >/dev/null
+  ufw allow 51821/udp >/dev/null # AmneziaWG tunnel (FIBR_AWG_PORT)
   # Xray speaks TCP (Reality masquerades as TLS), unlike WireGuard's UDP.
   # Opened unconditionally: when xray is disabled the container is not even
   # started, so nothing listens on the port and the rule is inert.
   ufw allow "$XRAY_PORT/tcp" >/dev/null
-  info "ufw: opened 80,443/tcp, $WG_PORT/udp and $XRAY_PORT/tcp"
+  info "ufw: opened 80,443/tcp, $WG_PORT/udp, 51821/udp and $XRAY_PORT/tcp"
 fi
 
 # ---------- env ----------

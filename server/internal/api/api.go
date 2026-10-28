@@ -35,6 +35,7 @@ type API struct {
 	fileSender  FileSender   // Telegram document sender; nil without a bot
 	pairs       pairStore    // TV pairing codes (pair.go), in memory
 	loginFails  loginLimiter // failed password sign-ins per login (password.go)
+	awgm        *wg.Manager  // second, AmneziaWG tunnel; nil when off (SetAWG)
 }
 
 // New creates the API.
@@ -493,6 +494,7 @@ func (a *API) handleMe(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"user": u, "devices": out,
 		"max_devices": limit, "xray_enabled": a.cfg.XrayEnabled,
+		"awg_enabled":    a.awgm != nil,
 		"has_access_key": hasKey,
 		"login":          login, // web login ("" until the person sets one)
 		// The client compares endpoint_changed_at with its stored copy to
@@ -532,7 +534,7 @@ func (a *API) handleCreateDevice(w http.ResponseWriter, r *http.Request) {
 		a.errJSON(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	protocol, err := normalizeProtocol(body.Protocol, a.cfg.XrayEnabled)
+	protocol, err := a.protocolFor(body.Protocol)
 	if err != nil {
 		a.errJSON(w, http.StatusBadRequest, err.Error())
 		return
@@ -591,6 +593,7 @@ type Overview struct {
 		MTU         int      `json:"mtu"`
 		Passive     bool     `json:"passive"`
 		XrayEnabled bool     `json:"xray_enabled"`
+		AWGEnabled  bool     `json:"awg_enabled"`
 	} `json:"server"`
 	Totals struct {
 		Users   int   `json:"users"`
@@ -628,6 +631,7 @@ func (a *API) BuildOverview() (*Overview, error) {
 	ov.Server.MTU = a.cfg.MTU
 	ov.Server.Passive = a.wg.Passive()
 	ov.Server.XrayEnabled = a.cfg.XrayEnabled
+	ov.Server.AWGEnabled = a.awgm != nil
 	ov.ActiveNode = ep.Name
 	ov.EndpointChangedAt = a.endpointChangedAt()
 
@@ -760,7 +764,7 @@ func (a *API) handleAdminListUsers(w http.ResponseWriter, r *http.Request) {
 		out = append(out, s)
 	}
 	// Current per-user speed: sum of their devices' latest rates.
-	speeds := a.wg.DeviceSpeeds()
+	speeds := a.deviceSpeeds()
 	for _, d := range devices {
 		if s, ok := stats[d.UserID]; ok {
 			s.Devices++
@@ -1044,7 +1048,7 @@ func (a *API) handleAdminCreateDevice(w http.ResponseWriter, r *http.Request) {
 		a.errJSON(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	protocol, err := normalizeProtocol(body.Protocol, a.cfg.XrayEnabled)
+	protocol, err := a.protocolFor(body.Protocol)
 	if err != nil {
 		a.errJSON(w, http.StatusBadRequest, err.Error())
 		return
@@ -1055,6 +1059,33 @@ func (a *API) handleAdminCreateDevice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, newDeviceOut(*d, ""))
+}
+
+// deviceSpeeds merges the per-device rates of both tunnels.
+func (a *API) deviceSpeeds() map[int64]wg.PeerSpeed {
+	out := a.wg.DeviceSpeeds()
+	if a.awgm != nil {
+		for k, v := range a.awgm.DeviceSpeeds() {
+			out[k] = v
+		}
+	}
+	return out
+}
+
+// SetAWG wires the second (AmneziaWG) tunnel; nil keeps "awg" disabled.
+func (a *API) SetAWG(m *wg.Manager) { a.awgm = m }
+
+// protocolFor validates a requested device protocol against what this
+// server runs: wg always, xray when enabled, awg when the AmneziaWG tunnel
+// is up.
+func (a *API) protocolFor(p string) (string, error) {
+	if strings.TrimSpace(p) == store.ProtocolAWG {
+		if a.awgm == nil {
+			return "", fmt.Errorf("amneziawg protocol is not enabled on this server (FIBR_AWG_ENABLED)")
+		}
+		return store.ProtocolAWG, nil
+	}
+	return normalizeProtocol(p, a.cfg.XrayEnabled)
 }
 
 // normalizeProtocol validates the requested device protocol: "" means the
@@ -1084,7 +1115,14 @@ func normalizeProtocol(p string, xrayEnabled bool) (string, error) {
 //	(documented in store.Device). An IPv4 is still allocated to satisfy
 //	the UNIQUE column but is unused by the protocol.
 func (a *API) provisionDevice(userID int64, name, protocol string) (*store.Device, error) {
-	ip, err := a.store.NextIPv4(a.cfg.Subnet)
+	subnet := a.cfg.Subnet
+	if protocol == store.ProtocolAWG {
+		if a.awgm == nil {
+			return nil, fmt.Errorf("amneziawg protocol is not enabled on this server")
+		}
+		subnet = a.awgm.Config().Subnet // the AmneziaWG tunnel has its own subnet
+	}
+	ip, err := a.store.NextIPv4(subnet)
 	if err != nil {
 		return nil, fmt.Errorf("no free addresses in subnet")
 	}
@@ -1108,6 +1146,9 @@ func (a *API) provisionDevice(userID int64, name, protocol string) (*store.Devic
 			return nil, fmt.Errorf("key generation failed")
 		}
 		d.Protocol = store.ProtocolWG
+		if protocol == store.ProtocolAWG {
+			d.Protocol = store.ProtocolAWG
+		}
 		d.PublicKey = priv.PublicKey().String()
 		d.PrivateKey = priv.String()
 		d.PresharedKey = psk.String()
@@ -1150,7 +1191,7 @@ func (a *API) handleAdminDevices(w http.ResponseWriter, r *http.Request) {
 	for _, u := range users {
 		names[u.ID] = u.Username
 	}
-	speeds := a.wg.DeviceSpeeds()
+	speeds := a.deviceSpeeds()
 	out := make([]deviceOut, 0, len(devices))
 	for _, d := range devices {
 		if visible != nil && !visible[d.UserID] {
@@ -1329,6 +1370,14 @@ func (a *API) renderCredential(d store.Device) (content string, code int, err er
 		}
 		return a.xray.ClientLinkAt(d, ep), 0, nil
 	}
+	if d.Protocol == store.ProtocolAWG {
+		// The AmneziaWG tunnel runs on this box only (nodes carry plain
+		// WireGuard), so it renders against the local host and AWG port.
+		if a.awgm == nil {
+			return "", http.StatusConflict, errors.New("amneziawg protocol is not enabled on this server")
+		}
+		return a.awgm.ClientConfig(d), 0, nil
+	}
 	return a.wg.ClientConfigAt(d, ep), 0, nil
 }
 
@@ -1387,6 +1436,11 @@ func (a *API) syncPeers() {
 	go func() {
 		if err := a.wg.SyncPeers(); err != nil {
 			a.log.Error("peer sync after mutation failed", "error", err)
+		}
+		if a.awgm != nil {
+			if err := a.awgm.SyncPeers(); err != nil {
+				a.log.Error("amneziawg peer sync after mutation failed", "error", err)
+			}
 		}
 	}()
 }

@@ -119,12 +119,22 @@ class ServerDevice {
 
   final int id;
   final String name;
-  final String protocol; // "wg" | "xray"
+  final String protocol; // "wg" | "xray" | "awg"
   final String ipv4;
   final bool enabled;
   final bool online;
 
   bool get isXray => protocol == 'xray';
+
+  /// AmneziaWG device: its config carries the obfuscation keys only
+  /// AmneziaVPN understands — this client's WireGuard engine cannot run it.
+  bool get isAwg => protocol == 'awg';
+
+  /// Not runnable by this client (shown with an "open it in …" plate).
+  bool get isForeign => isXray || isAwg;
+
+  /// The l10n key of that plate.
+  String get plateKey => isAwg ? 'awgPlate' : 'xrayPlate';
 
   factory ServerDevice.fromJson(Map<String, dynamic> json) => ServerDevice(
         id: (json['id'] as num).toInt(),
@@ -376,7 +386,7 @@ Future<bool> applyDeviceToEngine({
   required ServerDevice device,
 }) async {
   final config = await api.fetchDeviceConfig(device.id);
-  if (device.isXray || !config.contains('[Interface]')) return false;
+  if (device.isForeign || !config.contains('[Interface]')) return false;
   final tunnelId = tunnelIdForDevice(device.id);
   final existing = tunnels.tunnelById(tunnelId);
   if (existing == null) {
@@ -509,7 +519,7 @@ class ServerAccountController extends ChangeNotifier {
       if (!ok) return false;
     }
     final device = activeDevice;
-    if (device == null || device.isXray) return false;
+    if (device == null || device.isForeign) return false;
     try {
       if (!await applyDeviceToEngine(api: client, tunnels: tunnels, device: device)) {
         return false;

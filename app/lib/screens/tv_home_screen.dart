@@ -97,11 +97,11 @@ class _TvHomeScreenState extends State<TvHomeScreen> {
       );
       return;
     }
-    if (device.isXray) {
+    if (device.isForeign) {
       // Honest plate: a vless:// link cannot run through this client's
       // WireGuard engine.
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(l10n.t('xrayPlate'))),
+        SnackBar(content: Text(l10n.t(device.plateKey))),
       );
       return;
     }
@@ -119,7 +119,7 @@ class _TvHomeScreenState extends State<TvHomeScreen> {
       if (!mounted) return;
       if (!ok) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(l10n.t('xrayPlate'))),
+          SnackBar(content: Text(l10n.t(device.plateKey))),
         );
         return;
       }
@@ -177,7 +177,7 @@ class _TvHomeScreenState extends State<TvHomeScreen> {
         status == TunnelStatus.connecting ||
         status == TunnelStatus.disconnecting;
     final connected = status == TunnelStatus.connected;
-    final activeXray = signedIn && (account.activeDevice?.isXray ?? false);
+    final activeXray = signedIn && (account.activeDevice?.isForeign ?? false);
     final since = isSession ? sessionTunnel.connectedSince : null;
     final duration = since == null
         ? null
@@ -291,7 +291,7 @@ class _TvHomeScreenState extends State<TvHomeScreen> {
           if (activeXray) ...[
             SizedBox(height: pad(8)),
             Text(
-              l10n.t('xrayPlate'),
+              l10n.t(account.activeDevice?.plateKey ?? 'xrayPlate'),
               textAlign: TextAlign.center,
               style: TextStyle(
                 color: c.faint,
@@ -338,7 +338,7 @@ class _TvHomeScreenState extends State<TvHomeScreen> {
           child: _DeviceTileBody(
             name: d.name,
             detail: d.ipv4,
-            isXray: d.isXray,
+            isXray: d.isForeign,
             online: d.online,
           ),
         );

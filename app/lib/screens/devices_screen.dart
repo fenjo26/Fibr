@@ -92,7 +92,7 @@ class _DevicesScreenState extends State<DevicesScreen> {
     final tunnels = context.read<TunnelController>();
     if (api == null) return;
     try {
-      if (device.isXray) {
+      if (device.isForeign) {
         // Fetch anyway: stamps config_fetched_at server-side (multi-node
         // staleness signal); the link itself is unusable here.
         await api.fetchDeviceConfig(device.id);
@@ -288,8 +288,8 @@ class _DeviceCard extends StatelessWidget {
                         ),
                         const SizedBox(width: 8),
                         StatusPill(
-                          label: device.isXray ? 'Xray' : 'WG',
-                          tone: device.isXray ? PillTone.live : PillTone.off,
+                          label: device.isAwg ? 'AWG' : device.isXray ? 'Xray' : 'WG',
+                          tone: device.isForeign ? PillTone.live : PillTone.off,
                         ),
                         if (device.online) ...[
                           const SizedBox(width: 8),
@@ -308,7 +308,7 @@ class _DeviceCard extends StatelessWidget {
               ),
             ],
           ),
-          if (device.isXray) ...[
+          if (device.isForeign) ...[
             const SizedBox(height: 8),
             Row(
               children: [
@@ -316,7 +316,7 @@ class _DeviceCard extends StatelessWidget {
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
-                    l10n.t('xrayPlate'),
+                    l10n.t(device.plateKey),
                     style:
                         TextStyle(color: c.faint, fontSize: 12, fontWeight: FontWeight.w600),
                   ),

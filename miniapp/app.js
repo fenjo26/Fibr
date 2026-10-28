@@ -60,7 +60,9 @@
       qrStep3: 'Наведите камеру на код',
       btnCode: 'Код',
       protoWG: 'WireGuard — быстрый', protoVless: 'VLESS — если блокируют', protoVlessOff: 'VLESS (выключен на сервере)',
-      protoHint: 'WireGuard — обычный и самый быстрый. VLESS — если WireGuard блокируют (мобильные сети, Wi-Fi на работе).',
+      protoAWG: 'AmneziaWG — для AmneziaVPN', protoAWGOff: 'AmneziaWG (выключен на сервере)',
+      qrHintAWG: 'Конфиг AmneziaWG — отсканируйте в приложении AmneziaVPN («QR-код») или скачайте файл',
+      protoHint: 'WireGuard — обычный и самый быстрый (WireGuard, AmneziaVPN, Fibr). VLESS — если WireGuard блокируют (v2rayNG, Hiddify, AmneziaVPN). AmneziaWG — WireGuard с маскировкой, только для AmneziaVPN.',
       btnSendTg: 'Файл в Telegram', sentTg: 'Файл отправлен в чат с ботом ✅',
       errSendTg: 'Не удалось отправить. Откройте чат с ботом, нажмите «Старт» и повторите.',
       howToTitle: 'Как подключить файлом',
@@ -156,7 +158,9 @@
       qrStep3: 'Point your camera at the code',
       btnCode: 'Code',
       protoWG: 'WireGuard — fast', protoVless: 'VLESS — if blocked', protoVlessOff: 'VLESS (off on this server)',
-      protoHint: 'WireGuard is the normal, fastest one. VLESS is for networks that block WireGuard (mobile, office Wi-Fi).',
+      protoAWG: 'AmneziaWG — for AmneziaVPN', protoAWGOff: 'AmneziaWG (off on this server)',
+      qrHintAWG: 'AmneziaWG config — scan it in the AmneziaVPN app (“QR code”) or download the file',
+      protoHint: 'WireGuard is the normal, fastest one (WireGuard, AmneziaVPN, Fibr apps). VLESS is for networks that block WireGuard (v2rayNG, Hiddify, AmneziaVPN). AmneziaWG is masked WireGuard, AmneziaVPN only.',
       btnSendTg: 'File to Telegram', sentTg: 'The file is in your chat with the bot ✅',
       errSendTg: 'Could not send. Open the bot chat, press Start and try again.',
       howToTitle: 'Connect with a file',
@@ -458,7 +462,10 @@
       wgOpt.textContent = t('protoWG');
       xOpt.textContent = me.xray_enabled ? t('protoVless') : t('protoVlessOff');
       xOpt.disabled = !me.xray_enabled;
-      if (!me.xray_enabled) proto.value = 'wg';
+      var aOpt = proto.querySelector('option[value="awg"]');
+      aOpt.textContent = me.awg_enabled ? t('protoAWG') : t('protoAWGOff');
+      aOpt.disabled = !me.awg_enabled;
+      if ((proto.value === 'xray' && !me.xray_enabled) || (proto.value === 'awg' && !me.awg_enabled)) proto.value = 'wg';
       proto.title = t('protoHint');
       var name = data.user.username || (tg && tg.initDataUnsafe && tg.initDataUnsafe.user && tg.initDataUnsafe.user.first_name) || '';
       el('greeting').textContent = t('greeting', { name: name });
@@ -543,8 +550,10 @@
       var ago = d.last_handshake ? fmtAgo(d.last_handshake, t.lang) : null;
       var seen = ago ? t('lastSeen', { ago: ago }) : t('never');
       var proto = d.protocol === 'xray'
-        ? '<span class="pill pill--live proto-pill">Xray</span>'
-        : '<span class="pill pill--off proto-pill">WG</span>';
+        ? '<span class="pill pill--live proto-pill">VLESS</span>'
+        : d.protocol === 'awg'
+          ? '<span class="pill pill--live proto-pill">AWG</span>'
+          : '<span class="pill pill--off proto-pill">WG</span>';
       // Stale-config badge (both protocols — vless links embed the endpoint
       // too): a button so the delegated handler routes the tap to the QR.
       var stale = isStale(d)
@@ -898,7 +907,7 @@
   // qrSteps renders the non-technical walkthrough under a wg QR code
   // (xray keeps its own client hint).
   function qrSteps(protocol) {
-    if (protocol === 'xray') return '';
+    if (protocol === 'xray' || protocol === 'awg') return ''; // the hint above says where
     return '<ol class="qr-steps muted">' +
       '<li>' + esc(t('qrStep1')) + '</li>' +
       '<li>' + esc(t('qrStep2')) + '</li>' +
@@ -906,7 +915,7 @@
   }
 
   function qrModal(url, protocol, joinPath) {
-    var hint = protocol === 'xray' ? t('qrHintXray') : t('qrHint');
+    var hint = protocol === 'xray' ? t('qrHintXray') : protocol === 'awg' ? t('qrHintAWG') : t('qrHint');
     var joinBtn = joinPath
       ? '<button class="btn btn--secondary btn--small" id="qr-join">' + esc(t('btnCode')) + '</button>'
       : '';

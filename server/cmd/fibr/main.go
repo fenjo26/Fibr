@@ -114,6 +114,44 @@ func main() {
 		log.Error("initial peer sync failed (continuing)", "error", err)
 	}
 
+	// AmneziaWG as a per-device protocol: a second tunnel next to the plain
+	// WireGuard one (own interface/port/subnet, amneziawg-go daemon). Not
+	// fatal — WireGuard keeps working if it cannot start.
+	var awgm *wg.Manager
+	var awg2Daemon *awg.Daemon
+	if cfg.SecondAWG() && !wgm.Passive() {
+		startAWG := func() error {
+			m, err := wg.NewAWG(cfg, st, log)
+			if err != nil {
+				return err
+			}
+			d, err := awg.StartDaemon(ctx, cfg.AWGInterface, log)
+			if err != nil {
+				return err
+			}
+			if err := d.WaitReady(15 * time.Second); err != nil {
+				_ = d.Stop()
+				return err
+			}
+			if err := m.EnsureInterface(); err != nil {
+				_ = d.Stop()
+				return err
+			}
+			if err := m.SyncPeers(); err != nil {
+				log.Error("initial amneziawg peer sync failed (continuing)", "error", err)
+			}
+			awgm, awg2Daemon = m, d
+			return nil
+		}
+		if err := startAWG(); err != nil {
+			log.Error("amneziawg tunnel failed to start; the awg protocol stays off (wireguard continues)", "error", err)
+		} else {
+			log.Info("amneziawg tunnel up", "iface", cfg.AWGInterface, "port", cfg.AWGPort, "subnet", cfg.AWGSubnet)
+		}
+	} else if !cfg.AWGEnabled {
+		log.Info("FIBR_AWG_ENABLED=false, amneziawg protocol disabled")
+	}
+
 	// Xray (VLESS + Reality): render /data/xray/config.json for the xray
 	// container. Errors are not fatal — WireGuard keeps working without xray;
 	// if the manager cannot start we hard-disable xray so the API rejects
@@ -158,6 +196,11 @@ func main() {
 			log.Error("peer resync after expiry change failed", "error", err)
 			return
 		}
+		if awgm != nil {
+			if err := awgm.SyncPeers(); err != nil {
+				log.Error("amneziawg peer resync after expiry change failed", "error", err)
+			}
+		}
 		if xm != nil {
 			if err := xm.SyncClients(); err != nil {
 				log.Error("xray resync after expiry change failed", "error", err)
@@ -184,12 +227,18 @@ func main() {
 				return
 			case <-t.C:
 				wgm.CollectStats()
+				if awgm != nil {
+					awgm.CollectStats()
+				}
 				checkExpiries()
 			}
 		}
 	}()
 
 	apiSrv := api.New(cfg, st, wgm, xm, log)
+	if awgm != nil {
+		apiSrv.SetAWG(awgm)
+	}
 
 	// "One VLESS link = one device": cut links used from too many IPs at
 	// once (internal/xray/limiter.go; FIBR_XRAY_IP_LIMIT=0 turns it off).
@@ -251,5 +300,8 @@ func main() {
 	_ = httpSrv.Shutdown(shutdownCtx)
 	if awgDaemon != nil {
 		_ = awgDaemon.Stop()
+	}
+	if awg2Daemon != nil {
+		_ = awg2Daemon.Stop()
 	}
 }
