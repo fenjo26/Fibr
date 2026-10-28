@@ -318,6 +318,27 @@ if [[ -n "$BOT_TOKEN" || -n "$ADMIN_TG" ]]; then
   info "telegram settings written to .env"
 fi
 
+# ---------- low-memory preflight ----------
+# Compiling the Go server (modernc.org/sqlite in particular) peaks at
+# ~1.5-2 GB. On tiny VPS plans the build gets OOM-killed after many minutes;
+# fail fast with the exact fix instead.
+TOTAL_MB="$(free -m 2>/dev/null | awk '/^Mem:/{print $2}')"
+SWAP_MB="$(free -m 2>/dev/null | awk '/^Swap:/{print $2}')"
+TOTAL_MB="${TOTAL_MB:-4096}" # free missing? do not block
+SWAP_MB="${SWAP_MB:-0}"
+if (( TOTAL_MB + SWAP_MB < 2000 )); then
+  err "not enough memory to compile: ${TOTAL_MB}MB RAM + ${SWAP_MB}MB swap (< 2GB total)."
+  err "Create a swap file (as root) and re-run this installer:"
+  cat >&2 <<'SWAPEOF'
+    fallocate -l 2G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile
+    echo '/swapfile none swap sw 0 0' >> /etc/fstab   # survives reboots
+SWAPEOF
+  exit 1
+fi
+if (( TOTAL_MB + SWAP_MB < 3000 )); then
+  warn "low memory (${TOTAL_MB}MB RAM + ${SWAP_MB}MB swap): the first build may take 10-15 minutes"
+fi
+
 # ---------- build & run ----------
 info "building and starting containers (first build downloads Go modules, be patient)..."
 docker compose up -d --build
