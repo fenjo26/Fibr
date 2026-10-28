@@ -265,6 +265,9 @@ class AppLocalizations {
     'iosSplitNote':
         'Per-app VPN on iOS requires an MDM profile — an Apple limitation. '
         'Only the full tunnel is available in this version.',
+    'splitNotAppliedYet':
+        'The selection is saved but does not shape the VPN yet: the '
+        'WireGuard plugin exposes no per-app API. Coming in a later version.',
     // Settings
     'theme': 'Theme',
     'themeSystem': 'System',

@@ -513,18 +513,33 @@
     patchExpiry(u.id, new Date(base + 30 * 86400000).toISOString());
   }
 
-  // "Until date…": prompt for YYYY-MM-DD, validate, send end-of-day UTC.
+  // "Until date…": a small modal with a native date picker (typing
+  // YYYY-MM-DD into prompt() was error-prone), send end-of-day local time.
   function promptUntilDate(u) {
-    var raw = (prompt(t('promptDate'), '') || '').trim();
-    if (!raw) return;
-    var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(raw);
-    if (!m) { toast(t('errBadDate'), true); return; }
-    var d = new Date(+m[1], +m[2] - 1, +m[3], 23, 59, 59);
-    if (d.getFullYear() !== +m[1] || d.getMonth() !== +m[2] - 1 || d.getDate() !== +m[3]) {
-      toast(t('errBadDate'), true);
-      return;
+    var current = u.expires_at ? new Date(u.expires_at).toISOString().slice(0, 10) : '';
+    openModal('<h3>' + esc(t('btnUntilDate')) + '</h3>' +
+      '<p class="muted modal-sub">' + esc(u.username || ('#' + u.id)) + '</p>' +
+      '<input type="date" class="input" id="exp-date" value="' + esc(current) + '">' +
+      '<div class="modal-actions">' +
+      '<button class="btn btn--tertiary btn--small" id="exp-cancel">' + esc(t('btnCancel')) + '</button>' +
+      '<button class="btn" id="exp-save">' + esc(t('setSave')) + '</button></div>');
+    el('exp-date').focus();
+    el('exp-cancel').addEventListener('click', closeModal);
+    function save() {
+      var raw = el('exp-date').value;
+      if (!raw) { toast(t('errBadDate'), true); return; }
+      var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(raw);
+      if (!m) { toast(t('errBadDate'), true); return; }
+      var d = new Date(+m[1], +m[2] - 1, +m[3], 23, 59, 59);
+      if (d.getFullYear() !== +m[1] || d.getMonth() !== +m[2] - 1 || d.getDate() !== +m[3]) {
+        toast(t('errBadDate'), true);
+        return;
+      }
+      closeModal();
+      patchExpiry(u.id, d.toISOString());
     }
-    patchExpiry(u.id, d.toISOString());
+    el('exp-save').addEventListener('click', save);
+    el('exp-date').addEventListener('keydown', function (e) { if (e.key === 'Enter') save(); });
   }
 
   // "Limit…": prompt for an integer >= 0, validate client-side, PATCH.

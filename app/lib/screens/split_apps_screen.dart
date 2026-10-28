@@ -114,6 +114,21 @@ class _SplitAppsScreenState extends State<SplitAppsScreen> {
                 selected: {tunnel.splitMode},
                 onSelectionChanged: (s) => _applyMode(ctrl, tunnel, s.first),
               ),
+              // Honest signal: the wireguard_flutter plugin exposes no
+              // per-app API yet, so the selection is saved but does not
+              // shape the running VPN (tunnel_service TODO).
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Text(
+                  l10n.t('splitNotAppliedYet'),
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: FibrColors.of(context).muted,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
             ],
           ),
         ),

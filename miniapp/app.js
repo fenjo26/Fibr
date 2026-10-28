@@ -20,6 +20,7 @@
       errInvite: 'Регистрация только по приглашению. Попросите у админа ссылку-приглашение и откройте её.',
       errGeneric: 'Ошибка запроса',
       deviceLimit: 'Лимит устройств исчерпан',
+      nameRequired: 'Введите название устройства — например, «Телефон» или «Ноутбук»',
       validUntil: 'Действует до {d}',
       unlimited: 'Бессрочно',
       shortExpired: 'истёк',
@@ -83,6 +84,7 @@
       errInvite: 'Sign-up is invite-only. Ask the admin for an invite link and open it.',
       errGeneric: 'Request failed',
       deviceLimit: 'Device limit reached',
+      nameRequired: 'Enter a device name — e.g. “Phone” or “Laptop”',
       validUntil: 'Valid until {d}',
       unlimited: 'Unlimited',
       shortExpired: 'expired',
@@ -410,6 +412,7 @@
 
   el('add-device').addEventListener('click', function () {
     var name = el('new-name').value.trim();
+    if (!name) { alert(t('nameRequired')); el('new-name').focus(); return; }
     var proto = el('new-proto').value || 'wg';
     api('/api/me/devices', { method: 'POST', body: { name: name, protocol: proto } }).then(function (d) {
       el('new-name').value = '';
