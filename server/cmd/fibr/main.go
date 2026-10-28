@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/fenjo26/Fibr/internal/api"
+	"github.com/fenjo26/Fibr/internal/awg"
 	"github.com/fenjo26/Fibr/internal/bot"
 	"github.com/fenjo26/Fibr/internal/config"
 	"github.com/fenjo26/Fibr/internal/store"
@@ -41,13 +42,44 @@ func main() {
 	}
 	defer st.Close()
 
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
 	wgm, err := wg.New(cfg, st, log)
 	if err != nil {
 		log.Error("wireguard manager init failed", "error", err)
 		os.Exit(1)
 	}
+
+	// AmneziaWG engine: the amneziawg-go userspace daemon owns the TUN
+	// interface, so it must be up before the manager configures wg0. fibr is
+	// the container's init process and stays the daemon's parent: it gets a
+	// SIGTERM (then SIGKILL) through the command context on shutdown. The
+	// daemon has no config file — keys, port, peers and the AWG obfuscation
+	// parameters are all applied over its UAPI socket by the wg manager.
+	var awgDaemon *awg.Daemon
+	if cfg.WGEngine == config.EngineAWG {
+		if wgm.Passive() {
+			log.Warn("FIBR_WG_ENGINE=awg ignored: no WireGuard control plane (passive/dev mode), serving configs only")
+		} else {
+			awgDaemon, err = awg.StartDaemon(ctx, cfg.WGInterface, log)
+			if err != nil {
+				log.Error("amneziawg daemon start failed", "error", err)
+				os.Exit(1)
+			}
+			if err := awgDaemon.WaitReady(15 * time.Second); err != nil {
+				log.Error("amneziawg daemon not ready", "error", err)
+				_ = awgDaemon.Stop()
+				os.Exit(1)
+			}
+		}
+	}
+
 	if err := wgm.EnsureInterface(); err != nil {
 		log.Error("wireguard interface setup failed", "error", err)
+		if awgDaemon != nil {
+			_ = awgDaemon.Stop()
+		}
 		os.Exit(1)
 	}
 	if err := wgm.SyncPeers(); err != nil {
@@ -70,9 +102,6 @@ func main() {
 	} else {
 		log.Info("FIBR_XRAY_ENABLED not set, xray protocol disabled")
 	}
-
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 
 	// Periodic stats collection (peer transfer counters + iface throughput).
 	go func() {
@@ -120,4 +149,7 @@ func main() {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_ = httpSrv.Shutdown(shutdownCtx)
+	if awgDaemon != nil {
+		_ = awgDaemon.Stop()
+	}
 }

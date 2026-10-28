@@ -11,11 +11,26 @@ import (
 	"time"
 )
 
+// WGEngine selects the WireGuard engine serving the server's wg interface.
+type WGEngine string
+
+const (
+	// EngineKernel is the in-kernel WireGuard module (default): fibr creates
+	// the interface itself with iproute2 and drives it via wgctrl/netlink.
+	EngineKernel WGEngine = "kernel"
+	// EngineAWG is AmneziaWG: the bundled amneziawg-go userspace daemon (a
+	// wireguard-go fork) owns the TUN interface, and traffic is obfuscated
+	// with Jc/Jmin/Jmax/S1/S2/H1-H4 against DPI. Client configs then carry
+	// AmneziaWG fields and require AmneziaVPN client apps.
+	EngineAWG WGEngine = "awg"
+)
+
 // Config holds all runtime configuration.
 type Config struct {
 	Domain           string        // public domain served by Caddy (may be empty in dev)
 	APIAddr          string        // HTTP listen address of the API
 	DataDir          string        // persistent state directory (db, keys)
+	WGEngine         WGEngine      // FIBR_WG_ENGINE: kernel (default) or awg (AmneziaWG)
 	WGInterface      string        // WireGuard interface name (wg0)
 	WGPort           int           // WireGuard UDP port, published by docker
 	WGHost           string        // public endpoint host written into client configs
@@ -45,6 +60,7 @@ func Load() (*Config, error) {
 		Domain:           strings.TrimSpace(os.Getenv("FIBR_DOMAIN")),
 		APIAddr:          getenv("FIBR_API_ADDR", ":8080"),
 		DataDir:          getenv("FIBR_DATA_DIR", "./data"),
+		WGEngine:         WGEngine(getenv("FIBR_WG_ENGINE", string(EngineKernel))),
 		WGInterface:      getenv("FIBR_WG_IFACE", "wg0"),
 		WGHost:           strings.TrimSpace(os.Getenv("FIBR_WG_HOST")),
 		Subnet:           getenv("FIBR_SUBNET", "10.8.0.0/24"),
@@ -79,6 +95,11 @@ func Load() (*Config, error) {
 	}
 	if c.Secret == "" {
 		return nil, fmt.Errorf("FIBR_SECRET is required")
+	}
+	switch c.WGEngine {
+	case EngineKernel, EngineAWG:
+	default:
+		return nil, fmt.Errorf("FIBR_WG_ENGINE: %q is not one of kernel, awg", c.WGEngine)
 	}
 
 	c.WGPort = getenvInt("FIBR_WG_PORT", 51820)

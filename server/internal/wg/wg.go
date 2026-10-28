@@ -19,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/fenjo26/Fibr/internal/awg"
 	"github.com/fenjo26/Fibr/internal/config"
 	"github.com/fenjo26/Fibr/internal/store"
 	"golang.zx2c4.com/wireguard/wgctrl"
@@ -38,6 +39,7 @@ type Manager struct {
 	pubKey   wgtypes.Key
 	subnet   *net.IPNet
 	extIface string
+	awg      *awg.Params // non-nil when FIBR_WG_ENGINE=awg
 
 	mu      sync.Mutex
 	samples []ifaceSample
@@ -81,6 +83,17 @@ func New(cfg *config.Config, st *store.Store, log *slog.Logger) (*Manager, error
 	}
 	m.pubKey = m.privKey.PublicKey()
 
+	// AmneziaWG obfuscation parameters are a property of the whole server
+	// (they live on the interface, not per peer), generated once and shared
+	// by every client config.
+	if cfg.WGEngine == config.EngineAWG {
+		p, err := awg.LoadOrGenerateParams(st)
+		if err != nil {
+			return nil, fmt.Errorf("awg params: %w", err)
+		}
+		m.awg = p
+	}
+
 	if c, err := wgctrl.New(); err != nil {
 		log.Warn("WireGuard control plane unavailable, running in passive mode (configs only, no interface)", "error", err)
 	} else {
@@ -115,6 +128,9 @@ func (m *Manager) EnsureInterface() error {
 		m.log.Warn("skipping WireGuard interface setup (passive/dev mode)")
 		return nil
 	}
+	if m.cfg.WGEngine == config.EngineAWG {
+		return m.ensureInterfaceAWG()
+	}
 
 	if err := run("ip", "link", "show", m.cfg.WGInterface); err != nil {
 		if err := run("ip", "link", "add", m.cfg.WGInterface, "type", "wireguard"); err != nil {
@@ -137,6 +153,41 @@ func (m *Manager) EnsureInterface() error {
 	}); err != nil {
 		return fmt.Errorf("configure device: %w", err)
 	}
+	return m.ensureFirewall()
+}
+
+// ensureInterfaceAWG configures the interface owned by the amneziawg-go
+// userspace daemon. The daemon creates the TUN link itself (started by
+// cmd/fibr before the manager), so unlike kernel mode there is no
+// `ip link add` here — but address, MTU, firewall and the crypto/peer
+// configuration are managed exactly the same. wgctrl reaches the daemon's
+// UAPI socket through the /var/run/wireguard symlink (see internal/awg).
+func (m *Manager) ensureInterfaceAWG() error {
+	if err := run("ip", "link", "show", m.cfg.WGInterface); err != nil {
+		return fmt.Errorf("%s does not exist: the amneziawg-go daemon must create it (is it running?): %w", m.cfg.WGInterface, err)
+	}
+	if err := run("ip", "addr", "replace", m.cfg.ServerIP+"/24", "dev", m.cfg.WGInterface); err != nil {
+		return fmt.Errorf("assign address: %w", err)
+	}
+	if err := run("ip", "link", "set", "mtu", strconv.Itoa(m.cfg.MTU), "dev", m.cfg.WGInterface, "up"); err != nil {
+		return fmt.Errorf("bring up: %w", err)
+	}
+
+	port := m.cfg.WGPort
+	priv := m.privKey
+	if err := m.client.ConfigureDevice(m.cfg.WGInterface, wgtypes.Config{
+		PrivateKey:   &priv,
+		ListenPort:   &port,
+		ReplacePeers: false,
+	}); err != nil {
+		return fmt.Errorf("configure device via uapi: %w (check the /var/run/wireguard symlink to /var/run/amneziawg)", err)
+	}
+	if err := awg.ApplyParams(m.cfg.WGInterface, m.awg); err != nil {
+		return fmt.Errorf("apply amneziawg params: %w", err)
+	}
+	m.log.Info("amneziawg obfuscation applied",
+		"jc", m.awg.Jc, "jmin", m.awg.Jmin, "jmax", m.awg.Jmax,
+		"s1", m.awg.S1, "s2", m.awg.S2)
 	return m.ensureFirewall()
 }
 
@@ -207,12 +258,22 @@ func (m *Manager) SyncPeers() error {
 		if ip == nil {
 			continue
 		}
-		ka := 25 * time.Second
+		// Kernel WireGuard silently ignores keepalives for peers whose
+		// endpoint is not yet known (road warriors until their first
+		// handshake). The userspace daemon instead logs an error per attempt,
+		// so in awg mode the server does not push keepalives: the client
+		// configs carry PersistentKeepalive=25 anyway, which is what keeps
+		// the NAT mapping alive in both directions.
+		var ka *time.Duration
+		if m.cfg.WGEngine != config.EngineAWG {
+			v := 25 * time.Second
+			ka = &v
+		}
 		peers = append(peers, wgtypes.PeerConfig{
 			PublicKey:                   pub,
 			PresharedKey:                &psk,
 			AllowedIPs:                  []net.IPNet{{IP: ip, Mask: net.CIDRMask(32, 32)}},
-			PersistentKeepaliveInterval: &ka,
+			PersistentKeepaliveInterval: ka,
 		})
 	}
 	priv := m.privKey
@@ -322,21 +383,27 @@ func readIfaces(name string) (rx, tx int64) {
 	return 0, 0
 }
 
-// ClientConfig renders a wg-quick-compatible config for the device.
+// ClientConfig renders a wg-quick-compatible config for the device. In awg
+// engine mode the [Interface] section carries the AmneziaWG parameters —
+// such a config is understood by AmneziaVPN clients, not by the official
+// WireGuard app (see docs/awg.md).
 func (m *Manager) ClientConfig(d store.Device) string {
+	awgBlock := "\n"
+	if m.awg != nil {
+		awgBlock = m.awg.ClientINI() + "\n"
+	}
 	return fmt.Sprintf(`[Interface]
 PrivateKey = %s
 Address = %s/32
 DNS = %s
 MTU = %d
-
-[Peer]
+%s[Peer]
 PublicKey = %s
 PresharedKey = %s
 AllowedIPs = 0.0.0.0/0, ::/0
 Endpoint = %s:%d
 PersistentKeepalive = 25
-`, d.PrivateKey, d.IPv4, strings.Join(m.cfg.DNS, ", "), m.cfg.MTU,
+`, d.PrivateKey, d.IPv4, strings.Join(m.cfg.DNS, ", "), m.cfg.MTU, awgBlock,
 		m.PublicKey(), d.PresharedKey, m.cfg.WGHost, m.cfg.WGPort)
 }
 

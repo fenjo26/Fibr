@@ -9,6 +9,8 @@
 # Options:
 #   --domain DOMAIN   public domain pointed at this server (A record)
 #   --port PORT       WireGuard UDP port (default 51820)
+#   --awg             use the AmneziaWG engine (DPI-obfuscated WireGuard;
+#                     clients must be AmneziaVPN apps — see docs/awg.md)
 #   --xray            also enable Xray (VLESS + Reality) on TCP --xray-port
 #   --xray-sni HOST   Reality camouflage host (default www.microsoft.com; implies --xray)
 #   --xray-port PORT  Xray TCP port (default 8443; implies --xray)
@@ -23,6 +25,7 @@ set -euo pipefail
 FIBR_REPO="${FIBR_REPO:-https://github.com/fenjo26/Fibr.git}"
 FIBR_DIR="/opt/fibr"
 WG_PORT="51820"
+AWG=0
 XRAY=0
 XRAY_SNI="www.microsoft.com"
 XRAY_PORT="8443"
@@ -44,13 +47,14 @@ warn() { echo "${C_WARN}[fibr]${C_OFF} $*" >&2; }
 err()  { echo "${C_ERR}[fibr]${C_OFF} $*" >&2; }
 die()  { err "$@"; exit 1; }
 
-usage() { sed -n '2,20p' "$0" 2>/dev/null || grep -A20 '^# Fibr' "$0"; exit "${1:-0}"; }
+usage() { sed -n '2,22p' "$0" 2>/dev/null || grep -A20 '^# Fibr' "$0"; exit "${1:-0}"; }
 
 # ---------- parse args ----------
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --domain|-d)      DOMAIN="${2:-}"; shift 2 ;;
     --port|-p)        WG_PORT="${2:-}"; shift 2 ;;
+    --awg)            AWG=1; shift ;;
     --xray)           XRAY=1; shift ;;
     --xray-sni)       XRAY_SNI="${2:-}"; XRAY=1; shift 2 ;;
     --xray-port)      XRAY_PORT="${2:-}"; XRAY=1; shift 2 ;;
@@ -178,6 +182,22 @@ if [[ -f "$ENV_FILE" && $FORCE -eq 0 ]]; then
   info "keeping existing .env (use --force to regenerate secrets)"
   # adopt a possibly changed port/domain into the running env
   sed -i.bak -e "s#^FIBR_DOMAIN=.*#FIBR_DOMAIN=$DOMAIN#" -e "s#^FIBR_WG_PORT=.*#FIBR_WG_PORT=$WG_PORT#" "$ENV_FILE" && rm -f "$ENV_FILE.bak"
+  # Upgrade path: a .env written before AmneziaWG existed has no
+  # FIBR_WG_ENGINE key.
+  if ! grep -q '^FIBR_WG_ENGINE=' "$ENV_FILE"; then
+    cat >> "$ENV_FILE" <<'AEOF'
+
+# WireGuard engine (kernel/awg) — added by installer upgrade; see docs/awg.md.
+FIBR_WG_ENGINE=kernel
+AEOF
+    info "appended FIBR_WG_ENGINE=kernel to existing .env"
+  fi
+  # --awg switches the engine on an existing install too; without the flag a
+  # manually edited engine value is left untouched.
+  if [[ $AWG -eq 1 ]]; then
+    sed -i.bak -E "s|^FIBR_WG_ENGINE=.*|FIBR_WG_ENGINE=awg|" "$ENV_FILE" && rm -f "$ENV_FILE.bak"
+    info "amneziawg engine enabled in existing .env (recreate: docker compose up -d)"
+  fi
   # Upgrade path: a .env written before Xray existed has no FIBR_XRAY_* keys.
   if ! grep -q '^FIBR_XRAY_ENABLED=' "$ENV_FILE"; then
     cat >> "$ENV_FILE" <<'XEOF'
@@ -215,6 +235,9 @@ else
     -e "s#^FIBR_ADMIN_TOKEN=.*#FIBR_ADMIN_TOKEN=$ADMIN_TOKEN#" \
     -e "s#^FIBR_SECRET=.*#FIBR_SECRET=$SECRET#" \
     "$ENV_FILE" && rm -f "$ENV_FILE.bak"
+  if [[ $AWG -eq 1 ]]; then
+    sed -i.bak -E "s|^FIBR_WG_ENGINE=.*|FIBR_WG_ENGINE=awg|" "$ENV_FILE" && rm -f "$ENV_FILE.bak"
+  fi
   if [[ $XRAY -eq 1 ]]; then
     sed -i.bak -E \
       -e "s|^FIBR_XRAY_ENABLED=.*|FIBR_XRAY_ENABLED=true|" \
@@ -261,6 +284,12 @@ ${C_INFO}───────────────────────�
   Mini App    : $URL/miniapp/   (needs the Telegram bot, see below)
   WireGuard   : udp/$WG_PORT (config QR codes are in the panel)
 EOF
+if [[ $AWG -eq 1 ]]; then
+  cat <<EOF
+  Engine      : AmneziaWG (udp/$WG_PORT, DPI-obfuscated) — QR configs must be
+                imported into AmneziaVPN apps, not the official WireGuard app
+EOF
+fi
 if [[ $XRAY -eq 1 ]]; then
   cat <<EOF
   Xray        : tcp/$XRAY_PORT — VLESS+Reality, SNI $XRAY_SNI (choose the
