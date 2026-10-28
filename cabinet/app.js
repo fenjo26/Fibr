@@ -82,6 +82,15 @@
       gamesNeed: 'Выберите хотя бы одну игру',
       gamesImport: 'Отсканируйте QR в приложении WireGuard или AmneziaVPN как ВТОРОЙ туннель — основной конфиг остаётся как есть. Игровой режим включается, когда оба туннеля включены.',
       gamesNone: 'Добавьте устройство WireGuard, чтобы включить игровой режим.',
+      gamesDlConf: 'Скачать .conf',
+      gamesDlPC: '🚀 Для ПК (WireSock / TunnlTo)',
+      gamesPCHint: 'Конфиг для Windows (WireSock / TunnlTo): туннелирует только выбранную игру по имени процесса (.exe).',
+      gamesDiagTitle: 'Диагностика задержки (Ping)',
+      gamesDiagPCtoVPS: 'Ваш ПК ➔ Fibr',
+      gamesDiagVPStoHub: 'Fibr ➔ Серверы игр',
+      gamesDiagTotal: 'Расчётный пинг',
+      gamesDiagOptimal: 'Оптимальный маршрут',
+      gamesDiagGood: 'Рабочий маршрут',
       btnSendTg: 'Файл в Telegram', sentTg: 'Файл отправлен в чат с ботом ✅',
       errSendTg: 'Не удалось отправить. Откройте чат с ботом в Telegram, нажмите «Старт» и повторите.',
       addDevice: 'Добавить',
@@ -122,6 +131,8 @@
       refTitle: 'Реферальная программа',
       refHint: 'Приглашайте друзей — получайте процент с их пополнений.',
       refCopy: 'Копировать',
+      refLinkWeb: 'Ссылка на сайт (основная)',
+      refLinkTg: 'Ссылка через Telegram',
       refTerms: '{p1}% с пополнений приглашённых и {p2}% с пополнений их гостей.',
       refInvited: 'Приглашено', refEarned: 'Заработано', refPaidOut: 'Выплачено', refBalance: 'Баланс',
       refEmpty: 'Пока никого.\nОтправьте ссылку другу — он появится здесь после регистрации.',
@@ -195,6 +206,15 @@
       gamesNeed: 'Pick at least one game',
       gamesImport: 'Scan the QR in WireGuard or AmneziaVPN as a SECOND tunnel — the main config stays as is. Game mode is on when both tunnels are up.',
       gamesNone: 'Add a WireGuard device to use game mode.',
+      gamesDlConf: 'Download .conf',
+      gamesDlPC: '🚀 For PC (WireSock / TunnlTo)',
+      gamesPCHint: 'Config for Windows (WireSock / TunnlTo): tunnels game traffic by process name (.exe).',
+      gamesDiagTitle: 'Latency diagnostics (Ping)',
+      gamesDiagPCtoVPS: 'Your PC ➔ Fibr',
+      gamesDiagVPStoHub: 'Fibr ➔ Game servers',
+      gamesDiagTotal: 'Estimated ping',
+      gamesDiagOptimal: 'Optimal route',
+      gamesDiagGood: 'Good route',
       btnSendTg: 'File to Telegram', sentTg: 'The file is in your chat with the bot ✅',
       errSendTg: 'Could not send. Open the bot chat in Telegram, press Start and try again.',
       addDevice: 'Add',
@@ -235,6 +255,8 @@
       refTitle: 'Referral program',
       refHint: 'Invite friends — earn a cut of their top-ups.',
       refCopy: 'Copy',
+      refLinkWeb: 'Website link (primary)',
+      refLinkTg: 'Telegram link',
       refTerms: '{p1}% of your invitees\u2019 top-ups and {p2}% of their guests\u2019.',
       refInvited: 'Invited', refEarned: 'Earned', refPaidOut: 'Paid out', refBalance: 'Balance',
       refEmpty: 'Nobody yet.\nSend the link to a friend — they appear here after signing up.',
@@ -292,7 +314,6 @@
   el('invite-create').textContent = t('btnInviteCreate');
   el('ref-title').textContent = t('refTitle');
   el('ref-hint').textContent = t('refHint');
-  el('ref-copy').textContent = t('refCopy');
   el('key-title').textContent = t('keyTitle');
   el('key-hint').textContent = t('keyHint');
   el('key-revoke').textContent = t('keyRevoke');
@@ -773,8 +794,53 @@
       '<select class="input" id="game-dev">' + devs.map(function (d) {
         return '<option value="' + d.id + '">' + esc(d.name) + '</option>';
       }).join('') + '</select></label>' +
-      '<div class="modal-actions" style="margin-top:10px"><button class="btn" id="game-qr">' + esc(t('gamesQR')) + '</button></div>' +
+      '<div class="modal-actions" style="margin-top:12px;display:flex;flex-wrap:wrap;gap:8px">' +
+      '<button class="btn" id="game-qr">' + esc(t('gamesQR')) + '</button>' +
+      '<button class="btn btn-secondary" id="game-dl">' + esc(t('gamesDlConf')) + '</button>' +
+      '<button class="btn btn-secondary" id="game-pc">' + esc(t('gamesDlPC')) + '</button>' +
+      '</div>' +
+      '<p class="muted" style="margin-top:8px;font-size:12px">' + esc(t('gamesPCHint')) + '</p>' +
+      '<div id="game-diag" style="margin-top:12px;padding:10px 12px;border:1px solid var(--hairline);border-radius:var(--r-md);background:var(--surface);font-size:12px;display:none"></div>' +
       '</div>';
+
+    function downloadGameConf(devId, gameIds, format) {
+      var url = '/api/me/devices/' + devId + '/game-config?games=' + encodeURIComponent(gameIds.join(','));
+      if (format) url += '&format=' + encodeURIComponent(format);
+      fetch(url, { headers: { Authorization: 'Bearer ' + token } })
+        .then(function (res) {
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          var cd = res.headers.get('Content-Disposition') || '';
+          var m = cd.match(/filename="?([^"]+)"?/);
+          return res.text().then(function (text) { return { text: text, name: m ? m[1] : 'fibr-game.conf' }; });
+        })
+        .then(function (f) {
+          var a = document.createElement('a');
+          a.href = URL.createObjectURL(new Blob([f.text], { type: 'application/octet-stream' }));
+          a.download = f.name;
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+        })
+        .catch(fail);
+    }
+
+    var t0 = Date.now();
+    fetch('/api/dns/status').then(function () {
+      var clientPing = Date.now() - t0;
+      fetch('/api/games/diagnostics').then(function (r) { return r.json(); }).then(function (diag) {
+        var dbox = el('game-diag');
+        if (!dbox || !diag || !diag.hubs || !diag.hubs.length) return;
+        var validHubs = diag.hubs.filter(function (h) { return h.rtt_ms >= 0; });
+        var best = validHubs.sort(function (a, b) { return a.rtt_ms - b.rtt_ms; })[0];
+        var totalEst = best ? (clientPing + best.rtt_ms) : clientPing;
+        var badge = totalEst <= 45 ? '🟢 ' + esc(t('gamesDiagOptimal')) : '🟡 ' + esc(t('gamesDiagGood'));
+        dbox.style.display = 'block';
+        dbox.innerHTML = '<div style="font-weight:700;margin-bottom:4px">⚡ ' + esc(t('gamesDiagTitle')) + ' — ' + badge + '</div>' +
+          '<div style="color:var(--muted)">' + esc(t('gamesDiagPCtoVPS')) + ': <b>' + clientPing + ' ms</b> | ' +
+          esc(t('gamesDiagVPStoHub')) + ' (' + (best ? esc(best.city) : 'EU') + '): <b>' + (best ? best.rtt_ms : '~5') + ' ms</b></div>' +
+          '<div style="margin-top:4px">' + esc(t('gamesDiagTotal')) + ': <b style="color:var(--accent,#4da6ff)">~' + totalEst + ' ms</b></div>';
+      }).catch(function () {});
+    }).catch(function () {});
 
     el('game-qr').addEventListener('click', function () {
       var ids = [];
@@ -794,6 +860,22 @@
             '<div class="qr-wrap"><img src="' + url + '" alt="QR"></div>');
         })
         .catch(fail);
+    });
+
+    el('game-dl').addEventListener('click', function () {
+      var ids = [];
+      Array.prototype.forEach.call(document.querySelectorAll('.game-chk:checked'), function (c) { ids.push(c.value); });
+      if (!ids.length) { alert(t('gamesNeed')); return; }
+      var dev = el('game-dev').value;
+      downloadGameConf(dev, ids, '');
+    });
+
+    el('game-pc').addEventListener('click', function () {
+      var ids = [];
+      Array.prototype.forEach.call(document.querySelectorAll('.game-chk:checked'), function (c) { ids.push(c.value); });
+      if (!ids.length) { alert(t('gamesNeed')); return; }
+      var dev = el('game-dev').value;
+      downloadGameConf(dev, ids, 'wiresock');
     });
   }
 
@@ -1060,9 +1142,21 @@
 
   /* ---------- referral section (every account) ---------- */
 
-  var refData = null; // last /api/me/referrals payload (for the copy button)
+  var refData = null; // last /api/me/referrals payload (for the copy buttons)
 
-  // Same card as the Mini App: share link, terms, balance tiles, the invited
+  // One share-link row: label + link + its own copy button. The site link is
+  // the primary referral door (docs/referrals.md), the t.me deep link second.
+  function refLinkRow(kind, label, link) {
+    return '<div class="ref-link" data-kind="' + kind + '">' +
+      '<div class="ref-link-head">' +
+      '<span class="muted">' + esc(label) + '</span>' +
+      '<button class="btn btn--tertiary btn--small ref-copy" data-kind="' + kind + '">' + esc(t('refCopy')) + '</button>' +
+      '</div>' +
+      '<pre class="config-pre mono" data-kind="' + kind + '">' + esc(link) + '</pre>' +
+      '</div>';
+  }
+
+  // Same card as the Mini App: share links, terms, balance tiles, the invited
   // list, the owner's contact line for withdrawals (docs/referrals.md).
   function loadRefSection() {
     api('/api/me/referrals').then(function (ref) {
@@ -1074,6 +1168,14 @@
       el('ref-view').classList.remove('hidden');
       var money = function (m) { return fmtMoney(m, ref.currency); };
       var stats = ref.stats || {};
+      // New servers send web_link + tg_link; older ones only the bot link —
+      // degrade to the single row instead of showing a broken pair.
+      var isTg = function (s) { return String(s || '').indexOf('https://t.me/') === 0; };
+      var web = ref.web_link || (isTg(ref.link) ? null : ref.link);
+      var tg = ref.tg_link || (isTg(ref.link) ? ref.link : null);
+      var links =
+        (web ? refLinkRow('web', t('refLinkWeb'), web) : '') +
+        (tg ? refLinkRow('tg', t('refLinkTg'), tg) : '');
       var rows = (ref.referrals || []).map(function (r) {
         return '<div class="ref-row">' +
           '<span class="grow"><b>' + esc(r.username || ('#' + r.id)) + '</b>' +
@@ -1082,7 +1184,7 @@
           '</div>';
       }).join('');
       el('ref-body').innerHTML =
-        '<pre class="config-pre mono">' + esc(ref.link) + '</pre>' +
+        '<div class="ref-links">' + links + '</div>' +
         '<p class="muted ref-terms">' + esc(t('refTerms', { p1: ref.percent_l1, p2: ref.percent_l2 })) + '</p>' +
         '<div class="card summary ref-card">' +
         '<div class="summary-row">' +
@@ -1103,12 +1205,19 @@
     });
   }
 
-  el('ref-copy').addEventListener('click', function () {
-    var link = refData && refData.link;
+  // Copy buttons live inside the rendered rows: one per link (the site link
+  // and the t.me deep link), so each copies exactly what is shown above it.
+  el('ref-body').addEventListener('click', function (ev) {
+    var btn = ev.target.closest ? ev.target.closest('button.ref-copy') : null;
+    if (!btn || !refData) return;
+    var isTg = function (s) { return String(s || '').indexOf('https://t.me/') === 0; };
+    var link = btn.getAttribute('data-kind') === 'web'
+      ? (refData.web_link || (isTg(refData.link) ? null : refData.link))
+      : (refData.tg_link || (isTg(refData.link) ? refData.link : null));
     if (!link) return;
     navigator.clipboard.writeText(link).then(function () {
-      el('ref-copy').textContent = t('copied');
-      setTimeout(function () { el('ref-copy').textContent = t('refCopy'); }, 1500);
+      btn.textContent = t('copied');
+      setTimeout(function () { btn.textContent = t('refCopy'); }, 1500);
     });
   });
 

@@ -321,6 +321,26 @@
   font-size: 12px;
 }
 
+/* Two share links: the site link first, the t.me deep link second. */
+.ref-links {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.ref-link-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 13px;
+}
+
+.ref-link > .config-pre {
+  margin: 6px 0 0;
+  font-size: 12px;
+}
+
 .ref-terms {
   margin: -4px 0 0;
   font-size: 13px;
