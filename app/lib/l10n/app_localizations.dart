@@ -202,6 +202,17 @@ class AppLocalizations {
     'signOut': 'Выйти из аккаунта',
     'connectOnLaunch': 'Подключаться при запуске',
     'connectOnLaunchHint': 'Активное устройство поднимется сразу после запуска',
+    // TV UI (feature 2)
+    'tvJoinTitle': 'Подключение по коду',
+    'tvJoinHint':
+        'Возьмите код в мини-приложении (Устройства → Код) и введите его с пульта. '
+        'Сначала — адрес сервера, затем код.',
+    'tvServerField': 'Сервер',
+    'tvCodeField': 'Код подключения',
+    'tvPickDevice': 'Выбрать устройство',
+    'tvNoDevicesAccount': 'Нет устройств — добавьте устройство в мини-приложении',
+    'tvNoTunnels': 'Нет туннелей — введите код подключения',
+    'tvAddByCode': 'Добавить по коду',
   };
 
   static const _en = {
@@ -379,6 +390,17 @@ class AppLocalizations {
     'signOut': 'Sign out',
     'connectOnLaunch': 'Connect on launch',
     'connectOnLaunchHint': 'The active device comes up right after launch',
+    // TV UI (feature 2)
+    'tvJoinTitle': 'Connect with a code',
+    'tvJoinHint':
+        'Take the code from the Mini App (Devices → Code) and type it with the '
+        'remote. First the server address, then the code.',
+    'tvServerField': 'Server',
+    'tvCodeField': 'Join code',
+    'tvPickDevice': 'Choose a device',
+    'tvNoDevicesAccount': 'No devices yet — add one in the Mini App',
+    'tvNoTunnels': 'No tunnels yet — enter a join code',
+    'tvAddByCode': 'Add with a code',
   };
 }
 

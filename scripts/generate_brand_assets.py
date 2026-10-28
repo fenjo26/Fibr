@@ -11,7 +11,7 @@ Generates SVG and PNG assets for:
 
 import math
 import os
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFont
 
 SQRT3 = math.sqrt(3)
 
@@ -241,6 +241,72 @@ def generate_logo_horizontal_svg(theme='brand', width=600, height=160):
   <text x="172" y="126" font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-weight="600" font-size="16" fill="{vpn_label_color}" letter-spacing="4">FAST • PRIVATE • MESH</text>
 </svg>'''
 
+def generate_tv_banner(width=320, height=180):
+    """Generates the Android TV leanback banner (320x180 px, dark canvas).
+
+    Composed from the same brand geometry/colors as the icons: the tri-node
+    mark on the left, the "Fibr" wordmark and the tagline on the right.
+    Rendered at 2x and downsampled with Lanczos for crisp small text.
+    """
+    SS = 2
+    W, H = width * SS, height * SS
+    img = Image.new('RGBA', (W, H), COLORS['canvas'])
+    draw = ImageDraw.Draw(img)
+
+    # Subtle hairline frame, as on the launcher icons.
+    draw.rounded_rectangle(
+        [0, 0, W - 1, H - 1], radius=int(H * 0.10),
+        outline=COLORS['hairline'], width=2)
+
+    # The mark (transparent background, brand theme) on the left.
+    mark = render_png(size=int(H * 0.66), bg_type='transparent', theme='brand')
+    img.paste(mark, (int(H * 0.14), (H - mark.height) // 2), mark)
+
+    # Wordmark + tagline on the right.
+    text_x = int(H * 0.95)
+    font_bold = _load_banner_font(int(H * 0.30), bold=True)
+    font_tag = _load_banner_font(int(H * 0.075), bold=False)
+    draw.text((text_x, int(H * 0.42)), 'Fibr',
+              font=font_bold, fill=COLORS['ink'], anchor='lm')
+    _draw_spaced_text(draw, (text_x + int(H * 0.008), int(H * 0.70)),
+                      'FAST • PRIVATE • MESH', font_tag, COLORS['primary'],
+                      spacing=int(H * 0.012))
+
+    return img.resize((width, height), Image.Resampling.LANCZOS)
+
+
+def _load_banner_font(size, bold=True):
+    """Best-effort heavy sans font across macOS / Linux / CI runners."""
+    candidates = [
+        '/Library/Fonts/Inter-ExtraBold.ttf',
+        '/Library/Fonts/Inter-Bold.ttf',
+        '/System/Library/Fonts/Supplemental/Arial Bold.ttf'
+        if bold else '/System/Library/Fonts/Supplemental/Arial.ttf',
+        '/System/Library/Fonts/Helvetica.ttc',
+        '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf'
+        if bold else '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',
+    ]
+    for path in candidates:
+        if os.path.exists(path):
+            try:
+                return ImageFont.truetype(path, size)
+            except OSError:
+                continue
+    try:
+        return ImageFont.load_default(size=size)  # Pillow >= 10.1
+    except TypeError:
+        return ImageFont.load_default()
+
+
+def _draw_spaced_text(draw, pos, text, font, fill, spacing=2):
+    """Letter-spaced text (Pillow has no tracking knob); 'lm' anchored."""
+    x, y = pos
+    for ch in text:
+        draw.text((x, y), ch, font=font, fill=fill, anchor='lm')
+        bbox = draw.textbbox((0, 0), ch, font=font, anchor='lm')
+        x += (bbox[2] - bbox[0]) + spacing
+
+
 def generate_android_vector_foreground():
     """Generates Android vector drawable (108dp viewport, centered 72dp safe zone)."""
     # Safe zone for adaptive icon is 66-72dp in center
@@ -386,7 +452,12 @@ def main():
     play_icon = render_png(size=512, bg_type='squircle', theme='brand')
     play_icon.save(os.path.join(base_dir, 'app', 'android', 'playstore-icon-512.png'))
 
-    print('4. Generating Web & Cabinet Assets ...')
+    print('4. Generating Android TV banner (leanback, 320x180) ...')
+    banner_dir = os.path.join(android_res, 'drawable-xhdpi')
+    os.makedirs(banner_dir, exist_ok=True)
+    generate_tv_banner().save(os.path.join(banner_dir, 'banner.png'))
+
+    print('5. Generating Web & Cabinet Assets ...')
     web_dirs = [
         os.path.join(base_dir, 'cabinet'),
         os.path.join(base_dir, 'miniapp'),

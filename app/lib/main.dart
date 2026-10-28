@@ -8,6 +8,9 @@ import 'screens/add_tunnel_screen.dart';
 import 'screens/home_screen.dart';
 import 'screens/login_screen.dart';
 import 'screens/tunnel_list_screen.dart';
+import 'screens/tv_home_screen.dart';
+import 'screens/tv_join_screen.dart';
+import 'services/app_list_service.dart';
 import 'services/deep_link_service.dart';
 import 'services/join_service.dart';
 import 'services/server_api_service.dart';
@@ -20,6 +23,11 @@ Future<void> main() async {
 
   final settings = SettingsController();
   await settings.load();
+
+  // TV detection (feature 2): UiModeManager → TELEVISION via the fibr/apps
+  // channel; everything else (phones, iOS, desktop, web) reports false.
+  // The flag lives on SettingsController and is NOT persisted.
+  settings.setTv(await AppListService().isTv());
 
   final account = ServerAccountController();
   await account.load();
@@ -89,10 +97,13 @@ class _FibrAppState extends State<FibrApp> {
     final joinUrl =
         DeepLinkService.decodeJoinLink(url) ?? JoinService.extractJoinUrl(url);
     if (joinUrl != null) {
+      // On TV the phone join screen (with its camera tab) is the wrong
+      // place — prefill the TV onboarding from the link instead.
+      final target = widget.settings.isTv
+          ? TvJoinScreen(initialJoinUrl: joinUrl)
+          : AddTunnelScreen(initialJoinUrl: joinUrl);
       _navKey.currentState?.push(
-        MaterialPageRoute<void>(
-          builder: (_) => AddTunnelScreen(initialJoinUrl: joinUrl),
-        ),
+        MaterialPageRoute<void>(builder: (_) => target),
       );
       return;
     }
@@ -118,11 +129,12 @@ class _FibrAppState extends State<FibrApp> {
         builder: (context, settings, _) {
           final locale = settings.resolvedLocale;
           final l10n = AppLocalizations(locale ?? const Locale('en'));
+          final tv = settings.isTv;
           return MaterialApp(
             title: 'Fibr',
             debugShowCheckedModeBanner: false,
-            theme: AppTheme.light(),
-            darkTheme: AppTheme.dark(),
+            theme: tv ? AppTheme.tvLight() : AppTheme.light(),
+            darkTheme: tv ? AppTheme.tvDark() : AppTheme.dark(),
             themeMode: settings.themeMode,
             locale: locale,
             supportedLocales: const [Locale('en'), Locale('ru')],
@@ -138,6 +150,8 @@ class _FibrAppState extends State<FibrApp> {
 }
 
 /// Decides what the app opens into:
+///  - on a TV (feature 2): the 10-foot home (account or tunnels), or the
+///    join-code onboarding with the on-screen keyboard on a cold start;
 ///  - a signed-in account → the simple-mode Home screen;
 ///  - otherwise manually imported tunnels → the classic tunnel list
 ///    (existing users keep their app);
@@ -148,10 +162,13 @@ class AppRoot extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final account = context.watch<ServerAccountController>();
-    if (account.isSignedIn) return const HomeScreen();
-    if (context.watch<TunnelController>().tunnels.isNotEmpty) {
-      return const TunnelListScreen();
+    final hasTunnels = context.watch<TunnelController>().tunnels.isNotEmpty;
+    if (context.watch<SettingsController>().isTv) {
+      if (account.isSignedIn || hasTunnels) return const TvHomeScreen();
+      return const TvJoinScreen();
     }
+    if (account.isSignedIn) return const HomeScreen();
+    if (hasTunnels) return const TunnelListScreen();
     return const LoginScreen();
   }
 }

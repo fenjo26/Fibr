@@ -64,7 +64,7 @@
       codeExpires: 'Действует {t}',
       codeMin: 'мин',
       codeExpired: 'Код истёк — закройте окно и сгенерируйте новый',
-      configTitle: 'Конфигурация',
+      configTitle: 'Конфигурация', downloadConf: 'Скачать .conf',
       copy: 'Копировать', copied: 'Скопировано', close: 'Закрыть',
       footHint: 'QR также совместим с официальным приложением WireGuard',
       usersTitle: 'Пользователи',
@@ -141,7 +141,7 @@
       codeExpires: 'Valid {t}',
       codeMin: 'min',
       codeExpired: 'The code has expired — close and generate a new one',
-      configTitle: 'Configuration',
+      configTitle: 'Configuration', downloadConf: 'Download .conf',
       copy: 'Copy', copied: 'Copied', close: 'Close',
       footHint: 'The QR also works with the official WireGuard app',
       usersTitle: 'Users',
@@ -836,15 +836,26 @@
         return res.text();
       })
       .then(function (text) {
+        // One-device flow: saving the .conf lets the WireGuard app import it
+        // via "+" -> "Import from file" — no second phone to scan the QR.
         openModal('<h3>' + esc(t('configTitle')) + '</h3>' +
           '<pre class="config-pre mono">' + esc(text) + '</pre>' +
           '<div class="modal-actions">' +
           '<button class="btn btn--tertiary btn--small" id="copy-cfg">' + esc(t('copy')) + '</button>' +
+          '<button class="btn btn--secondary btn--small" id="dl-cfg">' + esc(t('downloadConf')) + '</button>' +
           '<button class="btn" id="close-cfg">' + esc(t('close')) + '</button></div>');
         el('copy-cfg').addEventListener('click', function () {
           navigator.clipboard.writeText(text).then(function () {
             el('copy-cfg').textContent = t('copied');
           });
+        });
+        el('dl-cfg').addEventListener('click', function () {
+          var a = document.createElement('a');
+          a.href = URL.createObjectURL(new Blob([text], { type: 'text/plain' }));
+          a.download = 'fibr-' + id + '.conf';
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
         });
         el('close-cfg').addEventListener('click', closeModal);
       })

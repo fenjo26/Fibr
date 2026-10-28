@@ -1,7 +1,15 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- QR scanning (mobile_scanner requests it at runtime). -->
+    <!-- QR scanning (mobile_scanner requests it at runtime). Optional:
+         Android TV devices have no camera and the app stays installable. -->
     <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+
+    <!-- TV: navigable by D-pad — the touchscreen is optional (Android TV). -->
+    <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
+    <!-- Presence in the TV launcher row; required=false keeps phones able
+         to install the same universal APK. -->
+    <uses-feature android:name="android.software.leanback" android:required="false" />
 
     <!-- WireGuard tunnel. -->
     <uses-permission android:name="android.permission.INTERNET" />
@@ -18,7 +26,8 @@
         android:label="Fibr"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
-        android:roundIcon="@mipmap/ic_launcher_round">
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:banner="@drawable/banner">
 
         <activity
             android:name=".MainActivity"
@@ -37,6 +46,13 @@
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+
+            <!-- Android TV launcher row (feature 2); the banner above is the
+                 320x180 tile shown there. Same single universal APK. -->
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
             </intent-filter>
 
             <!-- fibr://import/<base64 wg-quick config> and

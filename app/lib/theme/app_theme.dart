@@ -80,6 +80,75 @@ class AppTheme {
   static ThemeData dark() => _build(FibrColors.dark, Brightness.dark);
   static ThemeData light() => _build(FibrColors.light, Brightness.light);
 
+  // ---------------------------------------------------------------------
+  // TV (10-foot) sizing: separate values layered ON TOP of the phone
+  // themes, so the phone theme above stays untouched. Text 20→28sp
+  // (×1.4), paddings ×1.5 — enough to read from a couch without breaking
+  // Material density.
+  // ---------------------------------------------------------------------
+
+  /// Body text 20sp on a phone reads as 28sp on TV (feature 2 spec).
+  static const tvTextScale = 1.4;
+
+  /// Control paddings ×1.5 for remote-friendly hit areas.
+  static const tvPaddingScale = 1.5;
+
+  /// Convenience for one-off TV paddings: tvPad(16) → 24.
+  static double tvPad(double v) => v * tvPaddingScale;
+
+  static ThemeData tvDark() => _tv(FibrColors.dark, Brightness.dark);
+  static ThemeData tvLight() => _tv(FibrColors.light, Brightness.light);
+
+  /// Phone theme with TV text/padding scales re-applied (same tokens, same
+  /// colors — only the sizes move).
+  static ThemeData _tv(FibrColors c, Brightness brightness) {
+    final base = _build(c, brightness);
+    final text = base.textTheme.apply(fontSizeFactor: tvTextScale);
+    return base.copyWith(
+      textTheme: text,
+      appBarTheme: base.appBarTheme.copyWith(titleTextStyle: text.titleLarge),
+      filledButtonTheme: FilledButtonThemeData(
+        style: FilledButton.styleFrom(
+          backgroundColor: c.primary,
+          foregroundColor: c.onPrimary,
+          disabledBackgroundColor: c.surface2,
+          disabledForegroundColor: c.muted,
+          textStyle: text.labelLarge,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          padding: EdgeInsets.symmetric(
+            horizontal: 16 * tvPaddingScale,
+            vertical: 12 * tvPaddingScale,
+          ),
+        ),
+      ),
+      outlinedButtonTheme: OutlinedButtonThemeData(
+        style: OutlinedButton.styleFrom(
+          foregroundColor: c.ink,
+          backgroundColor: c.surface,
+          side: BorderSide(color: c.hairline),
+          textStyle: text.labelLarge,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          padding: EdgeInsets.symmetric(
+            horizontal: 16 * tvPaddingScale,
+            vertical: 12 * tvPaddingScale,
+          ),
+        ),
+      ),
+      textButtonTheme: TextButtonThemeData(
+        style: TextButton.styleFrom(
+          foregroundColor: c.secondaryStrong,
+          textStyle: text.labelLarge,
+        ),
+      ),
+      inputDecorationTheme: base.inputDecorationTheme.copyWith(
+        contentPadding: EdgeInsets.symmetric(
+          horizontal: 12 * tvPaddingScale,
+          vertical: 10 * tvPaddingScale,
+        ),
+      ),
+    );
+  }
+
   static ThemeData _build(FibrColors c, Brightness brightness) {
     final scheme = ColorScheme(
       brightness: brightness,

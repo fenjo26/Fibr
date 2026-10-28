@@ -14,7 +14,7 @@ BASE="https://github.com/${REPO}/releases/latest/download"
 
 mkdir -p "$DIR"
 ok=0
-for f in Fibr-Android.apk Fibr-Windows.zip Fibr-macOS.zip; do
+for f in Fibr-Android.apk Fibr-Android-full.apk Fibr-Windows.zip Fibr-macOS.zip; do
   echo "fetching $f ..."
   if curl -fSL --retry 3 -o "$DIR/$f.tmp" "$BASE/$f"; then
     mv "$DIR/$f.tmp" "$DIR/$f"

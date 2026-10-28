@@ -36,21 +36,31 @@ jobs:
           cache: true
       - run: flutter pub get
       - run: flutter test
+      # arm64-only APK is ~3x smaller than the universal one (25MB vs 75MB) —
+      # it covers virtually every phone and TV made in the last ~8 years;
+      # the universal build is kept as Fibr-Android-full.apk for odd arches.
+      - run: flutter build apk --release --split-per-abi
       - run: flutter build apk --release
-      - name: Sign APK with ephemeral CI keystore
+      - name: Sign APKs with ephemeral CI keystore
         run: |
           keytool -genkeypair -v -keystore $HOME/fibr-ci.keystore -alias fibr \
             -keyalg RSA -keysize 2048 -validity 10000 \
             -storepass fibr-ci -keypass fibr-ci -dname "CN=Fibr CI"
           BT=$(ls -d $ANDROID_HOME/build-tools/* | sort -V | tail -1)
-          "$BT/zipalign" -f 4 build/app/outputs/flutter-apk/app-release.apk fibr-aligned.apk
-          "$BT/apksigner" sign --ks $HOME/fibr-ci.keystore \
-            --ks-pass pass:fibr-ci --key-pass pass:fibr-ci \
-            --out Fibr-Android.apk fibr-aligned.apk
+          sign () {
+            "$BT/zipalign" -f 4 "$1" fibr-aligned.apk
+            "$BT/apksigner" sign --ks $HOME/fibr-ci.keystore \
+              --ks-pass pass:fibr-ci --key-pass pass:fibr-ci \
+              --out "$2" fibr-aligned.apk
+          }
+          sign build/app/outputs/flutter-apk/app-arm64-v8a-release.apk Fibr-Android.apk
+          sign build/app/outputs/flutter-apk/app-release.apk Fibr-Android-full.apk
       - uses: actions/upload-artifact@v4
         with:
           name: Fibr-Android
-          path: app/Fibr-Android.apk
+          path: |
+            app/Fibr-Android.apk
+            app/Fibr-Android-full.apk
           if-no-files-found: error
 
   windows:

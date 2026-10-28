@@ -2,6 +2,83 @@ import 'package:flutter/material.dart';
 
 import '../theme/app_theme.dart';
 
+/// D-pad-friendly interactive tile for the TV UI (feature 2): the FibrCard
+/// look (surface fill, hairline, radius 16) plus a 3px focus ring in
+/// `secondary` (#0075ff) while the node holds focus, so remote users can
+/// always see where the cursor is. InkWell activates on the remote's
+/// center/Enter button out of the box. Wrap EVERY interactive element on a
+/// TV screen in this (plain Containers and Gestures are unreachable with a
+/// D-pad).
+class FocusableTile extends StatelessWidget {
+  const FocusableTile({
+    super.key,
+    this.onTap,
+    required this.child,
+    this.onFocusChange,
+    this.autofocus = false,
+    this.selected = false,
+    this.padding = const EdgeInsets.all(16),
+    this.width,
+    this.height,
+  });
+
+  /// Null makes the tile a pure focus target (no activation) — used for
+  /// TV input fields whose focus selects the on-screen keyboard target.
+  final VoidCallback? onTap;
+  final Widget child;
+
+  /// Mirrors Focus.onFocusChange — TV screens use it to mark the field the
+  /// on-screen keyboard types into, etc.
+  final ValueChanged<bool>? onFocusChange;
+
+  final bool autofocus;
+
+  /// Persistent selection state (the active device card): a 2px secondary
+  /// outline even when not focused.
+  final bool selected;
+
+  final EdgeInsetsGeometry padding;
+  final double? width;
+  final double? height;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = FibrColors.of(context);
+    final radius = BorderRadius.circular(16);
+    return Focus(
+      autofocus: autofocus,
+      onFocusChange: onFocusChange,
+      child: Builder(
+        builder: (context) {
+          final focused = Focus.of(context).hasFocus;
+          return AnimatedContainer(
+            duration: const Duration(milliseconds: 120),
+            curve: Curves.easeOut,
+            width: width,
+            height: height,
+            decoration: BoxDecoration(
+              borderRadius: radius,
+              border: Border.all(
+                color: focused || selected ? c.secondary : c.hairline,
+                width: focused ? 3 : (selected ? 2 : 1),
+              ),
+            ),
+            child: Material(
+              color: c.surface,
+              borderRadius: radius,
+              clipBehavior: Clip.antiAlias,
+              child: InkWell(
+                onTap: onTap,
+                child: Padding(padding: padding, child: child),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+
 /// Surface card from tokens.css: surface fill, 1px hairline, radius 16,
 /// no elevation — depth comes from canvas → surface, not shadows.
 class FibrCard extends StatelessWidget {
