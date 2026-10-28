@@ -177,12 +177,12 @@ func (b *Bot) handleUpdate(ctx context.Context, u tgUpdate) {
 		}
 		code, err := api.GenerateInviteCode()
 		if err != nil {
-			b.sendMessage(ctx, msg.Chat.ID, t(lang, "statsError"), nil)
+			b.sendMessage(ctx, msg.Chat.ID, t(lang, "inviteError"), nil)
 			return
 		}
 		if err := b.store.CreateInvite(&store.Invite{Code: code, CreatedBy: user.ID}); err != nil {
 			b.log.Warn("bot: cannot create invite", "error", err)
-			b.sendMessage(ctx, msg.Chat.ID, t(lang, "statsError"), nil)
+			b.sendMessage(ctx, msg.Chat.ID, t(lang, "inviteError"), nil)
 			return
 		}
 		b.sendMessage(ctx, msg.Chat.ID, t(lang, "inviteCreated", code, api.InviteLink(b.cfg.Domain, code)), nil)
@@ -376,6 +376,7 @@ var texts = map[string]map[string]string{
 		"denied":          "⛔ Команда доступна только администраторам.",
 		"unknown":         "Не понял команду. /help — список команд.",
 		"inviteCreated":   "🎟 Одноразовое приглашение:\n\nКод: <code>%s</code>\nСсылка: %s\n\nОдин человек сможет зарегистрироваться, открыв ссылку в Telegram.",
+		"inviteError":     "Не удалось создать приглашение, смотрите логи сервера.",
 		"referralCard":    "🎁 Реферальная программа\n\nВаш код: <code>%s</code>\nСсылка: %s\n\nОтправьте их другу — с каждого его пополнения вам идёт процент. Баланс и подробности — в приложении.",
 		"openApp":         "Открыть Fibr",
 		"statsHeader":     "📊 <b>Статистика Fibr</b>",
@@ -394,6 +395,7 @@ var texts = map[string]map[string]string{
 		"denied":          "⛔ This command is admin-only.",
 		"unknown":         "Unknown command. /help lists commands.",
 		"inviteCreated":   "🎟 One-time invite:\n\nCode: <code>%s</code>\nLink: %s\n\nOne person can register by opening the link in Telegram.",
+		"inviteError":     "Failed to create an invite, check server logs.",
 		"referralCard":    "🎁 Referral program\n\nYour code: <code>%s</code>\nLink: %s\n\nShare them with a friend — you earn a cut of every top-up they make. Balance and details are in the app.",
 		"openApp":         "Open Fibr",
 		"statsHeader":     "📊 <b>Fibr stats</b>",
