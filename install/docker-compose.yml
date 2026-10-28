@@ -48,6 +48,27 @@ services:
     profiles:
       - xray
 
+  # One-click updater sidecar (docs/updates.md). Opt-in via the compose
+  # profile "updater" (install.sh --with-updater sets COMPOSE_PROFILES).
+  # It pulls the repo checkout mounted at /repo and rebuilds THIS stack
+  # through the docker socket when the superadmin presses "Update" in the
+  # admin panel. SECURITY TRADE-OFF: docker.sock access means the updater
+  # is effectively root on the host — enable it only on a server you trust.
+  # No published ports: fibr talks to it at http://updater:8912 inside the
+  # compose network, and the trigger is admin-token-gated in fibr.
+  updater:
+    build:
+      context: ..
+      dockerfile: install/Dockerfile.updater
+    restart: unless-stopped
+    environment:
+      FIBR_REPO_DIR: /repo
+    volumes:
+      - ..:/repo:rw
+      - /var/run/docker.sock:/var/run/docker.sock
+    profiles:
+      - updater
+
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped

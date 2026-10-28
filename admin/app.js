@@ -95,7 +95,17 @@
       nodeTokenDocs: 'Как поднять ноду — docs/multinode.md',
       copyFallback: 'Текст выделен — скопируйте вручную (Ctrl+C)',
       btnDone: 'Готово',
-      activeNodeLine: 'Активная нода: {node} ({host})'
+      activeNodeLine: 'Активная нода: {node} ({host})',
+      /* one-click updates (docs/updates.md) */
+      updateBadge: 'Обновление доступно',
+      updTitle: 'Обновление Fibr',
+      updCurrentLabel: 'Текущая версия',
+      updAvailLabel: 'Доступна',
+      updWarn: 'Стек пересоберётся: панель и Mini App будут недоступны ~1–3 минуты, соединение оборвётся — это нормально.',
+      btnUpdate: 'Обновить',
+      updStarted: 'Обновление запущено…',
+      updWaiting: 'Ждём, пока сервер пересоберётся; страница перезагрузится сама.',
+      updInProgress: 'Обновление уже идёт'
     },
     en: {
       loginHint: 'Enter the admin token from /opt/fibr/install/.env (FIBR_ADMIN_TOKEN)',
@@ -189,7 +199,17 @@
       nodeTokenDocs: 'How to set up a node — docs/multinode.md',
       copyFallback: 'Text selected — copy it manually (Ctrl+C)',
       btnDone: 'Done',
-      activeNodeLine: 'Active node: {node} ({host})'
+      activeNodeLine: 'Active node: {node} ({host})',
+      /* one-click updates (docs/updates.md) */
+      updateBadge: 'Update available',
+      updTitle: 'Fibr update',
+      updCurrentLabel: 'Current version',
+      updAvailLabel: 'Available',
+      updWarn: 'The stack will be rebuilt: the panel and Mini App go down for ~1–3 minutes and this connection drops — that is expected.',
+      btnUpdate: 'Update',
+      updStarted: 'Update started…',
+      updWaiting: 'Waiting for the server to rebuild; this page reloads by itself.',
+      updInProgress: 'An update is already running'
     }
   };
 
@@ -267,6 +287,8 @@
     try { localStorage.removeItem(TOKEN_KEY); } catch (e) { /* ignore */ }
     el('login').classList.remove('hidden');
     stopAutoRefresh();
+    stopUpdatePolling();
+    hideUpdateBadge();
   }
 
   el('login-form').addEventListener('submit', function (e) {
@@ -1109,10 +1131,110 @@
     });
   });
 
+  /* ---------- one-click updates (docs/updates.md) ---------- */
+
+  // Last /api/admin/updates answer with enabled=true — feeds the modal.
+  var updateInfo = null;
+  var updateTimer = null;
+  var UPDATE_POLL_MS = 10 * 60 * 1000; // badge re-check cadence
+
+  // "git describe" output → the tag it was built from: strips the -N-g<sha>
+  // and -dirty suffixes ("v1.2.3-4-gabc" / "v1.2.3-dirty" → "v1.2.3"). A
+  // bare hash (no tags in the checkout) never equals a release tag, so any
+  // published release lights the badge — the right default for a dev box.
+  function currentTag(cur) {
+    var m = /^(v?[0-9][^-]*)(?:-\d+-g[0-9a-f]+)?(?:-dirty)?$/.exec(String(cur || ''));
+    return m ? m[1] : String(cur || '');
+  }
+
+  // The badge shows up only when the opt-in updater sidecar answers AND the
+  // install is behind origin/main or a newer release tag exists. Everything
+  // else (sidecar off, timeout, git error) keeps it hidden — updating stays
+  // possible over SSH either way.
+  function loadUpdates() {
+    api('/api/admin/updates').then(function (u) {
+      if (!u || !u.enabled) { hideUpdateBadge(); return; }
+      var newerTag = u.latest_release && u.latest_release !== currentTag(u.current);
+      if (u.behind || newerTag) {
+        updateInfo = u;
+        el('update-badge').classList.remove('hidden');
+      } else {
+        hideUpdateBadge();
+      }
+    }).catch(function () { hideUpdateBadge(); });
+  }
+
+  function hideUpdateBadge() {
+    updateInfo = null;
+    el('update-badge').classList.add('hidden');
+  }
+
+  function stopUpdatePolling() {
+    if (updateTimer) { clearInterval(updateTimer); updateTimer = null; }
+  }
+
+  el('update-badge').addEventListener('click', function () {
+    if (!updateInfo) { loadUpdates(); return; }
+    showUpdateModal();
+  });
+
+  function showUpdateModal() {
+    var avail = updateInfo.latest_release ||
+      (updateInfo.remote_sha ? String(updateInfo.remote_sha).slice(0, 7) : '—');
+    openModal('<h3>' + esc(t('updTitle')) + '</h3>' +
+      '<dl class="kv">' +
+      '<dt>' + esc(t('updCurrentLabel')) + '</dt><dd class="mono">' + esc(updateInfo.current || '—') + '</dd>' +
+      '<dt>' + esc(t('updAvailLabel')) + '</dt><dd class="mono">' + esc(avail) + '</dd>' +
+      '</dl>' +
+      '<p class="token-warn" style="margin-top:12px">' + esc(t('updWarn')) + '</p>' +
+      '<div class="modal-actions">' +
+      '<button class="btn btn--tertiary btn--small" id="upd-cancel">' + esc(t('btnCancel')) + '</button>' +
+      '<button class="btn" id="upd-apply">' + esc(t('btnUpdate')) + '</button></div>');
+    el('upd-cancel').addEventListener('click', closeModal);
+    el('upd-apply').addEventListener('click', applyUpdate);
+  }
+
+  function applyUpdate() {
+    api('/api/admin/updates/apply', { method: 'POST' }).then(function () {
+      // The rebuild recreates the fibr container, so this very connection
+      // drops soon. Swap the modal for a progress note, wait /api/health
+      // out and reload into the new build.
+      el('modal-body').innerHTML = '<h3>' + esc(t('updTitle')) + '</h3>' +
+        '<p class="muted modal-sub">' + esc(t('updStarted')) + '</p>' +
+        '<p class="muted modal-sub">' + esc(t('updWaiting')) + '</p>';
+      waitForServerBack();
+    }).catch(function (er) {
+      if (er && er.status === 409) { toast(t('updInProgress'), true); return; }
+      fail(er);
+    });
+  }
+
+  // Poll /api/health (public, no auth) every 3s for up to 5 minutes. The
+  // old container keeps answering while the images build, so first wait for
+  // a FAILED check (the stack really went down), then for a green one, then
+  // reload. If the 5 minutes run out, reload anyway — the panel is either
+  // back or the admin should see the error state fresh.
+  function waitForServerBack() {
+    var deadline = Date.now() + 5 * 60 * 1000;
+    var sawDown = false;
+    function tick() {
+      if (Date.now() > deadline) { location.reload(); return; }
+      fetch('/api/health', { cache: 'no-store' }).then(function (res) {
+        if (!res.ok) { sawDown = true; setTimeout(tick, 3000); return; }
+        if (sawDown) { setTimeout(function () { location.reload(); }, 1500); return; }
+        setTimeout(tick, 3000); // still the old build answering — keep waiting
+      }).catch(function () { sawDown = true; setTimeout(tick, 3000); });
+    }
+    tick();
+  }
+
   /* ---------- boot ---------- */
 
   function boot() {
     startAutoRefresh();
+    loadUpdates();
+    stopUpdatePolling();
+    updateTimer = setInterval(loadUpdates, UPDATE_POLL_MS);
   }
 
   applyI18n();

@@ -1,0 +1,23 @@
+# syntax=docker/dockerfile:1
+
+# fibr-updater — the opt-in one-click update sidecar (docs/updates.md).
+# Started only under the compose profile "updater" (install.sh
+# --with-updater). The build context is the REPO ROOT (see the updater
+# service in install/docker-compose.yml), so paths below start at server/.
+FROM golang:1.26-alpine AS build
+WORKDIR /src
+COPY server/go.mod server/go.sum ./
+RUN go mod download
+COPY server/ .
+RUN CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o /out/fibr-updater ./cmd/fibr-updater
+
+FROM alpine:3.24
+# git drives the repo pull; docker-cli + docker-cli-compose drive the host
+# engine through the mounted /var/run/docker.sock; ca-certificates for the
+# GitHub API call.
+RUN apk add --no-cache ca-certificates git docker-cli docker-cli-compose
+COPY --from=build /out/fibr-updater /usr/local/bin/fibr-updater
+# No ports are published: the updater answers only inside the compose
+# network (fibr reaches it at http://updater:8912).
+EXPOSE 8912
+ENTRYPOINT ["/usr/local/bin/fibr-updater"]

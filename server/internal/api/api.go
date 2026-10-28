@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -30,12 +31,18 @@ type API struct {
 	xray        *xray.Manager
 	log         *slog.Logger
 	botUsername atomic.Value // string, "" until the bot reports getMe
+	updaterURL  string       // opt-in update sidecar; "" = never configured
 }
 
 // New creates the API.
 func New(cfg *config.Config, st *store.Store, wgm *wg.Manager, xm *xray.Manager, log *slog.Logger) *API {
 	a := &API{cfg: cfg, store: st, wg: wgm, xray: xm, log: log}
 	a.botUsername.Store("")
+	// TODO: move to config (internal/config is intentionally untouched here).
+	a.updaterURL = os.Getenv("FIBR_UPDATER_URL")
+	if a.updaterURL == "" {
+		a.updaterURL = "http://updater:8912"
+	}
 	return a
 }
 
@@ -107,6 +114,10 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/admin/nodes/{id}", a.admin(a.handleAdminDeleteNode))
 	mux.HandleFunc("POST /api/admin/nodes/{id}/activate", a.admin(a.handleAdminActivateNode))
 	mux.HandleFunc("POST /api/admin/nodes/{id}/token", a.admin(a.handleAdminRotateNodeToken))
+
+	// One-click updates via the opt-in updater sidecar (see docs/updates.md).
+	mux.HandleFunc("GET /api/admin/updates", a.admin(a.handleAdminUpdates))
+	mux.HandleFunc("POST /api/admin/updates/apply", a.admin(a.handleAdminUpdatesApply))
 
 	// Node agent endpoints (remote fibr-node binaries; bearer node token).
 	mux.HandleFunc("POST /api/node/register", a.nodeAuth(a.handleNodeRegister))

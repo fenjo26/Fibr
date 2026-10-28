@@ -9,11 +9,14 @@
 # Options:
 #   --domain DOMAIN   public domain pointed at this server (A record)
 #   --port PORT       WireGuard UDP port (default 51820)
+#   --bot-token TOKEN set up the Telegram bot in the same command (from @BotFather)
+#   --admin-tg IDS    your numeric Telegram id(s), comma-separated (makes you superadmin)
 #   --awg             use the AmneziaWG engine (DPI-obfuscated WireGuard;
 #                     clients must be AmneziaVPN apps — see docs/awg.md)
 #   --xray            also enable Xray (VLESS + Reality) on TCP --xray-port
 #   --xray-sni HOST   Reality camouflage host (default www.microsoft.com; implies --xray)
 #   --xray-port PORT  Xray TCP port (default 8443; implies --xray)
+#   --with-updater    also enable one-click updates from the admin panel (docs/updates.md)
 #   --dev             local dev mode (no domain, no TLS, no DNS check)
 #   --skip-dns-check  install even if the DNS check fails (e.g. behind NAT)
 #   --force           regenerate .env secrets on an existing install
@@ -27,6 +30,7 @@ FIBR_DIR="/opt/fibr"
 WG_PORT="51820"
 AWG=0
 XRAY=0
+UPDATER=0
 XRAY_SNI="www.microsoft.com"
 XRAY_PORT="8443"
 DOMAIN=""
@@ -35,6 +39,8 @@ SKIP_DNS=0
 FORCE=0
 UNINSTALL=0
 PURGE=0
+BOT_TOKEN=""
+ADMIN_TG=""
 
 # ---------- output helpers ----------
 if [[ -t 2 ]]; then
@@ -47,7 +53,7 @@ warn() { echo "${C_WARN}[fibr]${C_OFF} $*" >&2; }
 err()  { echo "${C_ERR}[fibr]${C_OFF} $*" >&2; }
 die()  { err "$@"; exit 1; }
 
-usage() { sed -n '2,22p' "$0" 2>/dev/null || grep -A20 '^# Fibr' "$0"; exit "${1:-0}"; }
+usage() { sed -n '2,23p' "$0" 2>/dev/null || grep -A20 '^# Fibr' "$0"; exit "${1:-0}"; }
 
 # ---------- parse args ----------
 while [[ $# -gt 0 ]]; do
@@ -56,9 +62,12 @@ while [[ $# -gt 0 ]]; do
     --port|-p)        WG_PORT="${2:-}"; shift 2 ;;
     --awg)            AWG=1; shift ;;
     --xray)           XRAY=1; shift ;;
+    --with-updater)   UPDATER=1; shift ;;
     --xray-sni)       XRAY_SNI="${2:-}"; XRAY=1; shift 2 ;;
     --xray-port)      XRAY_PORT="${2:-}"; XRAY=1; shift 2 ;;
     --dev)            DEV=1; shift ;;
+    --bot-token)      BOT_TOKEN="${2:-}"; shift 2 ;;
+    --admin-tg)       ADMIN_TG="${2:-}"; shift 2 ;;
     --skip-dns-check) SKIP_DNS=1; shift ;;
     --force|-f)       FORCE=1; shift ;;
     --uninstall)      UNINSTALL=1; shift ;;
@@ -70,6 +79,8 @@ done
 [[ -n "$WG_PORT" ]] || die "--port needs a value"
 [[ -n "$XRAY_SNI" ]] || die "--xray-sni needs a value"
 [[ -n "$XRAY_PORT" ]] || die "--xray-port needs a value"
+[[ -n "$BOT_TOKEN" ]] || die "--bot-token needs a value"
+[[ -n "$ADMIN_TG" ]] || die "--admin-tg needs a value"
 
 # ---------- must be root ----------
 if [[ $EUID -ne 0 ]]; then
@@ -83,14 +94,15 @@ if [[ $UNINSTALL -eq 1 ]]; then
     die "nothing to uninstall at $FIBR_DIR"
   fi
   cd "$FIBR_DIR/install"
-  # --profile xray so a previously started xray container is removed too.
+  # --profile xray/updater so previously started optional containers are
+  # removed too.
   if [[ $PURGE -eq 1 ]]; then
     info "purging containers, volumes and $FIBR_DIR..."
-    docker compose --profile xray down -v --remove-orphans || true
+    docker compose --profile xray --profile updater down -v --remove-orphans || true
     rm -rf "$FIBR_DIR"
   else
     info "stopping containers (data volumes kept; rerun installer to update)..."
-    docker compose --profile xray down --remove-orphans || true
+    docker compose --profile xray --profile updater down --remove-orphans || true
   fi
   info "done."
   exit 0
@@ -125,14 +137,27 @@ docker compose version >/dev/null 2>&1 || die "docker compose plugin is required
 systemctl is-active docker >/dev/null 2>&1 || systemctl start docker || true
 
 # ---------- get the repo ----------
-SCRIPT_SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd || true)"
+# When piped (curl | bash) there is no script path — guard against unbound
+# BASH_SOURCE so the fallback git-clone branch is taken cleanly.
+SCRIPT_SRC=""
+if [[ -n "${BASH_SOURCE[0]:-}" ]]; then
+  SCRIPT_SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd || true)"
+fi
 if [[ -n "$SCRIPT_SRC" && -f "$SCRIPT_SRC/install/docker-compose.yml" ]]; then
   if [[ "$SCRIPT_SRC" != "$FIBR_DIR" ]]; then
     info "copying repo from $SCRIPT_SRC to $FIBR_DIR..."
     mkdir -p "$FIBR_DIR"
-    tar -C "$SCRIPT_SRC" \
-      --exclude=./.git --exclude=./data --exclude=./install/.env \
-      --exclude=./server/bin -cf - . | tar -C "$FIBR_DIR" -xf -
+    # .git is normally skipped (a checkout copy does not need history), but
+    # the --with-updater sidecar pulls updates with git, so keep it then.
+    if [[ $UPDATER -eq 1 && -d "$SCRIPT_SRC/.git" ]]; then
+      tar -C "$SCRIPT_SRC" \
+        --exclude=./data --exclude=./install/.env \
+        --exclude=./server/bin -cf - . | tar -C "$FIBR_DIR" -xf -
+    else
+      tar -C "$SCRIPT_SRC" \
+        --exclude=./.git --exclude=./data --exclude=./install/.env \
+        --exclude=./server/bin -cf - . | tar -C "$FIBR_DIR" -xf -
+    fi
   fi
 elif [[ -d "$FIBR_DIR/install" ]]; then
   info "reusing existing checkout at $FIBR_DIR"
@@ -175,6 +200,25 @@ fi
 rand_hex() {
   if command -v openssl >/dev/null; then openssl rand -hex "$1"
   else head -c "$1" /dev/urandom | od -An -tx1 | tr -d ' \n'; fi
+}
+
+# compose_profile_add ensures <profile> is listed in the ACTIVE
+# COMPOSE_PROFILES of <file>, preserving the other profiles already enabled
+# (e.g. "xray" when adding "updater", and vice versa). A commented
+# #COMPOSE_PROFILES= hint is replaced, but its value is NOT inherited — a
+# dormant "#COMPOSE_PROFILES=xray" must not silently start the xray
+# container. The result is exactly one active line at the end of the file
+# (dotenv semantics: the last assignment wins, duplicates are a foot-gun).
+compose_profile_add() {
+  local file="$1" want="$2" cur="" line
+  line="$(grep -E '^COMPOSE_PROFILES=' "$file" | tail -1 || true)"
+  if [[ -n "$line" ]]; then cur="${line#COMPOSE_PROFILES=}"; fi
+  case ",${cur}," in
+    *",${want},"*) return 0 ;; # already enabled — nothing to do
+  esac
+  sed -i.bak -E '/^#?COMPOSE_PROFILES=/d' "$file"
+  printf 'COMPOSE_PROFILES=%s\n' "${cur:+${cur},}${want}" >> "$file"
+  rm -f "$file.bak"
 }
 
 ENV_FILE="$FIBR_DIR/install/.env"
@@ -221,9 +265,15 @@ XEOF
       -e "s|^FIBR_XRAY_ENABLED=.*|FIBR_XRAY_ENABLED=true|" \
       -e "s|^FIBR_XRAY_PORT=.*|FIBR_XRAY_PORT=$XRAY_PORT|" \
       -e "s|^FIBR_XRAY_SNI=.*|FIBR_XRAY_SNI=$XRAY_SNI|" \
-      -e "s|^#?COMPOSE_PROFILES=.*|COMPOSE_PROFILES=xray|" \
       "$ENV_FILE" && rm -f "$ENV_FILE.bak"
+    compose_profile_add "$ENV_FILE" xray
     info "xray enabled in existing .env (remember: docker compose up -d)"
+  fi
+  # --with-updater turns on the one-click updater sidecar on an existing
+  # install as well (merged into COMPOSE_PROFILES, see docs/updates.md).
+  if [[ $UPDATER -eq 1 ]]; then
+    compose_profile_add "$ENV_FILE" updater
+    info "updater profile enabled in existing .env (remember: docker compose up -d)"
   fi
 else
   ADMIN_TOKEN="$(rand_hex 24)"
@@ -244,11 +294,28 @@ else
       -e "s|^FIBR_XRAY_PORT=.*|FIBR_XRAY_PORT=$XRAY_PORT|" \
       -e "s|^FIBR_XRAY_SNI=.*|FIBR_XRAY_SNI=$XRAY_SNI|" \
       -e "s|^FIBR_XRAY_SHORT_ID=.*|FIBR_XRAY_SHORT_ID=$(rand_hex 4)|" \
-      -e "s|^#?COMPOSE_PROFILES=.*|COMPOSE_PROFILES=xray|" \
       "$ENV_FILE" && rm -f "$ENV_FILE.bak"
+    compose_profile_add "$ENV_FILE" xray
+  fi
+  if [[ $UPDATER -eq 1 ]]; then
+    compose_profile_add "$ENV_FILE" updater
   fi
   chmod 600 "$ENV_FILE"
   info "generated .env with fresh secrets"
+fi
+
+# --bot-token / --admin-tg write the Telegram settings into .env so the whole
+# setup fits into one command — no manual file editing. Works both on fresh
+# installs and on already-running ones (just re-run the installer).
+if [[ -n "$BOT_TOKEN" || -n "$ADMIN_TG" ]]; then
+  if [[ -n "$BOT_TOKEN" ]]; then
+    sed -i.bak -E "s|^FIBR_TELEGRAM_BOT_TOKEN=.*|FIBR_TELEGRAM_BOT_TOKEN=$BOT_TOKEN|" "$ENV_FILE" && rm -f "$ENV_FILE.bak"
+  fi
+  if [[ -n "$ADMIN_TG" ]]; then
+    sed -i.bak -E "s|^FIBR_ADMIN_TELEGRAM_IDS=.*|FIBR_ADMIN_TELEGRAM_IDS=$ADMIN_TG|" "$ENV_FILE" && rm -f "$ENV_FILE.bak"
+  fi
+  chmod 600 "$ENV_FILE"
+  info "telegram settings written to .env"
 fi
 
 # ---------- build & run ----------
@@ -282,6 +349,7 @@ ${C_INFO}───────────────────────�
   Admin panel : $URL/admin/
   Admin token : $ADMIN_TOKEN_SHOW
   Mini App    : $URL/miniapp/   (needs the Telegram bot, see below)
+  Web cabinet : $URL/cabinet/   (login via Telegram, in a regular browser)
   WireGuard   : udp/$WG_PORT (config QR codes are in the panel)
 EOF
 if [[ $AWG -eq 1 ]]; then
@@ -296,18 +364,31 @@ if [[ $XRAY -eq 1 ]]; then
                 "xray" protocol when adding a device in the panel)
 EOF
 fi
-cat <<EOF
-
-  Next steps — Telegram bot & Mini App:
-    1. In @BotFather: /newbot, copy the token.
-    2. Edit $ENV_FILE:
-         FIBR_TELEGRAM_BOT_TOKEN=<token>
-         FIBR_ADMIN_TELEGRAM_IDS=<your numeric id — send /id to your bot or use @userinfobot>
-    3. Re-run: docker compose -f $FIBR_DIR/install/docker-compose.yml up -d
-    4. In @BotFather: /mybots -> Bot Settings -> Menu Button ->
-       set the URL to $URL/miniapp/
-    5. Open your bot in Telegram and press Start.
+if [[ $UPDATER -eq 1 ]]; then
+  cat <<EOF
+  Updater     : one-click updates on (compose profile "updater") — the
+                "Update" button in the panel; see docs/updates.md
 EOF
+fi
+if grep -q '^FIBR_TELEGRAM_BOT_TOKEN=..*' "$ENV_FILE"; then
+  cat <<EOF
+
+  Bot         : configured ✔ — open your bot in Telegram and press Start.
+                (BotFather, one time: /mybots -> Bot Settings -> Menu Button ->
+                 set $URL/miniapp/ ; for the web cabinet also set Domain.)
+EOF
+else
+  cat <<EOF
+
+  Next steps — Telegram bot & Mini App (or re-run the installer with flags):
+    bash $FIBR_DIR/install/install.sh --domain $DOMAIN \\
+      --bot-token < BotFather token > --admin-tg < your numeric id >
+
+    (@BotFather -> /newbot gives the token; your numeric id — send /id to the
+    bot after Start, or ask @userinfobot. After that: Bot Settings -> Menu
+    Button -> $URL/miniapp/)
+EOF
+fi
 if [[ $XRAY -eq 1 ]]; then
   cat <<EOF
 

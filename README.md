@@ -68,6 +68,20 @@ curl -fsSL https://raw.githubusercontent.com/fenjo26/Fibr/main/install/install.s
 - APK подписан CI-ключом: устанавливается как «неизвестный источник»; перед массовой раздачей настроим собственный keystore.
 - macOS-сборка без подписи разработчика: первый запуск — правый клик по приложению → «Открыть».
 
+## Обновление
+
+Вручную, по SSH — одной командой:
+
+```bash
+cd /opt/fibr && git pull && docker compose -f install/docker-compose.yml up -d --build
+```
+
+Или в один клик из админки: установите с `--with-updater` — в панели появится
+бейдж «Обновление доступно» и кнопка «Обновить» (сервер сам подтянет свежий
+коммит и пересоберёт стек; панели будут недоступны ~1–3 минуты). Механизм
+opt-in, потому что сайдкару нужен доступ к docker-сокету — подробности и
+страховки: [docs/updates.md](docs/updates.md).
+
 ### Подключение Telegram-бота и Mini App
 
 1. В [@BotFather](https://t.me/BotFather): `/newbot` → получите токен.
@@ -96,6 +110,7 @@ Mini App требует HTTPS и домен — это ограничение п
 ```
 server/   Go-сервер: REST API + WireGuard-менеджер + Telegram-бот (один бинарник)
           + fibr-node — агент дополнительной ноды (docs/multinode.md)
+          + fibr-updater — сайдкар обновления в один клик (docs/updates.md)
 install/  install.sh, docker-compose.yml, Caddyfile, .env.example
 admin/    Админ-панель (vanilla JS, без сборки)
 miniapp/  Telegram Mini App (vanilla JS)

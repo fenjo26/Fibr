@@ -268,3 +268,14 @@ main {
   font-size: 13px;
   margin: 0 0 8px;
 }
+
+/* ---------- one-click updates (docs/updates.md) ---------- */
+
+/* The topbar badge is a <button> dressed as a pill--live; clicking it opens
+ * the update confirmation modal. */
+.update-badge {
+  border: 0;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 600;
+}
