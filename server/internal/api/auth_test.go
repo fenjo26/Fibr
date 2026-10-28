@@ -46,9 +46,9 @@ func signInitData(botToken string, params map[string]string) string {
 func TestValidateInitData(t *testing.T) {
 	const botToken = "7000000001:TEST-TOKEN"
 	params := map[string]string{
-		"auth_date":    strconv.FormatInt(time.Now().Unix(), 10),
-		"query_id":     "AAHdF6IQAAAAAN0XohDhrOrc",
-		"user":         `{"id":42,"first_name":"Ivan","username":"ivan","language_code":"ru"}`,
+		"auth_date": strconv.FormatInt(time.Now().Unix(), 10),
+		"query_id":  "AAHdF6IQAAAAAN0XohDhrOrc",
+		"user":      `{"id":42,"first_name":"Ivan","username":"ivan","language_code":"ru"}`,
 	}
 
 	t.Run("valid", func(t *testing.T) {

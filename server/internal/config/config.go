@@ -2,6 +2,7 @@
 package config
 
 import (
+	"encoding/hex"
 	"fmt"
 	"net"
 	"os"
@@ -28,6 +29,14 @@ type Config struct {
 	TelegramBotToken string        // optional; enables the bot and Mini App auth
 	AdminTelegramIDs []int64       // telegram user ids auto-promoted to admin
 	StatsInterval    time.Duration // peer stats collection period
+
+	// Xray (VLESS + Reality) — second protocol for DPI resistance. All fields
+	// except XrayPort are meaningful only when XrayEnabled is true.
+	XrayEnabled bool   // FIBR_XRAY_ENABLED
+	XrayPort    int    // FIBR_XRAY_PORT, TCP (Reality masquerades as TLS)
+	XraySNI     string // FIBR_XRAY_SNI, camouflage domain, required when enabled
+	XrayDest    string // FIBR_XRAY_DEST, Reality fallback target, defaults to SNI:443
+	XrayShortID string // FIBR_XRAY_SHORT_ID, hex short id shared by all clients
 }
 
 // Load reads configuration from the environment and validates it.
@@ -59,6 +68,12 @@ func Load() (*Config, error) {
 	if c.WGHost == "" {
 		c.WGHost = c.Domain
 	}
+	// Dev mode sets FIBR_DOMAIN=http://localhost — the scheme must never
+	// leak into client endpoints (wg Endpoint, vless:// links).
+	if i := strings.Index(c.WGHost, "://"); i >= 0 {
+		c.WGHost = c.WGHost[i+3:]
+	}
+	c.WGHost = strings.TrimSuffix(strings.TrimSpace(c.WGHost), "/")
 	if c.AdminToken == "" {
 		return nil, fmt.Errorf("FIBR_ADMIN_TOKEN is required")
 	}
@@ -69,6 +84,28 @@ func Load() (*Config, error) {
 	c.WGPort = getenvInt("FIBR_WG_PORT", 51820)
 	if c.WGPort < 1 || c.WGPort > 65535 {
 		return nil, fmt.Errorf("FIBR_WG_PORT: %d out of range", c.WGPort)
+	}
+
+	// Xray (VLESS + Reality). Port parses even when disabled so a stray
+	// FIBR_XRAY_PORT is validated; everything else only matters when enabled.
+	c.XrayEnabled = getenvBool("FIBR_XRAY_ENABLED", false)
+	c.XrayPort = getenvInt("FIBR_XRAY_PORT", 8443)
+	c.XraySNI = strings.TrimSpace(os.Getenv("FIBR_XRAY_SNI"))
+	c.XrayDest = strings.TrimSpace(os.Getenv("FIBR_XRAY_DEST"))
+	c.XrayShortID = strings.TrimSpace(os.Getenv("FIBR_XRAY_SHORT_ID"))
+	if c.XrayPort < 1 || c.XrayPort > 65535 {
+		return nil, fmt.Errorf("FIBR_XRAY_PORT: %d out of range", c.XrayPort)
+	}
+	if c.XrayEnabled {
+		if c.XraySNI == "" {
+			return nil, fmt.Errorf("FIBR_XRAY_SNI is required when FIBR_XRAY_ENABLED=true (the camouflage domain, e.g. www.microsoft.com)")
+		}
+		if c.XrayDest == "" {
+			c.XrayDest = c.XraySNI + ":443"
+		}
+		if _, err := hex.DecodeString(c.XrayShortID); err != nil || c.XrayShortID == "" {
+			return nil, fmt.Errorf("FIBR_XRAY_SHORT_ID must be non-empty even-length hex (generate with: openssl rand -hex 4)")
+		}
 	}
 
 	serverIP, err := serverIPForSubnet(c.Subnet)
@@ -109,6 +146,15 @@ func getenvInt(key string, def int) int {
 	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
 			return n
+		}
+	}
+	return def
+}
+
+func getenvBool(key string, def bool) bool {
+	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			return b
 		}
 	}
 	return def

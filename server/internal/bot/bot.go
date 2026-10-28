@@ -105,8 +105,8 @@ type tgMessage struct {
 }
 
 type tgUpdate struct {
-	UpdateID int64       `json:"update_id"`
-	Message  *tgMessage  `json:"message"`
+	UpdateID int64      `json:"update_id"`
+	Message  *tgMessage `json:"message"`
 }
 
 /* ------------------------- handling ------------------------- */
@@ -276,11 +276,11 @@ func pickLang(code string) string {
 
 var texts = map[string]map[string]string{
 	"ru": {
-		"welcome": "👋 Добро пожаловать в <b>Fibr</b>!\n\nКнопкой ниже откройте приложение: там можно создать устройство, забрать QR-код конфигурации и посмотреть свою статистику.",
-		"help":    "Команды:\n/start — открыть приложение\n/help — справка\n/stats — статистика (только админ)\n/id — узнать свой Telegram ID",
-		"denied":  "⛔ Команда доступна только администраторам.",
-		"unknown": "Не понял команду. /help — список команд.",
-		"openApp": "Открыть Fibr",
+		"welcome":     "👋 Добро пожаловать в <b>Fibr</b>!\n\nКнопкой ниже откройте приложение: там можно создать устройство, забрать QR-код конфигурации и посмотреть свою статистику.",
+		"help":        "Команды:\n/start — открыть приложение\n/help — справка\n/stats — статистика (только админ)\n/id — узнать свой Telegram ID",
+		"denied":      "⛔ Команда доступна только администраторам.",
+		"unknown":     "Не понял команду. /help — список команд.",
+		"openApp":     "Открыть Fibr",
 		"statsHeader": "📊 <b>Статистика Fibr</b>",
 		"statsError":  "Не удалось собрать статистику, смотрите логи сервера.",
 		"users":       "Пользователей",
@@ -290,11 +290,11 @@ var texts = map[string]map[string]string{
 		"tunnelRate":  "Туннель",
 	},
 	"en": {
-		"welcome": "👋 Welcome to <b>Fibr</b>!\n\nUse the button below to open the app: create a device, grab a QR config and check your traffic stats.",
-		"help":    "Commands:\n/start — open the app\n/help — help\n/stats — stats (admin only)\n/id — show your Telegram ID",
-		"denied":  "⛔ This command is admin-only.",
-		"unknown": "Unknown command. /help lists commands.",
-		"openApp": "Open Fibr",
+		"welcome":     "👋 Welcome to <b>Fibr</b>!\n\nUse the button below to open the app: create a device, grab a QR config and check your traffic stats.",
+		"help":        "Commands:\n/start — open the app\n/help — help\n/stats — stats (admin only)\n/id — show your Telegram ID",
+		"denied":      "⛔ This command is admin-only.",
+		"unknown":     "Unknown command. /help lists commands.",
+		"openApp":     "Open Fibr",
 		"statsHeader": "📊 <b>Fibr stats</b>",
 		"statsError":  "Failed to collect stats, check server logs.",
 		"users":       "Users",

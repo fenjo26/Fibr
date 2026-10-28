@@ -39,14 +39,14 @@ type Manager struct {
 	subnet   *net.IPNet
 	extIface string
 
-	mu       sync.Mutex
-	samples  []ifaceSample
+	mu      sync.Mutex
+	samples []ifaceSample
 }
 
 type ifaceSample struct {
-	t                    time.Time
-	wgRx, wgTx           int64
-	extRx, extTx         int64
+	t            time.Time
+	wgRx, wgTx   int64
+	extRx, extTx int64
 }
 
 // New creates the manager, loading or generating the server keypair.
@@ -131,8 +131,8 @@ func (m *Manager) EnsureInterface() error {
 	port := m.cfg.WGPort
 	priv := m.privKey
 	if err := m.client.ConfigureDevice(m.cfg.WGInterface, wgtypes.Config{
-		PrivateKey:  &priv,
-		ListenPort:  &port,
+		PrivateKey:   &priv,
+		ListenPort:   &port,
 		ReplacePeers: false,
 	}); err != nil {
 		return fmt.Errorf("configure device: %w", err)
@@ -187,6 +187,12 @@ func (m *Manager) SyncPeers() error {
 		if !d.Enabled {
 			continue
 		}
+		// Only "wg" devices are WireGuard peers. Xray devices reuse the key
+		// columns for a UUID (see store.Device) and are served by a separate
+		// xray container.
+		if d.Protocol != "" && d.Protocol != store.ProtocolWG {
+			continue
+		}
 		pub, err := wgtypes.ParseKey(d.PublicKey)
 		if err != nil {
 			m.log.Error("bad public key in db, skipping device", "device_id", d.ID, "error", err)
@@ -212,8 +218,8 @@ func (m *Manager) SyncPeers() error {
 	priv := m.privKey
 	port := m.cfg.WGPort
 	err = m.client.ConfigureDevice(m.cfg.WGInterface, wgtypes.Config{
-		PrivateKey:  &priv,
-		ListenPort:  &port,
+		PrivateKey:   &priv,
+		ListenPort:   &port,
 		ReplacePeers: true,
 		Peers:        peers,
 	})

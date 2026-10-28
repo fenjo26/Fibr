@@ -16,6 +16,7 @@ import (
 	"github.com/fenjo26/Fibr/internal/config"
 	"github.com/fenjo26/Fibr/internal/store"
 	"github.com/fenjo26/Fibr/internal/wg"
+	"github.com/fenjo26/Fibr/internal/xray"
 	"github.com/skip2/go-qrcode"
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 )
@@ -25,12 +26,13 @@ type API struct {
 	cfg   *config.Config
 	store *store.Store
 	wg    *wg.Manager
+	xray  *xray.Manager
 	log   *slog.Logger
 }
 
 // New creates the API.
-func New(cfg *config.Config, st *store.Store, wgm *wg.Manager, log *slog.Logger) *API {
-	return &API{cfg: cfg, store: st, wg: wgm, log: log}
+func New(cfg *config.Config, st *store.Store, wgm *wg.Manager, xm *xray.Manager, log *slog.Logger) *API {
+	return &API{cfg: cfg, store: st, wg: wgm, xray: xm, log: log}
 }
 
 // Handler builds the routed, panic-safe HTTP handler.
@@ -212,13 +214,19 @@ func (a *API) handleCreateDevice(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var body struct {
-		Name string `json:"name"`
+		Name     string `json:"name"`
+		Protocol string `json:"protocol"` // "wg" (default) | "xray"
 	}
 	if err := decodeJSON(w, r, &body); err != nil {
 		a.errJSON(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	d, err := a.provisionDevice(id.userID, sanitizeName(body.Name, fmt.Sprintf("device-%d", len(existing)+1)))
+	protocol, err := normalizeProtocol(body.Protocol, a.cfg.XrayEnabled)
+	if err != nil {
+		a.errJSON(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	d, err := a.provisionDevice(id.userID, sanitizeName(body.Name, fmt.Sprintf("device-%d", len(existing)+1)), protocol)
 	if err != nil {
 		a.errJSON(w, http.StatusInternalServerError, err.Error())
 		return
@@ -237,6 +245,7 @@ func (a *API) handleDeleteDevice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.syncPeers()
+	a.syncXray()
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -459,6 +468,7 @@ func (a *API) handleAdminDeleteUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.syncPeers() // their devices cascade-deleted, peers must go too
+	a.syncXray()
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -484,13 +494,19 @@ func (a *API) handleAdminCreateDevice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Name string `json:"name"`
+		Name     string `json:"name"`
+		Protocol string `json:"protocol"` // "wg" (default) | "xray"
 	}
 	if err := decodeJSON(w, r, &body); err != nil {
 		a.errJSON(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	d, err := a.provisionDevice(uid, sanitizeName(body.Name, fmt.Sprintf("device-%d", len(existing)+1)))
+	protocol, err := normalizeProtocol(body.Protocol, a.cfg.XrayEnabled)
+	if err != nil {
+		a.errJSON(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	d, err := a.provisionDevice(uid, sanitizeName(body.Name, fmt.Sprintf("device-%d", len(existing)+1)), protocol)
 	if err != nil {
 		a.errJSON(w, http.StatusInternalServerError, err.Error())
 		return
@@ -498,33 +514,66 @@ func (a *API) handleAdminCreateDevice(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, newDeviceOut(*d, ""))
 }
 
-// provisionDevice generates keys and an address and stores the device.
-func (a *API) provisionDevice(userID int64, name string) (*store.Device, error) {
-	priv, err := wgtypes.GeneratePrivateKey()
-	if err != nil {
-		return nil, fmt.Errorf("key generation failed")
+// normalizeProtocol validates the requested device protocol: "" means the
+// default ("wg"), anything but "wg"/"xray" is rejected, and "xray" requires
+// xray to be enabled in the server config.
+func normalizeProtocol(p string, xrayEnabled bool) (string, error) {
+	switch p = strings.TrimSpace(p); p {
+	case "":
+		return store.ProtocolWG, nil
+	case store.ProtocolWG:
+		return p, nil
+	case store.ProtocolXray:
+		if !xrayEnabled {
+			return "", fmt.Errorf("xray protocol is not enabled on this server (FIBR_XRAY_ENABLED)")
+		}
+		return p, nil
+	default:
+		return "", fmt.Errorf("protocol must be wg or xray, got %q", p)
 	}
-	psk, err := wg.GeneratePresharedKey()
-	if err != nil {
-		return nil, fmt.Errorf("key generation failed")
-	}
+}
+
+// provisionDevice generates credentials and stores the device.
+//
+// wg:    Curve25519 keypair + PSK; keys in the usual fields.
+// xray:  random UUID in PublicKey, PrivateKey/PresharedKey stay empty
+//
+//	(documented in store.Device). An IPv4 is still allocated to satisfy
+//	the UNIQUE column but is unused by the protocol.
+func (a *API) provisionDevice(userID int64, name, protocol string) (*store.Device, error) {
 	ip, err := a.store.NextIPv4(a.cfg.Subnet)
 	if err != nil {
 		return nil, fmt.Errorf("no free addresses in subnet")
 	}
 	d := &store.Device{
-		UserID:       userID,
-		Name:         name,
-		PublicKey:    priv.PublicKey().String(),
-		PrivateKey:   priv.String(),
-		PresharedKey: psk.String(),
-		IPv4:         ip,
-		Enabled:      true,
+		UserID:  userID,
+		Name:    name,
+		IPv4:    ip,
+		Enabled: true,
+	}
+	switch protocol {
+	case store.ProtocolXray:
+		d.Protocol = store.ProtocolXray
+		d.PublicKey = xray.NewUUID() // vless client id; see store.Device
+	default:
+		priv, err := wgtypes.GeneratePrivateKey()
+		if err != nil {
+			return nil, fmt.Errorf("key generation failed")
+		}
+		psk, err := wg.GeneratePresharedKey()
+		if err != nil {
+			return nil, fmt.Errorf("key generation failed")
+		}
+		d.Protocol = store.ProtocolWG
+		d.PublicKey = priv.PublicKey().String()
+		d.PrivateKey = priv.String()
+		d.PresharedKey = psk.String()
 	}
 	if err := a.store.CreateDevice(d); err != nil {
 		return nil, fmt.Errorf("cannot create device")
 	}
 	a.syncPeers()
+	a.syncXray()
 	return d, nil
 }
 
@@ -585,6 +634,7 @@ func (a *API) handleAdminUpdateDevice(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		a.syncPeers()
+		a.syncXray()
 	}
 	d, err := a.store.GetDevice(id)
 	if err != nil {
@@ -605,6 +655,7 @@ func (a *API) handleAdminDeleteDevice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.syncPeers()
+	a.syncXray()
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -617,6 +668,7 @@ type deviceOut struct {
 	UserID        int64      `json:"user_id"`
 	Username      string     `json:"username,omitempty"`
 	Name          string     `json:"name"`
+	Protocol      string     `json:"protocol"` // "wg" | "xray"
 	PublicKey     string     `json:"public_key"`
 	IPv4          string     `json:"ipv4"`
 	Enabled       bool       `json:"enabled"`
@@ -630,9 +682,12 @@ type deviceOut struct {
 func newDeviceOut(d store.Device, username string) deviceOut {
 	out := deviceOut{
 		ID: d.ID, UserID: d.UserID, Username: username, Name: d.Name,
-		PublicKey: d.PublicKey, IPv4: d.IPv4, Enabled: d.Enabled,
+		Protocol: d.Protocol, PublicKey: d.PublicKey, IPv4: d.IPv4, Enabled: d.Enabled,
 		Online: isOnline(d), CreatedAt: d.CreatedAt,
 		TotalRx: d.TotalRx, TotalTx: d.TotalTx,
+	}
+	if out.Protocol == "" {
+		out.Protocol = store.ProtocolWG
 	}
 	if !d.LastHandshake.IsZero() {
 		t := d.LastHandshake
@@ -673,14 +728,36 @@ func (a *API) anyDevice(w http.ResponseWriter, r *http.Request) (*store.Device, 
 	return d, true
 }
 
+// serveConfig renders the device credential: a wg-quick config for "wg"
+// devices or the vless:// share link (text/plain) for "xray" devices.
 func (a *API) serveConfig(w http.ResponseWriter, d store.Device) {
+	if d.Protocol == store.ProtocolXray {
+		if !a.cfg.XrayEnabled {
+			a.errJSON(w, http.StatusConflict, "xray protocol is not enabled on this server")
+			return
+		}
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="fibr-%s.txt"`, fileSafe(d.Name)))
+		w.Write([]byte(a.xray.ClientLink(d)))
+		return
+	}
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="fibr-%s.conf"`, fileSafe(d.Name)))
 	w.Write([]byte(a.wg.ClientConfig(d)))
 }
 
+// serveQR renders a PNG QR code of the device credential: the wg-quick config
+// or the vless:// link.
 func (a *API) serveQR(w http.ResponseWriter, d store.Device) {
-	png, err := qrcode.Encode(a.wg.ClientConfig(d), qrcode.Medium, 512)
+	content := a.wg.ClientConfig(d)
+	if d.Protocol == store.ProtocolXray {
+		if !a.cfg.XrayEnabled {
+			a.errJSON(w, http.StatusConflict, "xray protocol is not enabled on this server")
+			return
+		}
+		content = a.xray.ClientLink(d)
+	}
+	png, err := qrcode.Encode(content, qrcode.Medium, 512)
 	if err != nil {
 		a.errJSON(w, http.StatusInternalServerError, "qr generation failed")
 		return
@@ -694,6 +771,20 @@ func (a *API) syncPeers() {
 	go func() {
 		if err := a.wg.SyncPeers(); err != nil {
 			a.log.Error("peer sync after mutation failed", "error", err)
+		}
+	}()
+}
+
+// syncXray rewrites /data/xray/config.json in the background. The xray
+// container still needs a manual restart to pick the file up; see the xray
+// package doc.
+func (a *API) syncXray() {
+	if a.xray == nil {
+		return // xray manager failed to start; xray is disabled
+	}
+	go func() {
+		if err := a.xray.SyncClients(); err != nil {
+			a.log.Error("xray config sync after mutation failed", "error", err)
 		}
 	}()
 }

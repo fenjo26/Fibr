@@ -24,6 +24,30 @@ services:
       retries: 3
       start_period: 10s
 
+  # Xray (VLESS + Reality) — DPI-resistant second protocol, opt-in.
+  # Started only when the compose profile "xray" is active, i.e. when .env
+  # sets COMPOSE_PROFILES=xray (install.sh does this for --xray installs).
+  # fibr renders /data/xray/config.json on the shared fibr-data volume; this
+  # container just runs it. fibr deliberately has NO docker socket access, so
+  # after fibr rewrites the config (device added/removed/toggled) apply it
+  # manually on the host:
+  #   docker compose -f /opt/fibr/install/docker-compose.yml restart xray
+  xray:
+    image: ghcr.io/xtls/xray-core:latest
+    restart: unless-stopped
+    # The config is read from the shared volume directly (/data/xray/config.json).
+    # A single-file mount from a named volume would need the newer compose
+    # "subpath" syntax; pointing the command at the volume path is portable.
+    command: ["run", "-c", "/data/xray/config.json"]
+    ports:
+      - "${FIBR_XRAY_PORT:-8443}:${FIBR_XRAY_PORT:-8443}/tcp"
+    volumes:
+      - fibr-data:/data
+    depends_on:
+      - fibr
+    profiles:
+      - xray
+
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped

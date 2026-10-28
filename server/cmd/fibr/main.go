@@ -18,6 +18,7 @@ import (
 	"github.com/fenjo26/Fibr/internal/config"
 	"github.com/fenjo26/Fibr/internal/store"
 	"github.com/fenjo26/Fibr/internal/wg"
+	"github.com/fenjo26/Fibr/internal/xray"
 )
 
 func main() {
@@ -53,6 +54,23 @@ func main() {
 		log.Error("initial peer sync failed (continuing)", "error", err)
 	}
 
+	// Xray (VLESS + Reality): render /data/xray/config.json for the xray
+	// container. Errors are not fatal — WireGuard keeps working without xray;
+	// if the manager cannot start we hard-disable xray so the API rejects
+	// xray requests instead of panicking on a nil manager.
+	xm, err := xray.New(cfg, st, log)
+	if err != nil {
+		log.Error("xray manager init failed, disabling xray (wireguard continues)", "error", err)
+		xm = nil
+		cfg.XrayEnabled = false
+	} else if cfg.XrayEnabled {
+		if err := xm.SyncClients(); err != nil {
+			log.Error("initial xray config sync failed (continuing)", "error", err)
+		}
+	} else {
+		log.Info("FIBR_XRAY_ENABLED not set, xray protocol disabled")
+	}
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -71,7 +89,7 @@ func main() {
 		}
 	}()
 
-	apiSrv := api.New(cfg, st, wgm, log)
+	apiSrv := api.New(cfg, st, wgm, xm, log)
 
 	if cfg.TelegramBotToken != "" {
 		b := bot.New(cfg, st, apiSrv.BuildOverview, log)

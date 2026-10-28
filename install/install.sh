@@ -9,6 +9,9 @@
 # Options:
 #   --domain DOMAIN   public domain pointed at this server (A record)
 #   --port PORT       WireGuard UDP port (default 51820)
+#   --xray            also enable Xray (VLESS + Reality) on TCP --xray-port
+#   --xray-sni HOST   Reality camouflage host (default www.microsoft.com; implies --xray)
+#   --xray-port PORT  Xray TCP port (default 8443; implies --xray)
 #   --dev             local dev mode (no domain, no TLS, no DNS check)
 #   --skip-dns-check  install even if the DNS check fails (e.g. behind NAT)
 #   --force           regenerate .env secrets on an existing install
@@ -20,6 +23,9 @@ set -euo pipefail
 FIBR_REPO="${FIBR_REPO:-https://github.com/fenjo26/Fibr.git}"
 FIBR_DIR="/opt/fibr"
 WG_PORT="51820"
+XRAY=0
+XRAY_SNI="www.microsoft.com"
+XRAY_PORT="8443"
 DOMAIN=""
 DEV=0
 SKIP_DNS=0
@@ -38,23 +44,28 @@ warn() { echo "${C_WARN}[fibr]${C_OFF} $*" >&2; }
 err()  { echo "${C_ERR}[fibr]${C_OFF} $*" >&2; }
 die()  { err "$@"; exit 1; }
 
-usage() { sed -n '2,16p' "$0" 2>/dev/null || grep -A20 '^# Fibr' "$0"; exit "${1:-0}"; }
+usage() { sed -n '2,20p' "$0" 2>/dev/null || grep -A20 '^# Fibr' "$0"; exit "${1:-0}"; }
 
 # ---------- parse args ----------
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --domain|-d)    DOMAIN="${2:-}"; shift 2 ;;
-    --port|-p)      WG_PORT="${2:-}"; shift 2 ;;
-    --dev)          DEV=1; shift ;;
+    --domain|-d)      DOMAIN="${2:-}"; shift 2 ;;
+    --port|-p)        WG_PORT="${2:-}"; shift 2 ;;
+    --xray)           XRAY=1; shift ;;
+    --xray-sni)       XRAY_SNI="${2:-}"; XRAY=1; shift 2 ;;
+    --xray-port)      XRAY_PORT="${2:-}"; XRAY=1; shift 2 ;;
+    --dev)            DEV=1; shift ;;
     --skip-dns-check) SKIP_DNS=1; shift ;;
-    --force|-f)     FORCE=1; shift ;;
-    --uninstall)    UNINSTALL=1; shift ;;
-    --purge)        UNINSTALL=1; PURGE=1; shift ;;
-    --help|-h)      usage 0 ;;
-    *)              err "unknown option: $1"; usage 1 ;;
+    --force|-f)       FORCE=1; shift ;;
+    --uninstall)      UNINSTALL=1; shift ;;
+    --purge)          UNINSTALL=1; PURGE=1; shift ;;
+    --help|-h)        usage 0 ;;
+    *)                err "unknown option: $1"; usage 1 ;;
   esac
 done
 [[ -n "$WG_PORT" ]] || die "--port needs a value"
+[[ -n "$XRAY_SNI" ]] || die "--xray-sni needs a value"
+[[ -n "$XRAY_PORT" ]] || die "--xray-port needs a value"
 
 # ---------- must be root ----------
 if [[ $EUID -ne 0 ]]; then
@@ -68,13 +79,14 @@ if [[ $UNINSTALL -eq 1 ]]; then
     die "nothing to uninstall at $FIBR_DIR"
   fi
   cd "$FIBR_DIR/install"
+  # --profile xray so a previously started xray container is removed too.
   if [[ $PURGE -eq 1 ]]; then
     info "purging containers, volumes and $FIBR_DIR..."
-    docker compose down -v --remove-orphans || true
+    docker compose --profile xray down -v --remove-orphans || true
     rm -rf "$FIBR_DIR"
   else
     info "stopping containers (data volumes kept; rerun installer to update)..."
-    docker compose down --remove-orphans || true
+    docker compose --profile xray down --remove-orphans || true
   fi
   info "done."
   exit 0
@@ -148,7 +160,11 @@ if command -v ufw >/dev/null && ufw status 2>/dev/null | grep -q "Status: active
   ufw allow 80/tcp  >/dev/null
   ufw allow 443/tcp >/dev/null
   ufw allow "$WG_PORT/udp" >/dev/null
-  info "ufw: opened 80,443/tcp and $WG_PORT/udp"
+  # Xray speaks TCP (Reality masquerades as TLS), unlike WireGuard's UDP.
+  # Opened unconditionally: when xray is disabled the container is not even
+  # started, so nothing listens on the port and the rule is inert.
+  ufw allow "$XRAY_PORT/tcp" >/dev/null
+  info "ufw: opened 80,443/tcp, $WG_PORT/udp and $XRAY_PORT/tcp"
 fi
 
 # ---------- env ----------
@@ -162,6 +178,33 @@ if [[ -f "$ENV_FILE" && $FORCE -eq 0 ]]; then
   info "keeping existing .env (use --force to regenerate secrets)"
   # adopt a possibly changed port/domain into the running env
   sed -i.bak -e "s#^FIBR_DOMAIN=.*#FIBR_DOMAIN=$DOMAIN#" -e "s#^FIBR_WG_PORT=.*#FIBR_WG_PORT=$WG_PORT#" "$ENV_FILE" && rm -f "$ENV_FILE.bak"
+  # Upgrade path: a .env written before Xray existed has no FIBR_XRAY_* keys.
+  if ! grep -q '^FIBR_XRAY_ENABLED=' "$ENV_FILE"; then
+    cat >> "$ENV_FILE" <<'XEOF'
+
+# Xray (VLESS + Reality) — added by installer upgrade; see .env.example.
+FIBR_XRAY_ENABLED=false
+FIBR_XRAY_PORT=8443
+FIBR_XRAY_SNI=www.microsoft.com
+FIBR_XRAY_SHORT_ID=
+#COMPOSE_PROFILES=xray
+XEOF
+    info "appended default xray settings to existing .env"
+  fi
+  # --xray explicitly enables/updates xray on an existing install too.
+  # Without the flag, manual xray edits in .env are left untouched.
+  if [[ $XRAY -eq 1 ]]; then
+    if [[ -z "$(grep '^FIBR_XRAY_SHORT_ID=' "$ENV_FILE" | cut -d= -f2)" ]]; then
+      sed -i.bak -E "s|^FIBR_XRAY_SHORT_ID=.*|FIBR_XRAY_SHORT_ID=$(rand_hex 4)|" "$ENV_FILE" && rm -f "$ENV_FILE.bak"
+    fi
+    sed -i.bak -E \
+      -e "s|^FIBR_XRAY_ENABLED=.*|FIBR_XRAY_ENABLED=true|" \
+      -e "s|^FIBR_XRAY_PORT=.*|FIBR_XRAY_PORT=$XRAY_PORT|" \
+      -e "s|^FIBR_XRAY_SNI=.*|FIBR_XRAY_SNI=$XRAY_SNI|" \
+      -e "s|^#?COMPOSE_PROFILES=.*|COMPOSE_PROFILES=xray|" \
+      "$ENV_FILE" && rm -f "$ENV_FILE.bak"
+    info "xray enabled in existing .env (remember: docker compose up -d)"
+  fi
 else
   ADMIN_TOKEN="$(rand_hex 24)"
   SECRET="$(rand_hex 32)"
@@ -172,6 +215,15 @@ else
     -e "s#^FIBR_ADMIN_TOKEN=.*#FIBR_ADMIN_TOKEN=$ADMIN_TOKEN#" \
     -e "s#^FIBR_SECRET=.*#FIBR_SECRET=$SECRET#" \
     "$ENV_FILE" && rm -f "$ENV_FILE.bak"
+  if [[ $XRAY -eq 1 ]]; then
+    sed -i.bak -E \
+      -e "s|^FIBR_XRAY_ENABLED=.*|FIBR_XRAY_ENABLED=true|" \
+      -e "s|^FIBR_XRAY_PORT=.*|FIBR_XRAY_PORT=$XRAY_PORT|" \
+      -e "s|^FIBR_XRAY_SNI=.*|FIBR_XRAY_SNI=$XRAY_SNI|" \
+      -e "s|^FIBR_XRAY_SHORT_ID=.*|FIBR_XRAY_SHORT_ID=$(rand_hex 4)|" \
+      -e "s|^#?COMPOSE_PROFILES=.*|COMPOSE_PROFILES=xray|" \
+      "$ENV_FILE" && rm -f "$ENV_FILE.bak"
+  fi
   chmod 600 "$ENV_FILE"
   info "generated .env with fresh secrets"
 fi
@@ -208,6 +260,14 @@ ${C_INFO}───────────────────────�
   Admin token : $ADMIN_TOKEN_SHOW
   Mini App    : $URL/miniapp/   (needs the Telegram bot, see below)
   WireGuard   : udp/$WG_PORT (config QR codes are in the panel)
+EOF
+if [[ $XRAY -eq 1 ]]; then
+  cat <<EOF
+  Xray        : tcp/$XRAY_PORT — VLESS+Reality, SNI $XRAY_SNI (choose the
+                "xray" protocol when adding a device in the panel)
+EOF
+fi
+cat <<EOF
 
   Next steps — Telegram bot & Mini App:
     1. In @BotFather: /newbot, copy the token.
@@ -218,7 +278,17 @@ ${C_INFO}───────────────────────�
     4. In @BotFather: /mybots -> Bot Settings -> Menu Button ->
        set the URL to $URL/miniapp/
     5. Open your bot in Telegram and press Start.
+EOF
+if [[ $XRAY -eq 1 ]]; then
+  cat <<EOF
 
+  Xray note: fibr rewrites the server config when xray devices change, but
+  the xray container only reads it at startup. After adding/removing xray
+  devices in the panel, apply with:
+    docker compose -f $FIBR_DIR/install/docker-compose.yml restart xray
+EOF
+fi
+cat <<EOF
   Logs        : docker compose -f $FIBR_DIR/install/docker-compose.yml logs -f fibr
   Uninstall   : bash $FIBR_DIR/install/install.sh --uninstall [--purge]
 ${C_INFO}──────────────────────────────────────────────────────────────${C_OFF}

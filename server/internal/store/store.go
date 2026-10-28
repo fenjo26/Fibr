@@ -25,13 +25,31 @@ type User struct {
 	CreatedAt  time.Time `json:"created_at"`
 }
 
-// Device is one WireGuard peer owned by a user. The private key is generated
-// server-side so the panel can render full client configs and QR codes (the
-// same trade-off wg-easy makes); see README for the security implications.
+// Protocol values for Device.Protocol.
+const (
+	// ProtocolWG is the classic WireGuard device: PublicKey/PrivateKey/
+	// PresharedKey hold wg keys, IPv4 is the address inside the tunnel.
+	ProtocolWG = "wg"
+	// ProtocolXray is a VLESS+Reality client. There are no wg keys; instead:
+	//   PublicKey    = the client UUID (what a vless:// link carries and the
+	//                  xray inbound lists under clients[].id),
+	//   PrivateKey   = "" (empty),
+	//   PresharedKey = "" (empty).
+	// IPv4 is still allocated (the column is UNIQUE NOT NULL) but is unused
+	// by the protocol. No per-device stats exist for xray in this MVP.
+	ProtocolXray = "xray"
+)
+
+// Device is one VPN credential owned by a user: a WireGuard peer (Protocol
+// "wg") or an Xray/VLESS client (Protocol "xray"). The private key is
+// generated server-side so the panel can render full client configs and QR
+// codes (the same trade-off wg-easy makes); see README for the security
+// implications.
 type Device struct {
 	ID            int64     `json:"id"`
 	UserID        int64     `json:"user_id"`
 	Name          string    `json:"name"`
+	Protocol      string    `json:"protocol"` // "wg" | "xray" (never empty after CreateDevice)
 	PublicKey     string    `json:"public_key"`
 	PrivateKey    string    `json:"-"`
 	PresharedKey  string    `json:"-"`
@@ -64,6 +82,7 @@ CREATE TABLE IF NOT EXISTS devices (
 	id             INTEGER PRIMARY KEY AUTOINCREMENT,
 	user_id        INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
 	name           TEXT    NOT NULL,
+	protocol       TEXT    NOT NULL DEFAULT 'wg' CHECK (protocol IN ('wg','xray')),
 	public_key     TEXT    NOT NULL UNIQUE,
 	private_key    TEXT    NOT NULL,
 	preshared_key  TEXT    NOT NULL DEFAULT '',
@@ -85,6 +104,10 @@ CREATE TABLE IF NOT EXISTS settings (
 `
 
 // Open opens (or creates) the database at path and applies migrations.
+//
+// Migrations are idempotent: Open() runs on every start, so each step checks
+// the actual database state before altering anything (schema deltas are gated
+// on pragma table_info, never on schema version numbers).
 func Open(path string) (*Store, error) {
 	db, err := sql.Open("sqlite", "file:"+path+"?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)")
 	if err != nil {
@@ -95,7 +118,46 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("migrate: %w", err)
 	}
+	if err := migrateDevicesProtocol(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate devices.protocol: %w", err)
+	}
 	return &Store{db: db}, nil
+}
+
+// migrateDevicesProtocol adds the devices.protocol column ("wg"|"xray") to
+// databases created before the Xray integration. CREATE TABLE IF NOT EXISTS
+// above only covers fresh databases; for existing ones we check pragma
+// table_info and ALTER TABLE when the column is missing. Existing rows get
+// the column default 'wg', which is correct: before Xray every device was a
+// WireGuard peer.
+func migrateDevicesProtocol(db *sql.DB) error {
+	rows, err := db.Query(`pragma table_info(devices)`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	hasProtocol := false
+	for rows.Next() {
+		var cid int
+		var name, colType string
+		var notNull, pk int
+		var dflt any
+		if err := rows.Scan(&cid, &name, &colType, &notNull, &dflt, &pk); err != nil {
+			return err
+		}
+		if name == "protocol" {
+			hasProtocol = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if hasProtocol {
+		return nil // already migrated (normal case on every start)
+	}
+	_, err = db.Exec(`ALTER TABLE devices ADD COLUMN protocol TEXT NOT NULL DEFAULT 'wg' CHECK (protocol IN ('wg','xray'))`)
+	return err
 }
 
 // Close closes the database.
@@ -206,13 +268,18 @@ func scanUser(r interface{ Scan(...any) error }) (*User, error) {
 
 /* ---------------------------- devices ---------------------------- */
 
-// CreateDevice inserts a device; CreatedAt is filled in.
+// CreateDevice inserts a device; CreatedAt is filled in. Protocol defaults
+// to "wg" when empty. See the Device struct for the key-field conventions of
+// each protocol.
 func (s *Store) CreateDevice(d *Device) error {
+	if d.Protocol == "" {
+		d.Protocol = ProtocolWG
+	}
 	now := time.Now().Unix()
 	res, err := s.db.Exec(
-		`INSERT INTO devices (user_id, name, public_key, private_key, preshared_key, ipv4, enabled, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		d.UserID, d.Name, d.PublicKey, d.PrivateKey, d.PresharedKey, d.IPv4, b2i(d.Enabled), now,
+		`INSERT INTO devices (user_id, name, protocol, public_key, private_key, preshared_key, ipv4, enabled, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		d.UserID, d.Name, d.Protocol, d.PublicKey, d.PrivateKey, d.PresharedKey, d.IPv4, b2i(d.Enabled), now,
 	)
 	if err != nil {
 		return err
@@ -225,7 +292,7 @@ func (s *Store) CreateDevice(d *Device) error {
 	return nil
 }
 
-const deviceCols = `id, user_id, name, public_key, private_key, preshared_key, ipv4, enabled, created_at, last_handshake, last_rx, last_tx, total_rx, total_tx`
+const deviceCols = `id, user_id, name, protocol, public_key, private_key, preshared_key, ipv4, enabled, created_at, last_handshake, last_rx, last_tx, total_rx, total_tx`
 
 // GetDevice returns a device by id.
 func (s *Store) GetDevice(id int64) (*Device, error) {
@@ -296,12 +363,15 @@ func scanDevice(r interface{ Scan(...any) error }) (*Device, error) {
 	var d Device
 	var enabled int
 	var created, hs int64
-	if err := r.Scan(&d.ID, &d.UserID, &d.Name, &d.PublicKey, &d.PrivateKey, &d.PresharedKey, &d.IPv4,
+	if err := r.Scan(&d.ID, &d.UserID, &d.Name, &d.Protocol, &d.PublicKey, &d.PrivateKey, &d.PresharedKey, &d.IPv4,
 		&enabled, &created, &hs, &d.LastRx, &d.LastTx, &d.TotalRx, &d.TotalTx); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
 		return nil, err
+	}
+	if d.Protocol == "" {
+		d.Protocol = ProtocolWG // pre-migration rows; defensive
 	}
 	d.Enabled = enabled != 0
 	d.CreatedAt = time.Unix(created, 0)
