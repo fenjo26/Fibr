@@ -10,6 +10,10 @@ class AppLocalizations {
 
   String get langCode => locale.languageCode == 'ru' ? 'ru' : 'en';
 
+  /// Shorthand for L10nProvider.of so screens write
+  /// AppLocalizations.of(context).t('key').
+  static AppLocalizations of(BuildContext context) => L10nProvider.of(context);
+
   /// t('key', {vars}) — `{name}` placeholders, like `Fibr.makeT` in design/app.js.
   String t(String key, [Map<String, Object>? vars]) {
     var s = _dicts[langCode]?[key] ?? _en[key] ?? key;
