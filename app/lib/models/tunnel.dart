@@ -26,6 +26,7 @@ class Tunnel {
     required this.config,
     this.splitMode = SplitTunnelMode.off,
     this.splitApps = const [],
+    this.updatedAt,
   }) : parsed = WgConfigParser.tryParse(config);
 
   final String id;
@@ -35,6 +36,11 @@ class Tunnel {
 
   SplitTunnelMode splitMode;
   List<String> splitApps; // Android package names (allow/deny list)
+
+  /// When the config text was last replaced in place (server swap re-import).
+  /// Null for tunnels stored before this field existed and for tunnels whose
+  /// config was never replaced; renames do not bump it.
+  final DateTime? updatedAt;
 
   /// Session start of the current connection; not persisted — cleared on
   /// disconnect and unknown after an app restart.
@@ -49,6 +55,10 @@ class Tunnel {
     final i = endpoint.lastIndexOf(':');
     return i > 0 ? endpoint.substring(0, i) : endpoint;
   }
+
+  /// Full "host:port" endpoint — what a server swap changes, shown on list
+  /// rows so the target server is visible at a glance.
+  String get endpointLabel => primaryEndpoint ?? '—';
 
   String get addressLabel => parsed?.iface.addresses.join(', ') ?? '—';
   String get dnsLabel =>
@@ -65,6 +75,20 @@ class Tunnel {
         config: config,
         splitMode: splitMode ?? this.splitMode,
         splitApps: splitApps ?? this.splitApps,
+        updatedAt: updatedAt,
+      );
+
+  /// Copy with a new wg-quick config text (server swap re-import): the
+  /// constructor re-parses the config, so the cached parse result and all
+  /// derived labels (endpoint, server key, …) refresh, and [updatedAt] is
+  /// stamped with now. Name and split-tunneling settings are kept.
+  Tunnel withConfig(String newConfig) => Tunnel(
+        id: id,
+        name: name,
+        config: newConfig,
+        splitMode: splitMode,
+        splitApps: splitApps,
+        updatedAt: DateTime.now(),
       );
 
   Map<String, dynamic> toJson() => {
@@ -73,6 +97,7 @@ class Tunnel {
         'config': config,
         'splitMode': splitModeToString(splitMode),
         'splitApps': splitApps,
+        if (updatedAt != null) 'updatedAt': updatedAt!.toIso8601String(),
       };
 
   static Tunnel? fromJson(Map<String, dynamic> json) {
@@ -87,6 +112,7 @@ class Tunnel {
       config: config,
       splitMode: splitModeFromString(json['splitMode'] as String?),
       splitApps: (json['splitApps'] as List?)?.cast<String>() ?? const [],
+      updatedAt: DateTime.tryParse(json['updatedAt'] as String? ?? ''),
     );
   }
 

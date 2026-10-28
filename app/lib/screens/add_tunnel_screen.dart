@@ -21,6 +21,9 @@ class AddTunnelScreen extends StatefulWidget {
   State<AddTunnelScreen> createState() => _AddTunnelScreenState();
 }
 
+/// What the user picked in the "this device is already added" dialog.
+enum _SameDeviceAction { update, addNew }
+
 class _AddTunnelScreenState extends State<AddTunnelScreen> {
   int _tab = 0; // 0 — scan, 1 — paste
   bool _handlingScan = false;
@@ -65,6 +68,51 @@ class _AddTunnelScreenState extends State<AddTunnelScreen> {
     });
   }
 
+  /// The most recently updated existing tunnel of the SAME device: the
+  /// [Interface] private key is the device identity and survives server
+  /// swaps (endpoint and even the server's own public key change when the
+  /// operator switches nodes — see docs/multinode.md — but the device key
+  /// pair does not). Null when nothing matches.
+  Tunnel? _sameDeviceMatch(TunnelController ctrl, String deviceKey) {
+    if (deviceKey.isEmpty) return null;
+    final never = DateTime.fromMillisecondsSinceEpoch(0); // legacy null stamps
+    Tunnel? match;
+    for (final t in ctrl.tunnels) {
+      if (t.parsed?.iface.privateKey != deviceKey) continue;
+      final best = match?.updatedAt ?? never;
+      final current = t.updatedAt ?? never;
+      if (match == null || current.isAfter(best)) match = t;
+    }
+    return match;
+  }
+
+  /// Server-swap fork: this device already has a tunnel — offer to update
+  /// it in place instead of creating a duplicate. Returns null when
+  /// dismissed (stay on this screen).
+  Future<_SameDeviceAction?> _askSameDevice(AppLocalizations l10n, String name) {
+    return showDialog<_SameDeviceAction>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(l10n.t('dupTitle')),
+        content: Text(l10n.t('dupBody', {'name': name})),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: Text(l10n.t('cancel')),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(_SameDeviceAction.addNew),
+            child: Text(l10n.t('dupAddNew')),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(_SameDeviceAction.update),
+            child: Text(l10n.t('dupUpdate')),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _save(String configText) async {
     final l10n = AppLocalizations.of(context);
     try {
@@ -73,6 +121,29 @@ class _AddTunnelScreenState extends State<AddTunnelScreen> {
         throw const WgConfigFormatException('no peer with Endpoint');
       }
       final ctrl = context.read<TunnelController>();
+
+      // Re-import of a device the user already has (operator swapped the
+      // server/node) — offer an in-place update of the existing tunnel.
+      final match = _sameDeviceMatch(ctrl, parsed.iface.privateKey);
+      if (match != null) {
+        final action = await _askSameDevice(l10n, match.name);
+        if (!mounted) return;
+        if (action == _SameDeviceAction.update) {
+          final wasActive = ctrl.activeTunnelId == match.id;
+          await ctrl.updateTunnelConfig(match.id, configText);
+          if (!mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text(l10n.t(
+              wasActive ? 'tunnelUpdatedReconnect' : 'tunnelUpdated',
+              {'name': match.name},
+            )),
+          ));
+          Navigator.of(context).pop();
+          return;
+        }
+        if (action != _SameDeviceAction.addNew) return; // dismissed
+      }
+
       await ctrl.addTunnel(Tunnel(
         id: Tunnel.newId(),
         name: _name.text.trim().isEmpty ? WgConfigParser.suggestName(parsed) : _name.text.trim(),

@@ -174,4 +174,53 @@ AllowedIPs = 0.0.0.0/0
     expect(WgConfigParser.tryParse('[Peer]\nPublicKey = p=\n'), isNull);
     expect(WgConfigParser.tryParse(_normalConfig), isNotNull);
   });
+
+  group('serverPublicKey — server identity across endpoint swaps', () {
+    test('public key of the primary (first peer with an Endpoint)', () {
+      final cfg = WgConfigParser.parse(_normalConfig);
+      expect(cfg.serverPublicKey, '1234567890abcdef1234567890abcdef1234567890a=');
+    });
+
+    test('skips peers without an Endpoint (multi-peer config)', () {
+      const config = '''
+[Interface]
+PrivateKey = a=
+Address = 10.9.0.5/32
+
+[Peer]
+# roaming peer, no endpoint — not the server
+PublicKey = roamingKey=
+AllowedIPs = 10.10.0.0/16
+
+[Peer]
+PublicKey = serverKey=
+Endpoint = a.example.com:51820
+AllowedIPs = 0.0.0.0/0
+''';
+      final cfg = WgConfigParser.parse(config);
+      expect(cfg.serverPublicKey, 'serverKey=');
+    });
+
+    test('empty when no peer has an Endpoint', () {
+      const config = '''
+[Interface]
+PrivateKey = a=
+Address = 10.9.0.5/32
+
+[Peer]
+PublicKey = p=
+AllowedIPs = 10.0.0.0/8
+''';
+      expect(WgConfigParser.parse(config).serverPublicKey, '');
+    });
+
+    test('same server key after an endpoint swap', () {
+      final before = WgConfigParser.parse(_normalConfig);
+      final after = WgConfigParser.parse(
+        _normalConfig.replaceFirst('vpn.example.com:51820', 'new-node.example.org:51820'),
+      );
+      expect(after.primaryEndpoint, 'new-node.example.org:51820');
+      expect(after.serverPublicKey, before.serverPublicKey);
+    });
+  });
 }

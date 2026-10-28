@@ -66,6 +66,15 @@ class AppLocalizations {
     'configHint': '[Interface]\nPrivateKey = …',
     'save': 'Сохранить',
     'tunnelAdded': 'Туннель добавлен',
+    'dupTitle': 'Это устройство уже добавлено',
+    'dupBody':
+        'Туннель «{name}» создан для этого же устройства (совпадает ключ). '
+        'Обновить его новым конфигом или добавить отдельный туннель?',
+    'dupUpdate': 'Обновить существующий',
+    'dupAddNew': 'Добавить новый',
+    'tunnelUpdated': 'Туннель «{name}» обновлён',
+    'tunnelUpdatedReconnect':
+        'Туннель «{name}» обновлён — переподключитесь, чтобы применить новый сервер',
     'errInvalidConfig': 'Не удалось разобрать конфиг: {msg}',
     'errQrNotConfig': 'QR не похож на конфиг WireGuard',
     // Common
@@ -141,6 +150,15 @@ class AppLocalizations {
     'configHint': '[Interface]\nPrivateKey = …',
     'save': 'Save',
     'tunnelAdded': 'Tunnel added',
+    'dupTitle': 'This device is already added',
+    'dupBody':
+        'Tunnel "{name}" was created for this same device (same key). '
+        'Update it with the new config, or add a separate tunnel?',
+    'dupUpdate': 'Update existing',
+    'dupAddNew': 'Add as new',
+    'tunnelUpdated': 'Tunnel "{name}" updated',
+    'tunnelUpdatedReconnect':
+        'Tunnel "{name}" updated — reconnect to apply the new server',
     'errInvalidConfig': 'Could not parse the config: {msg}',
     'errQrNotConfig': 'The QR code does not look like a WireGuard config',
     // Common

@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:wireguard_flutter/wireguard_flutter.dart';
 
 import '../models/tunnel.dart';
+import 'wg_config_parser.dart';
 
 enum TunnelStatus { disconnected, connecting, connected, disconnecting, failure }
 
@@ -201,6 +202,25 @@ class TunnelController extends ChangeNotifier {
     _tunnels[i] = tunnel;
     await _persist();
     notifyListeners();
+  }
+
+  /// Replaces the wg-quick config text of tunnel [id] (server swap
+  /// re-import): re-parses the config so endpoint/server-key labels
+  /// refresh, bumps updatedAt and persists. A session running on this
+  /// tunnel keeps using the OLD config until the user reconnects — no
+  /// auto-reconnect here; callers notify. Returns false when the id is
+  /// unknown or [newConfig] does not parse.
+  Future<bool> updateTunnelConfig(String id, String newConfig) async {
+    if (WgConfigParser.tryParse(newConfig) == null) return false;
+    final i = _tunnels.indexWhere((t) => t.id == id);
+    if (i < 0) return false;
+    final old = _tunnels[i];
+    final updated = old.withConfig(newConfig);
+    updated.connectedSince = old.connectedSince; // keep the running session
+    _tunnels[i] = updated;
+    await _persist();
+    notifyListeners();
+    return true;
   }
 
   Future<void> removeTunnel(String id) async {

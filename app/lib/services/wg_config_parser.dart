@@ -64,6 +64,12 @@ class WgConfig {
 
   String? get primaryEndpoint => primaryPeer?.endpoint;
 
+  /// Public key of the primary peer — the server's identity. It stays the
+  /// same when the operator swaps the endpoint (IP/domain), which is how a
+  /// re-imported config is recognised as "the same server". Empty when no
+  /// peer has an Endpoint.
+  String get serverPublicKey => primaryPeer?.publicKey ?? '';
+
   /// All AllowedIPs values joined, e.g. "0.0.0.0/0, ::/0".
   String get allowedIpsJoined =>
       peers.expand((p) => p.allowedIps).toSet().join(', ');

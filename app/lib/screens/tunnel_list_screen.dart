@@ -128,7 +128,7 @@ class _TunnelCard extends StatelessWidget {
                 ),
                 const SizedBox(height: 2),
                 Text(
-                  tunnel.serverLabel,
+                  tunnel.endpointLabel,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
