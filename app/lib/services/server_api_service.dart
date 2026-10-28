@@ -516,7 +516,7 @@ class ServerAccountController extends ChangeNotifier {
       }
       final tunnel = tunnels.tunnelById(tunnelIdForDevice(device.id));
       if (tunnel == null) return false;
-      return tunnels.connect(tunnel);
+      return await tunnels.connect(tunnel);
     } on ServerApiException {
       return false;
     }

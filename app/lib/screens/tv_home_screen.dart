@@ -178,7 +178,7 @@ class _TvHomeScreenState extends State<TvHomeScreen> {
         status == TunnelStatus.disconnecting;
     final connected = status == TunnelStatus.connected;
     final activeXray = signedIn && (account.activeDevice?.isXray ?? false);
-    final since = isSession ? sessionTunnel?.connectedSince : null;
+    final since = isSession ? sessionTunnel.connectedSince : null;
     final duration = since == null
         ? null
         : formatDuration(DateTime.now().difference(since));

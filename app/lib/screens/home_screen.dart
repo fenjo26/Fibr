@@ -154,7 +154,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 status: status,
                 busy: _connecting,
                 sessionSince: isSession
-                    ? tunnels.tunnelById(tunnelId!)?.connectedSince
+                    ? tunnels.tunnelById(tunnelId)?.connectedSince
                     : null,
               ),
               const SizedBox(height: 16),
