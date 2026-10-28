@@ -59,6 +59,8 @@
       qrStep2: 'Нажмите «+» и выберите «Создать из QR-кода»',
       qrStep3: 'Наведите камеру на код',
       btnCode: 'Код',
+      protoWG: 'WireGuard — быстрый', protoVless: 'VLESS — если блокируют', protoVlessOff: 'VLESS (выключен на сервере)',
+      protoHint: 'WireGuard — обычный и самый быстрый. VLESS — если WireGuard блокируют (мобильные сети, Wi-Fi на работе).',
       btnSendTg: 'Файл в Telegram', sentTg: 'Файл отправлен в чат с ботом ✅',
       errSendTg: 'Не удалось отправить. Откройте чат с ботом, нажмите «Старт» и повторите.',
       howToTitle: 'Как подключить файлом',
@@ -153,6 +155,8 @@
       qrStep2: 'Tap “+” and choose “Create from QR code”',
       qrStep3: 'Point your camera at the code',
       btnCode: 'Code',
+      protoWG: 'WireGuard — fast', protoVless: 'VLESS — if blocked', protoVlessOff: 'VLESS (off on this server)',
+      protoHint: 'WireGuard is the normal, fastest one. VLESS is for networks that block WireGuard (mobile, office Wi-Fi).',
       btnSendTg: 'File to Telegram', sentTg: 'The file is in your chat with the bot ✅',
       errSendTg: 'Could not send. Open the bot chat, press Start and try again.',
       howToTitle: 'Connect with a file',
@@ -446,17 +450,16 @@
     api('/api/me').then(function (data) {
       me = data;
       // Xray option appears only when the server has the second protocol on.
+      // Both protocols are always listed; VLESS is greyed out (with the
+      // reason) only when the server has it switched off.
       var proto = document.getElementById('new-proto');
-      if (me.xray_enabled && !proto.querySelector('option[value="xray"]')) {
-        var opt = document.createElement('option');
-        opt.value = 'xray';
-        opt.textContent = 'Xray';
-        proto.appendChild(opt);
-      } else if (!me.xray_enabled) {
-        var x = proto.querySelector('option[value="xray"]');
-        if (x) x.remove();
-        proto.value = 'wg';
-      }
+      var wgOpt = proto.querySelector('option[value="wg"]');
+      var xOpt = proto.querySelector('option[value="xray"]');
+      wgOpt.textContent = t('protoWG');
+      xOpt.textContent = me.xray_enabled ? t('protoVless') : t('protoVlessOff');
+      xOpt.disabled = !me.xray_enabled;
+      if (!me.xray_enabled) proto.value = 'wg';
+      proto.title = t('protoHint');
       var name = data.user.username || (tg && tg.initDataUnsafe && tg.initDataUnsafe.user && tg.initDataUnsafe.user.first_name) || '';
       el('greeting').textContent = t('greeting', { name: name });
       el('app-view').classList.remove('hidden');

@@ -60,6 +60,8 @@
       lblDevices: 'Устройства', lblOnline: 'Онлайн', lblTraffic: 'Трафик',
       phName: 'Название устройства (телефон, ноутбук…)',
       devicesHint: 'Одно устройство = один телефон, ноутбук или ТВ. Добавьте по одному на каждый. Не знаете, как подключить? Нажмите «Как подключиться» — там пошагово для WireGuard, AmneziaVPN, QR и телевизора.',
+      protoWG: 'WireGuard — быстрый', protoVless: 'VLESS — если блокируют', protoVlessOff: 'VLESS (выключен на сервере)',
+      protoHint: 'WireGuard — обычный и самый быстрый. VLESS — если WireGuard блокируют (мобильные сети, Wi-Fi на работе).',
       btnSendTg: 'Файл в Telegram', sentTg: 'Файл отправлен в чат с ботом ✅',
       errSendTg: 'Не удалось отправить. Откройте чат с ботом в Telegram, нажмите «Старт» и повторите.',
       addDevice: 'Добавить',
@@ -151,6 +153,8 @@
       lblDevices: 'Devices', lblOnline: 'Online', lblTraffic: 'Traffic',
       phName: 'Device name (phone, laptop…)',
       devicesHint: 'One device = one phone, laptop or TV. Add one for each. Not sure how to connect? Tap “How to connect” — step by step for WireGuard, AmneziaVPN, QR and TV.',
+      protoWG: 'WireGuard — fast', protoVless: 'VLESS — if blocked', protoVlessOff: 'VLESS (off on this server)',
+      protoHint: 'WireGuard is the normal, fastest one. VLESS is for networks that block WireGuard (mobile, office Wi-Fi).',
       btnSendTg: 'File to Telegram', sentTg: 'The file is in your chat with the bot ✅',
       errSendTg: 'Could not send. Open the bot chat in Telegram, press Start and try again.',
       addDevice: 'Add',
@@ -604,17 +608,16 @@
   function load() {
     api('/api/me').then(function (data) {
       me = data;
+      // Both protocols are always listed; VLESS is greyed out (with the
+      // reason) only when the server has it switched off.
       var proto = document.getElementById('new-proto');
-      if (me.xray_enabled && !proto.querySelector('option[value="xray"]')) {
-        var opt = document.createElement('option');
-        opt.value = 'xray';
-        opt.textContent = 'Xray';
-        proto.appendChild(opt);
-      } else if (!me.xray_enabled) {
-        var x = proto.querySelector('option[value="xray"]');
-        if (x) x.remove();
-        proto.value = 'wg';
-      }
+      var wgOpt = proto.querySelector('option[value="wg"]');
+      var xOpt = proto.querySelector('option[value="xray"]');
+      wgOpt.textContent = t('protoWG');
+      xOpt.textContent = me.xray_enabled ? t('protoVless') : t('protoVlessOff');
+      xOpt.disabled = !me.xray_enabled;
+      if (!me.xray_enabled) proto.value = 'wg';
+      proto.title = t('protoHint');
       el('greeting').textContent = t('greeting', { name: (data.user && data.user.username) || '' });
       showView('app-view');
       render();
