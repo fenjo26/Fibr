@@ -24,20 +24,38 @@ QR-конфигами и статистикой. Open source, MIT.
 
 ## Быстрый старт
 
-На чистом Ubuntu 22.04+/Debian 12 VPS с A-записью `vpn.example.com`:
+Что понадобится заранее: чистый VPS (Ubuntu 22.04+/Debian 12, от 1 ГБ RAM —
+при меньшей установщик сам попросит добавить swap), домен с A-записью на IP
+сервера, и — если хочется Telegram-бота сразу — токен от [@BotFather](https://t.me/BotFather)
+(`/newbot`) и свой числовой Telegram-id (подскажет [@userinfobot](https://t.me/userinfobot)).
+
+Всё ставится **одной командой** — вместе с ботом:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/fenjo26/Fibr/main/install/install.sh \
+  | bash -s -- --domain vpn.example.com \
+      --bot-token 1234567890:AAF-токен-от-BotFather \
+      --admin-tg 123456789
+```
+
+Без бота — ещё короче (подключить его можно позже той же командой с флагами):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/fenjo26/Fibr/main/install/install.sh \
   | bash -s -- --domain vpn.example.com
 ```
 
-Скрипт сам: поставит Docker, проверит DNS, сгенерирует секреты в
-`/opt/fibr/install/.env`, соберёт контейнеры и поднимет их. В конце напечатает
-адрес админки и токен.
+Скрипт сам: поставит Docker, проверит DNS, сгенерирует секреты, соберёт и
+поднимет контейнеры, подключит бота — и в конце напечатает адрес админки,
+токен и следующие шаги. Повторный запуск безопасен: он обновит существующую
+установку (флаги `--bot-token`/`--admin-tg`/`--with-updater`/`--xray`
+дописываются в уже работающий сервер).
 
-Из чек-аута репозитория то же самое: `bash install/install.sh --domain vpn.example.com`.
+Из чек-аута репозитория то же самое: `bash install/install.sh --domain vpn.example.com …`.
 
-Опции: `--port` (UDP-порт WG), `--dev` (локальный режим без домена и TLS),
+Опции: `--bot-token`/`--admin-tg` (бот и суперадмин), `--port` (UDP-порт WG),
+`--awg` (движок AmneziaWG), `--xray [--xray-sni H] [--xray-port P]` (второй
+протокол), `--with-updater` (кнопка обновления в панели), `--dev`,
 `--skip-dns-check`, `--force`, `--uninstall [--purge]`.
 
 ## Скачать клиент
@@ -84,25 +102,29 @@ opt-in, потому что сайдкару нужен доступ к docker-�
 
 ### Подключение Telegram-бота и Mini App
 
-1. В [@BotFather](https://t.me/BotFather): `/newbot` → получите токен.
-2. Впишите в `/opt/fibr/install/.env`:
-   - `FIBR_TELEGRAM_BOT_TOKEN=<токен>`
-   - `FIBR_ADMIN_TELEGRAM_IDS=<ваш числовой id; узнать — @userinfobot или команда /id у бота после старта>`
-3. `docker compose -f /opt/fibr/install/docker-compose.yml up -d`
-4. В BotFather: `/mybots` → ваш бот → *Bot Settings* → *Menu Button* →
-   `https://vpn.example.com/miniapp/`
-5. Откройте бота в Telegram → **Start** — кнопка «Открыть Fibr».
+Если ставили без `--bot-token` — просто перезапустите установщик с флагами
+(обновит существующий сервер, файлы править руками не нужно):
 
-Mini App требует HTTPS и домен — это ограничение платформы Telegram.
-После шага 4 миниапп подтягивается из бота **автоматически**: кнопка слева от
-поля ввода сообщения открывает приложение, ставить ничего не нужно.
+```bash
+curl -fsSL https://raw.githubusercontent.com/fenjo26/Fibr/main/install/install.sh \
+  | bash -s -- --domain vpn.example.com \
+      --bot-token <токен от @BotFather, /newbot> \
+      --admin-tg <ваш числовой id — подскажет @userinfobot>
+```
+
+Затем один раз в [@BotFather](https://t.me/BotFather): `/mybots` → ваш бот →
+*Bot Settings* → **Menu Button** → `https://vpn.example.com/miniapp/`.
+
+Всё: откройте бота в Telegram → **Start** — кнопка слева от поля ввода
+открывает Mini App, ставить ничего не нужно. (Telegram требует HTTPS-домен —
+он у вас уже есть.)
 
 Два способа зайти без Telegram:
 
 - **веб-кабинет** `https://vpn.example.com/cabinet/` — тот же личный кабинет
   в обычном браузере, вход кнопкой «Log in with Telegram». Чтобы Telegram
   авторизовал вход с домена, в BotFather сделайте ещё `/mybots` → *Bot
-  Settings* → *Domain* → `vpn.example.com`;
+  Settings* → **Domain** → `vpn.example.com`;
 - **админ-панель** `/admin/` — по токену из `.env` (только суперадмин).
 
 ## Состав репозитория
