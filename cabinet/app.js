@@ -32,7 +32,26 @@
   var DICT = {
     ru: {
       greeting: 'Привет, {name}!',
-      loginHint: 'Войдите тем же аккаунтом Telegram, что и в боте Fibr — пароль не нужен.',
+      loginHint: 'Войдите по логину и паролю. Первый раз — откройте ссылку-приглашение или ссылку для входа от администратора.',
+      loginLinkField: 'Вставьте ссылку для входа', loginGo: 'Войти',
+      pwLogin: 'Логин', pwPass: 'Пароль', pwGo: 'Войти',
+      codeToggle: 'У меня код или ссылка для входа',
+      errPw: 'Неверный логин или пароль.', errPwMany: 'Слишком много попыток — подождите 15 минут.',
+      pwTitle: 'Логин и пароль',
+      pwHintNone: 'Придумайте логин и пароль — по ним вы войдёте в кабинет с любого устройства, без кодов и Telegram.',
+      pwHintSet: 'Ваш логин: {login}. Можно сменить логин или пароль.',
+      pwNewLogin: 'Логин (латиница, цифры, . _ -)', pwNewPass: 'Пароль (от 8 символов)', pwSave: 'Сохранить',
+      pwSaved: 'Сохранено ✅ Теперь входите по логину и паролю.',
+      errPwTaken: 'Такой логин уже занят — придумайте другой.',
+      errPwBad: 'Логин: 3–32 символа (латиница, цифры, . _ -). Пароль: от 8 символов.',
+      tgToggle: 'Войти через Telegram',
+      errLoginLink: 'Ссылка для входа не подходит. Возьмите свежую в профиле или попросите новую у администратора.',
+      errInviteUsed: 'Это приглашение уже использовано или недействительно. Если вы уже регистрировались — откройте вашу ссылку для входа или войдите через Telegram.',
+      welcomeTitle: 'Добро пожаловать! 🎉',
+      welcomeText: 'Кабинет создан и запомнил вас в этом браузере. Ниже в разделе «Логин и пароль» придумайте себе логин и пароль — по ним удобно входить с любого устройства. А пока сохраните ссылку для входа (никому её не передавайте).',
+      welcomeNext: 'Дальше: введите имя устройства (например, «Телефон»), нажмите «Добавить», затем «Скачать файл» и откройте его в WireGuard или AmneziaVPN. Подробно — «❓ Как подключиться».',
+      loginLinkTitle: 'Ваша ссылка для входа',
+      btnDownload: 'Скачать файл',
       loginFoot: 'Вход подтверждает Telegram, мы не видим ваш пароль — его здесь просто нет.',
       openInTg: 'Не получается войти? Открыть в Telegram',
       back: 'Назад ко входу',
@@ -89,22 +108,41 @@
       refContactLabel: 'Связь с администратором',
       errXrayDisabled: 'Xray выключен на сервере',
       /* app access key (server login for the Fibr app) */
-      keyTitle: 'Ключ для приложения',
-      keyHint: 'Личный ключ для входа в приложение Fibr — домен сервера и ключ, без Telegram и QR.',
+      keyTitle: 'Ссылка для входа',
+      keyHint: 'Личная ссылка: входит в этот кабинет с любого устройства и в приложение Fibr (вставьте её в «Ключ доступа»). Никому не передавайте.',
       keyExists: 'ключ создан',
       keyNone: 'ключа нет',
       keyGen: 'Сгенерировать',
       keyRegen: 'Сгенерировать заново',
       keyRevoke: 'Отозвать',
-      keyModalTitle: 'Ключ для приложения',
-      keyWarning: 'Показывается только один раз — скопируйте сразу. Прежний ключ перестанет работать.',
-      keyHowTo: 'Приложение Fibr → «Вход» → «Ключ доступа»: введите домен сервера и этот ключ.',
+      keyModalTitle: 'Ваша ссылка для входа',
+      keyWarning: 'Показывается только один раз — сохраните сразу (в заметки или «Избранное»). Прежняя ссылка перестанет работать.',
+      keyHowTo: 'Откройте её на другом телефоне или компьютере — вы сразу войдёте. В приложении Fibr: «Ключ доступа» → вставьте эту ссылку.',
       keyConfirmRevoke: 'Отозвать ключ? Вход в приложение по нему перестанет работать.',
       keyRevoked: 'Ключ отозван'
     },
     en: {
       greeting: 'Hi, {name}!',
-      loginHint: 'Sign in with the same Telegram account you use in the Fibr bot — no password needed.',
+      loginHint: 'Sign in with your login and password. First time — open the invite link or the login link from your admin.',
+      loginLinkField: 'Paste your login link', loginGo: 'Sign in',
+      pwLogin: 'Login', pwPass: 'Password', pwGo: 'Sign in',
+      codeToggle: 'I have a code or a login link',
+      errPw: 'Wrong login or password.', errPwMany: 'Too many attempts — wait 15 minutes.',
+      pwTitle: 'Login and password',
+      pwHintNone: 'Choose a login and password — they sign you in from any device, no codes and no Telegram.',
+      pwHintSet: 'Your login: {login}. You can change the login or password.',
+      pwNewLogin: 'Login (latin letters, digits, . _ -)', pwNewPass: 'Password (8+ characters)', pwSave: 'Save',
+      pwSaved: 'Saved ✅ Sign in with your login and password from now on.',
+      errPwTaken: 'This login is taken — pick another.',
+      errPwBad: 'Login: 3–32 chars (latin letters, digits, . _ -). Password: 8+ characters.',
+      tgToggle: 'Sign in with Telegram',
+      errLoginLink: 'This login link does not work. Get a fresh one in your profile or ask the admin for a new one.',
+      errInviteUsed: 'This invite is already used or invalid. If you already signed up — open your login link or sign in with Telegram.',
+      welcomeTitle: 'Welcome! 🎉',
+      welcomeText: 'Your account is created and remembered in this browser. Below, in “Login and password”, choose your own login and password — the easy way to sign in from any device. Meanwhile save your login link (do not share it).',
+      welcomeNext: 'Next: type a device name (e.g. “Phone”), tap “Add”, then “Download file” and open it in WireGuard or AmneziaVPN. Step by step — “❓ How to connect”.',
+      loginLinkTitle: 'Your login link',
+      btnDownload: 'Download file',
       loginFoot: 'Telegram confirms the sign-in; there is simply no password here to leak.',
       openInTg: 'Cannot sign in? Open in Telegram',
       back: 'Back to sign in',
@@ -161,16 +199,16 @@
       refContactLabel: 'Contact the administrator',
       errXrayDisabled: 'Xray is disabled on the server',
       /* app access key (server login for the Fibr app) */
-      keyTitle: 'App key',
-      keyHint: 'A personal key to sign in to the Fibr app — the server domain and the key, no Telegram and no QR.',
+      keyTitle: 'Login link',
+      keyHint: 'Your personal link: signs in to this cabinet from any device and to the Fibr app (paste it into “Access key”). Do not share it.',
       keyExists: 'key created',
       keyNone: 'no key',
       keyGen: 'Generate',
       keyRegen: 'Regenerate',
       keyRevoke: 'Revoke',
-      keyModalTitle: 'App key',
-      keyWarning: 'Shown only once — copy it now. The previous key stops working.',
-      keyHowTo: 'Fibr app → “Sign in” → “Access key”: enter the server domain and this key.',
+      keyModalTitle: 'Your login link',
+      keyWarning: 'Shown only once — save it now (notes or bookmarks). The previous link stops working.',
+      keyHowTo: 'Open it on another phone or computer — you are signed in right away. In the Fibr app: “Access key” → paste this link.',
       keyConfirmRevoke: 'Revoke the key? Sign-in with it will stop working.',
       keyRevoked: 'Key revoked'
     }
@@ -185,6 +223,7 @@
   var TOKEN_KEY = 'fibr-token';
   var INVITE_KEY = 'fibr-invite';
   var REF_KEY = 'fibr-ref';
+  var LOGIN_KEY = 'fibr-login-key'; // personal access key = login link, remembered in this browser
   var token = null;
   var me = null;
   var api = window.Fibr.makeApi(function () { return token; });
@@ -257,10 +296,12 @@
       showExpired();
       return;
     }
-    if (e && e.status === 401) { // stale session token — back to the widget
+    if (e && e.status === 401) { // stale session token
       token = null;
       try { localStorage.removeItem(TOKEN_KEY); } catch (er) { /* ignore */ }
-      showView('login-view');
+      var k = storedKey();
+      if (k) { keyLogin(k); return; } // silently back in with the login link
+      showLogin();
       return;
     }
     alert((e && e.message) || t('errGeneric'));
@@ -321,11 +362,177 @@
     });
   }
 
+  /* ---------- auth: invite link / personal login link (main door) ---------- */
+
+  function storedKey() {
+    try { return localStorage.getItem(LOGIN_KEY); } catch (e) { return null; }
+  }
+  function rememberKey(k) {
+    try { localStorage.setItem(LOGIN_KEY, k); } catch (e) { /* ignore */ }
+  }
+  function loginLinkFor(k) { return window.location.origin + '/cabinet/#k=' + k; }
+
+  function startSession(d) {
+    token = d.token;
+    try { localStorage.setItem(TOKEN_KEY, token); } catch (e) { /* ignore */ }
+  }
+
+  // Sign in with the personal access key (= the login link).
+  function keyLogin(k, fromForm) {
+    fetch('/api/auth/key', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key: k })
+    }).then(function (res) {
+      return res.json().then(function (d) {
+        if (res.ok) return d;
+        if (res.status === 403 && d && d.error === 'subscription expired') { showExpired(); throw new Error('expired'); }
+        if (res.status === 403) { el('error-text').textContent = t('errDisabled'); showView('error-view'); throw new Error('disabled'); }
+        throw new Error('badkey');
+      });
+    }).then(function (d) {
+      rememberKey(k);
+      startSession(d);
+      load();
+    }).catch(function (e) {
+      if (e && (e.message === 'expired' || e.message === 'disabled')) return;
+      try { localStorage.removeItem(LOGIN_KEY); } catch (er) { /* ignore */ }
+      showLogin();
+      if (fromForm || (e && e.message === 'badkey')) el('login-hint').textContent = t('errLoginLink');
+    });
+  }
+
+  // Opening an invite link creates the account right away (no Telegram).
+  function inviteSignup(code) {
+    var ref = null;
+    try { ref = localStorage.getItem(REF_KEY); } catch (e) { /* ignore */ }
+    fetch('/api/auth/invite', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ invite_code: code, referral_code: ref || undefined })
+    }).then(function (res) {
+      return res.json().then(function (d) {
+        if (!res.ok) throw new Error(res.status === 403 ? 'invite' : ((d && d.error) || 'auth failed'));
+        return d;
+      });
+    }).then(function (d) {
+      try { localStorage.removeItem(INVITE_KEY); } catch (e) { /* ignore */ }
+      rememberKey(d.key);
+      startSession(d);
+      load();
+      welcomeModal(loginLinkFor(d.key));
+    }).catch(function (e) {
+      try { localStorage.removeItem(INVITE_KEY); } catch (er) { /* ignore */ }
+      if (e && e.message === 'invite') {
+        el('error-text').textContent = t('errInviteUsed');
+        showView('error-view');
+        return;
+      }
+      el('error-text').textContent = t('errAuth');
+      showView('error-view');
+    });
+  }
+
+  function linkBox(link) {
+    return '<div class="key-value mono" id="login-link-value" title="' + esc(t('copy')) + '" style="word-break:break-all">' + esc(link) + '</div>';
+  }
+
+  function welcomeModal(link) {
+    openModal('<h3>' + esc(t('welcomeTitle')) + '</h3>' +
+      '<p class="muted modal-sub">' + esc(t('welcomeText')) + '</p>' +
+      '<p class="muted"><b>' + esc(t('loginLinkTitle')) + '</b></p>' + linkBox(link) +
+      '<p class="muted">' + esc(t('welcomeNext')) + '</p>' +
+      '<div class="modal-actions">' +
+      '<button class="btn btn--tertiary btn--small" id="wl-copy">' + esc(t('copy')) + '</button>' +
+      '<button class="btn" id="wl-close">' + esc(t('close')) + '</button></div>');
+    el('wl-copy').addEventListener('click', function () {
+      navigator.clipboard.writeText(link).then(function () { el('wl-copy').textContent = t('copied'); });
+    });
+    el('wl-close').addEventListener('click', closeModal);
+  }
+
+  // Login view: paste a login link (or key / invite link); Telegram is the
+  // optional second way, mounted only on demand.
+  function showLogin() {
+    showView('login-view');
+  }
+  el('login-link').placeholder = t('loginLinkField');
+  el('login-go').textContent = t('loginGo');
+  el('tg-toggle').textContent = t('tgToggle');
+  el('login-go').addEventListener('click', function () {
+    var raw = (el('login-link').value || '').trim();
+    if (!raw) { el('login-link').focus(); return; }
+    var inv = raw.match(/[?&]invite=([A-Za-z0-9]+)/);
+    if (inv) { inviteSignup(inv[1]); return; }
+    var k = raw.match(/#k=([A-Za-z0-9]+)/);
+    keyLogin(k ? k[1] : raw, true);
+  });
+  el('pw-login').placeholder = t('pwLogin');
+  el('pw-pass').placeholder = t('pwPass');
+  el('pw-go').textContent = t('pwGo');
+  el('code-toggle').textContent = t('codeToggle');
+  el('pw-form').addEventListener('submit', function (ev) {
+    ev.preventDefault();
+    var login = (el('pw-login').value || '').trim();
+    var pass = el('pw-pass').value || '';
+    if (!login || !pass) return;
+    fetch('/api/auth/password', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ login: login, password: pass })
+    }).then(function (res) {
+      return res.json().then(function (d) {
+        if (res.ok) return d;
+        if (res.status === 429) throw new Error(t('errPwMany'));
+        if (res.status === 403 && d && d.error === 'subscription expired') { showExpired(); throw new Error(''); }
+        if (res.status === 403) throw new Error(t('errDisabled'));
+        throw new Error(t('errPw'));
+      });
+    }).then(function (d) {
+      el('pw-pass').value = '';
+      startSession(d);
+      load();
+    }).catch(function (e) {
+      if (e && e.message) el('login-hint').textContent = e.message;
+    });
+  });
+
+  // Profile: set / change the own login + password.
+  el('pw-title').textContent = t('pwTitle');
+  el('pw-new-login').placeholder = t('pwNewLogin');
+  el('pw-new-pass').placeholder = t('pwNewPass');
+  el('pw-save').textContent = t('pwSave');
+  function loadPwSection() {
+    el('pw-view').classList.remove('hidden');
+    var login = (me && me.login) || '';
+    el('pw-hint').textContent = login ? t('pwHintSet', { login: login }) : t('pwHintNone');
+    if (login && !el('pw-new-login').value) el('pw-new-login').value = login;
+  }
+  el('pw-set').addEventListener('submit', function (ev) {
+    ev.preventDefault();
+    var login = (el('pw-new-login').value || '').trim();
+    var pass = el('pw-new-pass').value || '';
+    api('/api/me/password', { method: 'POST', body: { login: login, password: pass } }).then(function () {
+      el('pw-new-pass').value = '';
+      alert(t('pwSaved'));
+      load();
+    }).catch(function (e) {
+      if (e && e.status === 409) { alert(t('errPwTaken')); return; }
+      if (e && e.status === 400) { alert(t('errPwBad')); return; }
+      fail(e);
+    });
+  });
+
+  var widgetMounted = false;
+  el('tg-toggle').addEventListener('click', function () {
+    el('tg-widget').classList.remove('hidden');
+    if (!widgetMounted) { widgetMounted = true; mountWidget(); }
+  });
+
   function signIn() {
     var data = widgetParams();
     if (!data) {
-      showView('login-view');
-      mountWidget();
+      showLogin();
       return;
     }
     var body = { init_data: data };
@@ -380,13 +587,15 @@
   }
 
   el('back').addEventListener('click', function () {
-    showView('login-view');
-    mountWidget();
+    showLogin();
   });
 
   el('logout').addEventListener('click', function () {
     token = null;
-    try { localStorage.removeItem(TOKEN_KEY); } catch (e) { /* ignore */ }
+    try {
+      localStorage.removeItem(TOKEN_KEY);
+      localStorage.removeItem(LOGIN_KEY); // the login link still works elsewhere
+    } catch (e) { /* ignore */ }
     location.reload();
   });
 
@@ -412,6 +621,7 @@
       loadUsersSection();
       loadRefSection();
       loadKeySection();
+      loadPwSection();
     }).catch(fail);
   }
 
@@ -467,7 +677,8 @@
         '<span>' + t('tx', { v: fmtBytes(d.total_tx) }) + '</span></div>' +
         '<div class="device-actions">' +
         '<button class="btn btn--secondary btn--small" data-act="qr" data-id="' + d.id + '">' + t('btnQR') + '</button>' +
-        '<button class="btn btn--secondary btn--small" data-act="send" data-id="' + d.id + '">' + t('btnSendTg') + '</button>' +
+        '<button class="btn btn--small" data-act="dl" data-id="' + d.id + '">' + t('btnDownload') + '</button>' +
+        (me.user && me.user.telegram_id ? '<button class="btn btn--secondary btn--small" data-act="send" data-id="' + d.id + '">' + t('btnSendTg') + '</button>' : '') +
         '<button class="btn btn--tertiary btn--small" data-act="cfg" data-id="' + d.id + '">' + t('btnConfig') + '</button>' +
         '<button class="btn btn--danger-ghost btn--small" data-act="del" data-id="' + d.id + '" data-name="' + esc(d.name) + '">' + t('btnDelete') + '</button>' +
         '</div></div></div>';
@@ -487,6 +698,28 @@
     });
   });
 
+  // "Download file": the .conf (or the VLESS link as .txt) straight to this
+  // device — on a phone it then opens in WireGuard / AmneziaVPN.
+  function downloadConf(id) {
+    var dev = (me.devices || []).filter(function (x) { return String(x.id) === String(id); })[0];
+    fetch('/api/me/devices/' + id + '/config', { headers: { Authorization: 'Bearer ' + token } })
+      .then(function (res) {
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        var cd = res.headers.get('Content-Disposition') || '';
+        var m = cd.match(/filename="([^"]+)"/);
+        return res.text().then(function (text) { return { text: text, name: m ? m[1] : ('fibr-' + id + (dev && dev.protocol === 'xray' ? '.txt' : '.conf')) }; });
+      })
+      .then(function (f) {
+        var a = document.createElement('a');
+        a.href = URL.createObjectURL(new Blob([f.text], { type: 'application/octet-stream' }));
+        a.download = f.name;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+      })
+      .catch(fail);
+  }
+
   // The bot drops the device config into the user's Telegram chat; from
   // there it opens straight in WireGuard / AmneziaVPN on the phone.
   function sendToTelegram(id, btn) {
@@ -501,7 +734,7 @@
 
   // "How to connect" walkthrough (shared with the Mini App: /shared/app.js).
   function showGuide() {
-    openModal(window.Fibr.guideHTML(t.lang) +
+    openModal(window.Fibr.guideHTML(t.lang, { web: true }) +
       '<div class="modal-actions"><button class="btn" id="guide-close">' + esc(t('close')) + '</button></div>');
     el('guide-close').addEventListener('click', closeModal);
   }
@@ -519,6 +752,7 @@
     }
     else if (act === 'cfg') showConfig(id);
     else if (act === 'send') sendToTelegram(id, btn);
+    else if (act === 'dl') downloadConf(id);
     else if (act === 'del') {
       if (!confirm(t('confirmDelete', { name: btn.getAttribute('data-name') }))) return;
       api('/api/me/devices/' + id, { method: 'DELETE' }).then(load).catch(fail);
@@ -696,19 +930,21 @@
   }
 
   function showKeyModal(key) {
+    rememberKey(key); // the rotated key is this browser's login now
+    var link = loginLinkFor(key);
     openModal('<h3>' + esc(t('keyModalTitle')) + '</h3>' +
       '<p class="muted modal-sub key-warn">' + esc(t('keyWarning')) + '</p>' +
-      '<div class="key-value mono" id="app-key" title="' + esc(t('copy')) + '">' + esc(key) + '</div>' +
+      '<div class="key-value mono" id="app-key" title="' + esc(t('copy')) + '" style="word-break:break-all">' + esc(link) + '</div>' +
       '<p class="muted">' + esc(t('keyHowTo')) + '</p>' +
       '<div class="modal-actions">' +
       '<button class="btn btn--tertiary btn--small" id="key-copy">' + esc(t('copy')) + '</button>' +
       '<button class="btn" id="key-close">' + esc(t('close')) + '</button></div>');
     function copyKey() {
-      navigator.clipboard.writeText(key).then(function () { /* :active feedback */ });
+      navigator.clipboard.writeText(link).then(function () { /* :active feedback */ });
     }
     el('app-key').addEventListener('click', copyKey);
     el('key-copy').addEventListener('click', function () {
-      navigator.clipboard.writeText(key).then(function () {
+      navigator.clipboard.writeText(link).then(function () {
         el('key-copy').textContent = t('copied');
       });
     });
@@ -796,8 +1032,26 @@
   /* ---------- boot ---------- */
 
   stashParams();
+  // Personal login link: /cabinet/#k=KEY (the key never leaves the browser
+  // in a URL the server logs).
+  var hashKey = (window.location.hash.match(/k=([A-Za-z0-9]+)/) || [])[1];
+  if (hashKey) history.replaceState(null, '', '/cabinet/');
   try { token = localStorage.getItem(TOKEN_KEY); } catch (e) { /* ignore */ }
-  if (token) { load(); } else { signIn(); }
+  var pendingInvite = null;
+  try { pendingInvite = localStorage.getItem(INVITE_KEY); } catch (e) { /* ignore */ }
+  if (hashKey) {
+    keyLogin(hashKey);
+  } else if (widgetParams()) {
+    signIn(); // back from the Telegram widget
+  } else if (pendingInvite && !token) {
+    inviteSignup(pendingInvite); // invite link opened: create the account
+  } else if (token) {
+    load();
+  } else if (storedKey()) {
+    keyLogin(storedKey());
+  } else {
+    signIn();
+  }
   setInterval(function () {
     if (token && !el('app-view').classList.contains('hidden')) load();
   }, 20000);

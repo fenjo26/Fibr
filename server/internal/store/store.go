@@ -282,6 +282,10 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("migrate users.access_token_hash: %w", err)
 	}
+	if err := migrateUsersLogin(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate users login: %w", err)
+	}
 	if err := migrateUsersReferrals(db); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("migrate users referrals: %w", err)

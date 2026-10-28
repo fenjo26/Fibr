@@ -25,13 +25,24 @@ func TestWGHostSchemeStripped(t *testing.T) {
 	}
 }
 
-func TestXrayRequiresSNI(t *testing.T) {
+func TestXrayOnByDefault(t *testing.T) {
 	t.Setenv("FIBR_ADMIN_TOKEN", "x")
 	t.Setenv("FIBR_SECRET", "x")
-	t.Setenv("FIBR_XRAY_ENABLED", "true")
-	t.Setenv("FIBR_XRAY_SHORT_ID", "deadbeef")
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !c.XrayEnabled || c.XraySNI != DefaultXraySNI || c.XrayDest != DefaultXraySNI+":443" || c.XrayShortID != "" {
+		t.Fatalf("xray defaults: enabled=%v sni=%q dest=%q sid=%q", c.XrayEnabled, c.XraySNI, c.XrayDest, c.XrayShortID)
+	}
+	t.Setenv("FIBR_XRAY_SHORT_ID", "nothex")
 	if _, err := Load(); err == nil {
-		t.Fatal("expected error when FIBR_XRAY_SNI is missing")
+		t.Fatal("expected error for a non-hex short id")
+	}
+	t.Setenv("FIBR_XRAY_SHORT_ID", "")
+	t.Setenv("FIBR_XRAY_ENABLED", "false")
+	if c, err := Load(); err != nil || c.XrayEnabled {
+		t.Fatalf("explicit false must disable: %v %v", c, err)
 	}
 }
 

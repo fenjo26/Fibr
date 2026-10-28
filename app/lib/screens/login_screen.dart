@@ -59,6 +59,14 @@ class _LoginScreenState extends State<LoginScreen> {
     final l10n = AppLocalizations.of(context);
     setState(() => _busy = true);
     final account = context.read<ServerAccountController>();
+    // A pasted web-cabinet login link (https://<domain>/cabinet/#k=KEY)
+    // carries both the server and the key — fill both from it.
+    final link = RegExp(r'^https?://([^/\s]+)/cabinet/#k=([A-Za-z0-9]+)')
+        .firstMatch(_key.text.trim());
+    if (link != null) {
+      _domain.text = link.group(1)!;
+      _key.text = link.group(2)!;
+    }
     final error = await account.signIn(_domain.text, _key.text);
     if (!mounted) return;
     setState(() => _busy = false);

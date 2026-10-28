@@ -30,6 +30,9 @@ type FileSender func(chatID int64, filename string, data []byte, caption string)
 // ErrDeviceLimit is returned by IssueDeviceFile when the account is full.
 var ErrDeviceLimit = errors.New("device limit reached")
 
+// ErrXrayDisabled: VLESS was explicitly turned off on this server.
+var ErrXrayDisabled = errors.New("xray protocol is disabled on this server")
+
 // SetFileSender wires the Telegram document sender (main.go, bot enabled).
 func (a *API) SetFileSender(f FileSender) { a.fileSender = f }
 
@@ -86,6 +89,31 @@ func (a *API) IssueDeviceFile(userID int64, name string) (filename string, data 
 	}
 	a.touchConfigFetched(d.ID)
 	return ConfFileName(d.Name, "conf"), []byte(content), nil
+}
+
+// IssueVlessLink provisions a new VLESS (xray) device and returns its
+// vless:// link — the bot's /vless command.
+func (a *API) IssueVlessLink(userID int64, name string) (string, error) {
+	if !a.cfg.XrayEnabled || a.xray == nil {
+		return "", ErrXrayDisabled
+	}
+	used, limit, err := a.DeviceSlots(userID)
+	if err != nil {
+		return "", err
+	}
+	if used >= limit {
+		return "", ErrDeviceLimit
+	}
+	d, err := a.provisionDevice(userID, sanitizeName(name, fmt.Sprintf("vless-%d", used+1)), store.ProtocolXray)
+	if err != nil {
+		return "", err
+	}
+	link, _, err := a.renderCredential(*d)
+	if err != nil {
+		return "", err
+	}
+	a.touchConfigFetched(d.ID)
+	return link, nil
 }
 
 // handleMeSendDevice sends an owned device's config to the caller's

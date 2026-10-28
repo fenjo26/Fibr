@@ -13,7 +13,8 @@
 #   --admin-tg IDS    your numeric Telegram id(s), comma-separated (makes you superadmin)
 #   --awg             use the AmneziaWG engine (DPI-obfuscated WireGuard;
 #                     clients must be AmneziaVPN apps — see docs/awg.md)
-#   --xray            also enable Xray (VLESS + Reality) on TCP --xray-port
+#   --xray            Xray (VLESS + Reality) on TCP --xray-port — ON by default now
+#   --no-xray         do not enable Xray (WireGuard only)
 #   --xray-sni HOST   Reality camouflage host (default www.microsoft.com; implies --xray)
 #   --xray-port PORT  Xray TCP port (default 8443; implies --xray)
 #   --with-updater    also enable one-click updates from the admin panel (docs/updates.md)
@@ -29,7 +30,7 @@ FIBR_REPO="${FIBR_REPO:-https://github.com/fenjo26/Fibr.git}"
 FIBR_DIR="/opt/fibr"
 WG_PORT="51820"
 AWG=0
-XRAY=0
+XRAY=1
 UPDATER=0
 XRAY_SNI="www.microsoft.com"
 XRAY_PORT="8443"
@@ -62,6 +63,7 @@ while [[ $# -gt 0 ]]; do
     --port|-p)        WG_PORT="${2:-}"; shift 2 ;;
     --awg)            AWG=1; shift ;;
     --xray)           XRAY=1; shift ;;
+    --no-xray)        XRAY=0; shift ;;
     --with-updater)   UPDATER=1; shift ;;
     --xray-sni)       XRAY_SNI="${2:-}"; XRAY=1; shift 2 ;;
     --xray-port)      XRAY_PORT="${2:-}"; XRAY=1; shift 2 ;;
@@ -247,11 +249,10 @@ AEOF
     cat >> "$ENV_FILE" <<'XEOF'
 
 # Xray (VLESS + Reality) — added by installer upgrade; see .env.example.
-FIBR_XRAY_ENABLED=false
+FIBR_XRAY_ENABLED=true
 FIBR_XRAY_PORT=8443
 FIBR_XRAY_SNI=www.microsoft.com
 FIBR_XRAY_SHORT_ID=
-#COMPOSE_PROFILES=xray
 XEOF
     info "appended default xray settings to existing .env"
   fi

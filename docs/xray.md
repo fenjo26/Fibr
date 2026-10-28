@@ -11,24 +11,31 @@ WG-устройство (телефон), и Xray-устройство (ноут
 
 ## Включение
 
-При установке:
+**Xray включён по умолчанию** — ничего настраивать не нужно: каждый
+пользователь сам выбирает протокол (WireGuard или VLESS) при создании
+устройства в Mini App / кабинете, а в боте есть `/new` (файл WireGuard) и
+`/vless` (ссылка VLESS). Ключи Reality и short id сервер генерирует сам и
+хранит в базе, SNI по умолчанию — `www.microsoft.com`.
+
+Нужно только открыть в файрволе TCP-порт `FIBR_XRAY_PORT` (по умолчанию
+8443), если файрвол активен (`install.sh` делает это сам для ufw).
+
+Необязательные настройки в `/opt/fibr/install/.env`:
+
+- `FIBR_XRAY_SNI=<домен маскировки>` — большой сайт с TLS 1.3 + HTTP/2,
+  желательно географически близкий к вашему серверу (не свой домен);
+- `FIBR_XRAY_PORT=443` — если 80/443 свободны от Caddy на отдельном IP;
+- `FIBR_XRAY_ENABLED=false` — выключить VLESS совсем (и `docker compose
+  stop xray`).
+
+Старый сервер, где в `.env` записано `FIBR_XRAY_ENABLED=false`, включается
+так:
 
 ```bash
-bash install/install.sh --domain vpn.example.com --xray
-# или с параметрами:
-bash install/install.sh --domain vpn.example.com --xray --xray-port 443 --xray-sni cdn.example.com
+cd /opt/fibr/install
+sed -i 's/^FIBR_XRAY_ENABLED=.*/FIBR_XRAY_ENABLED=true/' .env
+docker compose up -d --build
 ```
-
-На уже работающем сервере — в `/opt/fibr/install/.env`:
-
-1. `FIBR_XRAY_ENABLED=true`
-2. `FIBR_XRAY_SNI=<домен маскировки>` — большой сайт с TLS 1.3 + HTTP/2,
-   желательно географически близкий к вашему серверу. Не используйте домен,
-   которым вы сами владеете.
-3. `FIBR_XRAY_SHORT_ID=<hex>` — сгенерируйте: `openssl rand -hex 4`
-4. `COMPOSE_PROFILES=xray` (чтобы стартовал контейнер xray)
-5. `docker compose up -d` и откройте TCP-порт `FIBR_XRAY_PORT`
-   (по умолчанию 8443) в файрволе, если он активен.
 
 Ключи Reality генерируются самим сервером и хранятся в базе — вручную ничего
 создавать не нужно.

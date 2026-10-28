@@ -64,6 +64,10 @@ type Config struct {
 	XrayBan      time.Duration // FIBR_XRAY_BAN: how long an over-limit link stays cut (default 10m)
 }
 
+// DefaultXraySNI is the Reality camouflage host used when FIBR_XRAY_SNI is
+// not set (same default as install.sh).
+const DefaultXraySNI = "www.microsoft.com"
+
 // Load reads configuration from the environment and validates it.
 func Load() (*Config, error) {
 	c := &Config{
@@ -125,7 +129,9 @@ func Load() (*Config, error) {
 
 	// Xray (VLESS + Reality). Port parses even when disabled so a stray
 	// FIBR_XRAY_PORT is validated; everything else only matters when enabled.
-	c.XrayEnabled = getenvBool("FIBR_XRAY_ENABLED", false)
+	// On by default: every user can pick WireGuard or VLESS. Only an
+	// explicit FIBR_XRAY_ENABLED=false turns the second protocol off.
+	c.XrayEnabled = getenvBool("FIBR_XRAY_ENABLED", true)
 	c.XrayPort = getenvInt("FIBR_XRAY_PORT", 8443)
 	c.XraySNI = strings.TrimSpace(os.Getenv("FIBR_XRAY_SNI"))
 	c.XrayDest = strings.TrimSpace(os.Getenv("FIBR_XRAY_DEST"))
@@ -142,13 +148,15 @@ func Load() (*Config, error) {
 	}
 	if c.XrayEnabled {
 		if c.XraySNI == "" {
-			return nil, fmt.Errorf("FIBR_XRAY_SNI is required when FIBR_XRAY_ENABLED=true (the camouflage domain, e.g. www.microsoft.com)")
+			c.XraySNI = DefaultXraySNI
 		}
 		if c.XrayDest == "" {
 			c.XrayDest = c.XraySNI + ":443"
 		}
-		if _, err := hex.DecodeString(c.XrayShortID); err != nil || c.XrayShortID == "" {
-			return nil, fmt.Errorf("FIBR_XRAY_SHORT_ID must be non-empty even-length hex (generate with: openssl rand -hex 4)")
+		// Empty = generated once by the xray manager and kept in the
+		// database (internal/xray); a set value must be valid hex.
+		if _, err := hex.DecodeString(c.XrayShortID); err != nil {
+			return nil, fmt.Errorf("FIBR_XRAY_SHORT_ID must be even-length hex (generate with: openssl rand -hex 4) or empty")
 		}
 	}
 

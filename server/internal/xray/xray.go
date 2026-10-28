@@ -27,6 +27,7 @@ import (
 	"crypto/ecdh"
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -45,6 +46,7 @@ import (
 const (
 	settingPrivKey = "xray_reality_private_key" // base64url(x25519 private key)
 	settingPubKey  = "xray_reality_public_key"  // base64url(x25519 public key), cached copy
+	settingShortID = "xray_reality_short_id"    // generated when FIBR_XRAY_SHORT_ID is empty
 
 	// ClientFlow is the only client flow this MVP provisions.
 	ClientFlow = "xtls-rprx-vision"
@@ -102,6 +104,26 @@ func New(cfg *config.Config, st *store.Store, log *slog.Logger) (*Manager, error
 		m.log.Info("generated new xray reality keypair")
 	default:
 		return nil, err
+	}
+
+	// Reality short id: FIBR_XRAY_SHORT_ID, or generated once and kept in
+	// the settings table so links stay valid across restarts. Written back
+	// into the shared config so every link renderer sees it.
+	if cfg.XrayShortID == "" {
+		sid, err := st.GetSetting(settingShortID)
+		if errors.Is(err, store.ErrNotFound) {
+			b := make([]byte, 4)
+			if _, rerr := rand.Read(b); rerr != nil {
+				return nil, fmt.Errorf("generate reality short id: %w", rerr)
+			}
+			sid = hex.EncodeToString(b)
+			if serr := st.SetSetting(settingShortID, sid); serr != nil {
+				return nil, fmt.Errorf("persist reality short id: %w", serr)
+			}
+		} else if err != nil {
+			return nil, err
+		}
+		cfg.XrayShortID = sid
 	}
 
 	// Cached public key: fall back to deriving it from settings, then to a

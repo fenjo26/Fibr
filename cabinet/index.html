@@ -25,7 +25,23 @@
           <p class="muted" id="login-hint"></p>
         </div>
       </div>
-      <div id="tg-widget"></div>
+      <!-- main door: own login + password -->
+      <form id="pw-form" style="margin-top:12px;display:flex;flex-direction:column;gap:8px">
+        <input class="input" id="pw-login" autocomplete="username" autocapitalize="off" spellcheck="false">
+        <input class="input" id="pw-pass" type="password" autocomplete="current-password">
+        <button class="btn" id="pw-go" type="submit"></button>
+      </form>
+      <!-- personal code / login link / invite link (no Telegram) -->
+      <details class="guide-sec" style="margin-top:12px">
+        <summary id="code-toggle"></summary>
+        <div class="add-row" style="margin:0 12px 12px">
+          <input class="input" id="login-link" autocomplete="off" spellcheck="false">
+          <button class="btn" id="login-go"></button>
+        </div>
+      </details>
+      <!-- optional: Telegram Login Widget (needs /setdomain in @BotFather) -->
+      <button class="btn btn--tertiary btn--small" id="tg-toggle" style="margin-top:12px"></button>
+      <div id="tg-widget" class="hidden" style="margin-top:12px"></div>
       <p class="faint login-foot" id="login-foot"></p>
     </section>
 
@@ -102,6 +118,22 @@
       </section>
 
       <!-- app key section: server login for the Fibr mobile app -->
+      <section id="pw-view" class="hidden">
+        <div class="sec-head">
+          <div>
+            <h2 id="pw-title"></h2>
+            <p class="muted" id="pw-hint"></p>
+          </div>
+        </div>
+        <div class="card key-card">
+          <form id="pw-set" style="display:flex;flex-direction:column;gap:8px">
+            <input class="input" id="pw-new-login" autocomplete="username" autocapitalize="off" spellcheck="false">
+            <input class="input" id="pw-new-pass" type="password" autocomplete="new-password">
+            <button class="btn btn--small" id="pw-save" type="submit"></button>
+          </form>
+        </div>
+      </section>
+
       <section id="key-view" class="hidden">
         <div class="sec-head">
           <div>

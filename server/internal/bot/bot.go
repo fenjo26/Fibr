@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"io"
 	"log/slog"
 	"mime/multipart"
@@ -46,6 +47,7 @@ type Bot struct {
 type DeviceIssuer interface {
 	IssueDeviceFile(userID int64, name string) (filename string, data []byte, err error)
 	DeviceSlots(userID int64) (used, limit int, err error)
+	IssueVlessLink(userID int64, name string) (string, error)
 }
 
 // SetDeviceIssuer enables /new and /devices (main.go wires the API).
@@ -306,6 +308,29 @@ func (b *Bot) handleUpdate(ctx context.Context, u tgUpdate) {
 		}
 	case "/howto", "/guide":
 		b.sendMessage(ctx, msg.Chat.ID, t(lang, "howto"), b.miniAppKeyboard(lang, appParams{}))
+	case "/vless":
+		// The second protocol: a VLESS link for when WireGuard is blocked.
+		if b.devices == nil {
+			b.sendMessage(ctx, msg.Chat.ID, t(lang, "fileUnavailable"), nil)
+			return
+		}
+		name := ""
+		if f := strings.Fields(msg.Text); len(f) > 1 {
+			name = strings.Join(f[1:], " ")
+		}
+		link, err := b.devices.IssueVlessLink(user.ID, name)
+		switch {
+		case errors.Is(err, api.ErrDeviceLimit):
+			used, limit, _ := b.devices.DeviceSlots(user.ID)
+			b.sendMessage(ctx, msg.Chat.ID, t(lang, "fileLimit", used, limit), nil)
+		case errors.Is(err, api.ErrXrayDisabled):
+			b.sendMessage(ctx, msg.Chat.ID, t(lang, "vlessOff"), nil)
+		case err != nil:
+			b.log.Warn("bot: issue vless link failed", "user_id", user.ID, "error", err)
+			b.sendMessage(ctx, msg.Chat.ID, t(lang, "fileError"), nil)
+		default:
+			b.sendMessage(ctx, msg.Chat.ID, t(lang, "vlessLink", html.EscapeString(link)), nil)
+		}
 	case "/devices":
 		if b.devices == nil {
 			b.sendMessage(ctx, msg.Chat.ID, t(lang, "fileUnavailable"), nil)
@@ -575,7 +600,7 @@ var texts = map[string]map[string]string{
 	"ru": {
 		"welcome":         "👋 Добро пожаловать в <b>Fibr</b>!\n\nКнопкой ниже откройте приложение: устройства, QR-коды и статистика.\n\n<b>Подключиться за минуту:</b>\n1. Установите WireGuard или AmneziaVPN (Google Play / App Store).\n2. Напишите сюда /new — придёт файл.\n3. Нажмите на файл → «Открыть в…» → WireGuard / AmneziaVPN → включите.\n\nПодробно: /howto",
 		"welcomeReferred": "👋 Добро пожаловать в <b>Fibr</b>!\n\nВы пришли по приглашению — оно уже учтено ✅\nКнопка ниже открывает приложение.\n\n<b>Подключиться за минуту:</b>\n1. Установите WireGuard или AmneziaVPN (Google Play / App Store).\n2. Напишите сюда /new — придёт файл.\n3. Нажмите на файл → «Открыть в…» → WireGuard / AmneziaVPN → включите.\n\nПодробно: /howto",
-		"help":            "Команды:\n/start — открыть приложение\n/help — справка\n/howto — как подключиться (пошагово)\n/new — новый файл подключения (на одно устройство)\n/devices — сколько устройств занято\n/app — получить приложение (APK файлом)\n/ref — реферальный код и ссылка\n/stats — статистика (только владелец)\n/invite — создать приглашение (только админ)\n/id — узнать свой Telegram ID",
+		"help":            "Команды:\n/start — открыть приложение\n/help — справка\n/howto — как подключиться (пошагово)\n/new — новый файл подключения WireGuard (на одно устройство)\n/vless — ссылка VLESS, если WireGuard блокируют\n/devices — сколько устройств занято\n/app — получить приложение (APK файлом)\n/ref — реферальный код и ссылка\n/stats — статистика (только владелец)\n/invite — создать приглашение (только админ)\n/id — узнать свой Telegram ID",
 		"denied":          "⛔ Команда доступна только администраторам.",
 		"unknown":         "Не понял команду. /help — список команд.",
 		"appSending":      "📲 Отправляю приложение (~%s МБ)…",
@@ -588,7 +613,9 @@ var texts = map[string]map[string]string{
 		"fileLimit":       "⛔ Лимит устройств: %d из %d. Удалите старое устройство в приложении (/start) и повторите /new.",
 		"fileError":       "Не удалось подготовить файл, попробуйте позже.",
 		"fileUnavailable": "Выдача файлов сейчас недоступна — откройте приложение: /start",
-		"howto":           "📖 <b>Как подключиться</b>\nОдно устройство = один гаджет. Для каждого телефона, ноутбука или ТВ — свой файл.\n\n<b>📱 Этот телефон — файлом (проще всего)</b>\n1. Установите <b>WireGuard</b> или <b>AmneziaVPN</b> из Google Play / App Store.\n2. Напишите сюда <b>/new</b> (можно с именем: /new Мой телефон) — придёт файл.\n3. Нажмите на файл → <b>«Открыть в…»</b> → WireGuard или AmneziaVPN.\n4. Телефон спросит про VPN — нажмите <b>«Разрешить»</b>. Включите переключатель.\n\n<b>🅰️ AmneziaVPN</b>\nОткройте AmneziaVPN → <b>«Файл с настройками подключения»</b> → выберите файл из Telegram (папка Telegram / Загрузки) → «Подключиться». Или <b>«QR-код»</b> и наведите камеру на QR с другого экрана.\n\n<b>🔳 QR-код (ноутбук, второй телефон)</b>\nКнопка «Открыть Fibr» → у устройства «QR-код». На телефоне в WireGuard: <b>«+» → «Создать из QR-кода»</b>, в AmneziaVPN: <b>«QR-код»</b>.\n\n<b>💻 Компьютер</b>\nУстановите WireGuard (wireguard.com/install). Напишите /new в Telegram на компьютере, сохраните файл, в WireGuard: <b>«Импорт туннеля из файла»</b>.\n\n<b>🤖 Приложение Fibr (Android)</b>\n/app — придёт файл приложения, установите. Потом нажмите на файл .conf → «Открыть в…» → Fibr. Или в Fibr: «Добавить» → «Вставить / файл».\n\n<b>📺 Телевизор (Android TV)</b>\nПоставьте Fibr на ТВ (файл из /app). На экране ТВ появится QR — отсканируйте камерой телефона и выберите «Новое устройство для ТВ». Без камеры: «Открыть Fibr» → «📺 Подключить телевизор» → код с экрана ТВ.\n\n<b>✅ Проверка</b>\nОткройте 2ip.ru — должен быть IP сервера, а не домашний.\nНе работает? Выключите и включите VPN. Один файл не работает на двух телефонах сразу — сделайте второй через /new.",
+		"vlessLink":       "🛡 <b>Ссылка VLESS</b> (одно устройство)\n\n<code>%s</code>\n\n1. Нажмите на ссылку выше — она скопируется.\n2. Установите <b>AmneziaVPN</b>, <b>v2rayNG</b> (Android), <b>Hiddify</b> или <b>Streisand</b> (iPhone).\n3. В приложении нажмите «+» / «Вставить из буфера» (в AmneziaVPN — поле «Вставить ключ»).\n4. Подключитесь.\n\nVLESS — на случай, если WireGuard блокируют. Одна ссылка — одно устройство: если раздать её многим, она временно отключится. Ещё одна — снова /vless",
+		"vlessOff":        "VLESS на этом сервере выключен. Используйте /new — файл WireGuard.",
+		"howto":           "📖 <b>Как подключиться</b>\nОдно устройство = один гаджет. Для каждого телефона, ноутбука или ТВ — свой файл.\n\n<b>📱 Этот телефон — файлом (проще всего)</b>\n1. Установите <b>WireGuard</b> или <b>AmneziaVPN</b> из Google Play / App Store.\n2. Напишите сюда <b>/new</b> (можно с именем: /new Мой телефон) — придёт файл.\n3. Нажмите на файл → <b>«Открыть в…»</b> → WireGuard или AmneziaVPN.\n4. Телефон спросит про VPN — нажмите <b>«Разрешить»</b>. Включите переключатель.\n\n<b>🅰️ AmneziaVPN</b>\nОткройте AmneziaVPN → <b>«Файл с настройками подключения»</b> → выберите файл из Telegram (папка Telegram / Загрузки) → «Подключиться». Или <b>«QR-код»</b> и наведите камеру на QR с другого экрана.\n\n<b>🔳 QR-код (ноутбук, второй телефон)</b>\nКнопка «Открыть Fibr» → у устройства «QR-код». На телефоне в WireGuard: <b>«+» → «Создать из QR-кода»</b>, в AmneziaVPN: <b>«QR-код»</b>.\n\n<b>💻 Компьютер</b>\nУстановите WireGuard (wireguard.com/install). Напишите /new в Telegram на компьютере, сохраните файл, в WireGuard: <b>«Импорт туннеля из файла»</b>.\n\n<b>🤖 Приложение Fibr (Android)</b>\n/app — придёт файл приложения, установите. Потом нажмите на файл .conf → «Открыть в…» → Fibr. Или в Fibr: «Добавить» → «Вставить / файл».\n\n<b>📺 Телевизор (Android TV)</b>\nПоставьте Fibr на ТВ (файл из /app). На экране ТВ появится QR — отсканируйте камерой телефона и выберите «Новое устройство для ТВ». Без камеры: «Открыть Fibr» → «📺 Подключить телевизор» → код с экрана ТВ.\n\n<b>🛡 Если WireGuard блокируют — VLESS</b>\nНапишите /vless — придёт ссылка. Нажмите на неё (скопируется) и вставьте в AmneziaVPN («Вставить ключ»), v2rayNG, Hiddify или Streisand.\n\n<b>✅ Проверка</b>\nОткройте 2ip.ru — должен быть IP сервера, а не домашний.\nНе работает? Выключите и включите VPN. Один файл не работает на двух телефонах сразу — сделайте второй через /new.",
 		"tvPair":          "📺 Подключение телевизора (код <code>%s</code>)\n\nНажмите кнопку ниже и выберите устройство для ТВ — телевизор подключится сам.",
 		"linkShared":      "⚠️ Ссылка VLESS «%s» использовалась одновременно из %d разных сетей и отключена на %d мин.\n\nОдна ссылка — одно устройство. Для другого телефона создайте отдельное устройство в приложении (/start).",
 		"linkSharedAdmin": "🛡 Лимитер: ссылка «%s» — %d IP одновременно, отключена на %d мин.",
@@ -607,7 +634,7 @@ var texts = map[string]map[string]string{
 	"en": {
 		"welcome":         "👋 Welcome to <b>Fibr</b>!\n\nThe button below opens the app: devices, QR codes and stats.\n\n<b>Connect in a minute:</b>\n1. Install WireGuard or AmneziaVPN (Google Play / App Store).\n2. Send /new here — a file arrives.\n3. Tap the file → “Open in…” → WireGuard / AmneziaVPN → switch it on.\n\nStep-by-step guide: /howto",
 		"welcomeReferred": "👋 Welcome to <b>Fibr</b>!\n\nYou arrived via an invitation — it has been credited ✅\nThe button below opens the app.\n\n<b>Connect in a minute:</b>\n1. Install WireGuard or AmneziaVPN (Google Play / App Store).\n2. Send /new here — a file arrives.\n3. Tap the file → “Open in…” → WireGuard / AmneziaVPN → switch it on.\n\nStep-by-step guide: /howto",
-		"help":            "Commands:\n/start — open the app\n/help — help\n/howto — how to connect (step by step)\n/new — a new connection file (one device)\n/devices — device slots used\n/app — get the app (APK as a file)\n/ref — your referral code and link\n/stats — stats (owner only)\n/invite — create an invite (admin only)\n/id — show your Telegram ID",
+		"help":            "Commands:\n/start — open the app\n/help — help\n/howto — how to connect (step by step)\n/new — a new WireGuard connection file (one device)\n/vless — a VLESS link, if WireGuard is blocked\n/devices — device slots used\n/app — get the app (APK as a file)\n/ref — your referral code and link\n/stats — stats (owner only)\n/invite — create an invite (admin only)\n/id — show your Telegram ID",
 		"denied":          "⛔ This command is admin-only.",
 		"unknown":         "Unknown command. /help lists commands.",
 		"appSending":      "📲 Sending the app (~%s MB)…",
@@ -620,7 +647,9 @@ var texts = map[string]map[string]string{
 		"fileLimit":       "⛔ Device limit: %d of %d. Delete an old device in the app (/start) and send /new again.",
 		"fileError":       "Could not prepare the file, try again later.",
 		"fileUnavailable": "File delivery is unavailable right now — open the app: /start",
-		"howto":           "📖 <b>How to connect</b>\nOne device = one gadget. Every phone, laptop or TV gets its own file.\n\n<b>📱 This phone — with a file (easiest)</b>\n1. Install <b>WireGuard</b> or <b>AmneziaVPN</b> from Google Play / App Store.\n2. Send <b>/new</b> here (with a name if you like: /new My phone) — a file arrives.\n3. Tap the file → <b>“Open in…”</b> → WireGuard or AmneziaVPN.\n4. The phone asks about VPN — tap <b>“Allow”</b>. Switch it on.\n\n<b>🅰️ AmneziaVPN</b>\nOpen AmneziaVPN → <b>“File with connection settings”</b> → pick the file from Telegram (Telegram / Downloads folder) → “Connect”. Or <b>“QR code”</b> and point the camera at a QR on another screen.\n\n<b>🔳 QR code (laptop, second phone)</b>\n“Open Fibr” → “QR code” on the device. On the phone in WireGuard: <b>“+” → “Create from QR code”</b>, in AmneziaVPN: <b>“QR code”</b>.\n\n<b>💻 Computer</b>\nInstall WireGuard (wireguard.com/install). Send /new in Telegram on the computer, save the file, in WireGuard: <b>“Import tunnel(s) from file”</b>.\n\n<b>🤖 The Fibr app (Android)</b>\n/app — the app arrives as a file, install it. Then tap the .conf → “Open in…” → Fibr. Or in Fibr: “Add” → “Paste / file”.\n\n<b>📺 TV (Android TV)</b>\nInstall Fibr on the TV (file from /app). A QR shows on the TV — scan it with your phone and pick “New device for the TV”. No camera: “Open Fibr” → “📺 Connect a TV” → the code from the TV.\n\n<b>✅ Check</b>\nOpen 2ip.ru — it should show the server IP, not your home one.\nNot working? Switch the VPN off and on. One file does not work on two phones at once — make another with /new.",
+		"vlessLink":       "🛡 <b>VLESS link</b> (one device)\n\n<code>%s</code>\n\n1. Tap the link above — it is copied.\n2. Install <b>AmneziaVPN</b>, <b>v2rayNG</b> (Android), <b>Hiddify</b> or <b>Streisand</b> (iPhone).\n3. In the app tap “+” / “Paste from clipboard” (AmneziaVPN: the “Paste key” field).\n4. Connect.\n\nVLESS is for when WireGuard is blocked. One link = one device: shared widely it gets paused. Need another — /vless again",
+		"vlessOff":        "VLESS is off on this server. Use /new — a WireGuard file.",
+		"howto":           "📖 <b>How to connect</b>\nOne device = one gadget. Every phone, laptop or TV gets its own file.\n\n<b>📱 This phone — with a file (easiest)</b>\n1. Install <b>WireGuard</b> or <b>AmneziaVPN</b> from Google Play / App Store.\n2. Send <b>/new</b> here (with a name if you like: /new My phone) — a file arrives.\n3. Tap the file → <b>“Open in…”</b> → WireGuard or AmneziaVPN.\n4. The phone asks about VPN — tap <b>“Allow”</b>. Switch it on.\n\n<b>🅰️ AmneziaVPN</b>\nOpen AmneziaVPN → <b>“File with connection settings”</b> → pick the file from Telegram (Telegram / Downloads folder) → “Connect”. Or <b>“QR code”</b> and point the camera at a QR on another screen.\n\n<b>🔳 QR code (laptop, second phone)</b>\n“Open Fibr” → “QR code” on the device. On the phone in WireGuard: <b>“+” → “Create from QR code”</b>, in AmneziaVPN: <b>“QR code”</b>.\n\n<b>💻 Computer</b>\nInstall WireGuard (wireguard.com/install). Send /new in Telegram on the computer, save the file, in WireGuard: <b>“Import tunnel(s) from file”</b>.\n\n<b>🤖 The Fibr app (Android)</b>\n/app — the app arrives as a file, install it. Then tap the .conf → “Open in…” → Fibr. Or in Fibr: “Add” → “Paste / file”.\n\n<b>📺 TV (Android TV)</b>\nInstall Fibr on the TV (file from /app). A QR shows on the TV — scan it with your phone and pick “New device for the TV”. No camera: “Open Fibr” → “📺 Connect a TV” → the code from the TV.\n\n<b>🛡 If WireGuard is blocked — VLESS</b>\nSend /vless — a link arrives. Tap it (copied) and paste into AmneziaVPN (“Paste key”), v2rayNG, Hiddify or Streisand.\n\n<b>✅ Check</b>\nOpen 2ip.ru — it should show the server IP, not your home one.\nNot working? Switch the VPN off and on. One file does not work on two phones at once — make another with /new.",
 		"tvPair":          "📺 Connecting a TV (code <code>%s</code>)\n\nTap the button below and pick a device for the TV — it connects by itself.",
 		"linkShared":      "⚠️ VLESS link “%s” was used from %d different networks at once and is paused for %d min.\n\nOne link = one device. For another phone create a separate device in the app (/start).",
 		"linkSharedAdmin": "🛡 Limiter: link “%s” — %d IPs at once, paused for %d min.",

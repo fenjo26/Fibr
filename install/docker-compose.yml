@@ -27,9 +27,9 @@ services:
       retries: 3
       start_period: 10s
 
-  # Xray (VLESS + Reality) — DPI-resistant second protocol, opt-in.
-  # Started only when the compose profile "xray" is active, i.e. when .env
-  # sets COMPOSE_PROFILES=xray (install.sh does this for --xray installs).
+  # Xray (VLESS + Reality) — DPI-resistant second protocol, ON by default:
+  # every user can pick WireGuard or VLESS. (FIBR_XRAY_ENABLED=false in .env
+  # turns it off; then also stop this container: docker compose stop xray.)
   # fibr renders /data/xray/config.json on the shared fibr-data volume; this
   # container just runs it. Device changes apply LIVE through xray's gRPC
   # API (port 10085, compose network only — deliberately not published);
@@ -48,8 +48,6 @@ services:
       - fibr-data:/data
     depends_on:
       - fibr
-    profiles:
-      - xray
 
   # One-click updater sidecar (docs/updates.md). Opt-in via the compose
   # profile "updater" (install.sh --with-updater sets COMPOSE_PROFILES).

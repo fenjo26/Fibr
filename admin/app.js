@@ -23,7 +23,8 @@
       addUser: 'Добавить', statusActive: 'активен', statusDisabled: 'отключён',
       online: 'онлайн', offline: 'офлайн', never: 'никогда',
       btnQR: 'QR', btnConfig: 'Конфиг', btnDelete: 'Удалить', btnDisable: 'Откл', btnEnable: 'Вкл',
-      btnMakeAdmin: 'Сделать админом', btnMakeUser: 'Сделать пользователем', btnAddDevice: '+ устройство',
+      btnMakeAdmin: 'Сделать админом', btnMakeUser: 'Сделать пользователем', btnAddDevice: '+ устройство', btnLoginCode: '🔑 Код для входа', lcDone: 'Готово',
+      loginCodeTitle: 'Код для входа', loginCodeHint: 'Отправьте человеку эту ссылку: открыв её, он сразу войдёт в свой кабинет, а там сможет задать себе логин и пароль. Показывается один раз; прежний код перестанет работать.', loginCodeConfirm: 'Выдать новый код для входа? Старый перестанет работать.',
       unlimited: '∞',
       expiredAgo: 'истёк {n} дн назад',
       btnPlus30: '+30 дн', btnUntilDate: 'До даты…', btnUnlimited: 'Бессрочно',
@@ -129,7 +130,8 @@
       addUser: 'Add', statusActive: 'active', statusDisabled: 'disabled',
       online: 'online', offline: 'offline', never: 'never',
       btnQR: 'QR', btnConfig: 'Config', btnDelete: 'Delete', btnDisable: 'Disable', btnEnable: 'Enable',
-      btnMakeAdmin: 'Make admin', btnMakeUser: 'Make user', btnAddDevice: '+ device',
+      btnMakeAdmin: 'Make admin', btnMakeUser: 'Make user', btnAddDevice: '+ device', btnLoginCode: '🔑 Login code', lcDone: 'Done',
+      loginCodeTitle: 'Login code', loginCodeHint: 'Send this link to the person: opening it signs them straight into their cabinet, where they can set their own login and password. Shown once; the previous code stops working.', loginCodeConfirm: 'Issue a new login code? The old one stops working.',
       unlimited: '∞',
       expiredAgo: 'expired {n} d ago',
       btnPlus30: '+30 d', btnUntilDate: 'Until date…', btnUnlimited: 'Unlimited',
@@ -690,7 +692,7 @@
 
     // Close the edit modal for actions that run inline (prompts/confirms);
     // pay/adddev open their own modal on top.
-    if (act !== 'pay' && act !== 'adddev') closeModal();
+    if (act !== 'pay' && act !== 'adddev' && act !== 'logincode') closeModal();
 
     if (act === 'role') {
       api('/api/admin/users/' + id, { method: 'PATCH', body: { role: btn.getAttribute('data-role') } })
@@ -704,6 +706,22 @@
         .then(function () { toast(t('userDeleted')); loadUsers(); }).catch(fail);
     } else if (act === 'adddev') {
       showAddDevice(id);
+    } else if (act === 'logincode') {
+      if (!confirm(t('loginCodeConfirm'))) return;
+      // Personal sign-in code = login link to the web cabinet (no Telegram).
+      api('/api/admin/users/' + id + '/access-key', { method: 'POST', body: {} }).then(function (d) {
+        var link = d.login_link && d.login_link.charAt(0) === '/' ? window.location.origin + d.login_link : d.login_link;
+        openModal('<h3>' + esc(t('loginCodeTitle')) + '</h3>' +
+          '<p class="muted modal-sub">' + esc(t('loginCodeHint')) + '</p>' +
+          '<pre class="config-pre mono" style="white-space:pre-wrap;word-break:break-all">' + esc(link) + '</pre>' +
+          '<div class="modal-actions">' +
+          '<button class="btn btn--tertiary btn--small" id="lc-copy">' + esc(t('copy')) + '</button>' +
+          '<button class="btn" id="lc-close">' + esc(t('lcDone')) + '</button></div>');
+        document.getElementById('lc-copy').addEventListener('click', function () {
+          navigator.clipboard.writeText(link).then(function () { document.getElementById('lc-copy').textContent = t('copied'); });
+        });
+        document.getElementById('lc-close').addEventListener('click', closeModal);
+      }).catch(fail);
     } else if (act === 'pay') {
       showPayment(id);
     } else if (act === 'exp30') {
@@ -756,6 +774,7 @@
       '<p class="muted modal-sub edit-sec">' + esc(t('secAccess')) + '</p>' +
       '<div class="edit-row">' + roleBtn + disBtn +
       '<button class="btn btn--tertiary btn--small" data-act="adddev" data-id="' + u.id + '">' + t('btnAddDevice') + '</button>' +
+      '<button class="btn btn--tertiary btn--small" data-act="logincode" data-id="' + u.id + '">' + t('btnLoginCode') + '</button>' +
       '</div>' +
 
       '<div class="modal-actions edit-danger">' +

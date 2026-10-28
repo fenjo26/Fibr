@@ -157,6 +157,13 @@ window.Fibr = (function () {
   var GUIDE = {
     ru: {
       title: 'Как подключиться',
+      web: ['📱 На этом телефоне — файлом (проще всего)', [
+        'Установите приложение <b>WireGuard</b> (Google Play / App Store) или <b>AmneziaVPN</b>.',
+        'Здесь введите имя устройства (например, «Телефон») и нажмите <b>«Добавить»</b>.',
+        'У устройства нажмите <b>«Скачать файл»</b>.',
+        'Откройте скачанный файл (в «Загрузках» или в уведомлении) → <b>WireGuard</b> или <b>AmneziaVPN</b>. В AmneziaVPN можно и так: «Файл с настройками подключения» → выберите этот файл.',
+        'Нажмите <b>«Разрешить»</b>, когда телефон спросит про VPN, и включите переключатель.'
+      ]],
       intro: 'Выберите удобный способ и откройте его. Одно устройство = один гаджет: для каждого телефона, ноутбука или ТВ создайте своё.',
       sections: [
         ['📱 На этом телефоне — файлом (проще всего)', [
@@ -168,7 +175,7 @@ window.Fibr = (function () {
         ]],
         ['🅰️ Через AmneziaVPN', [
           'Установите <b>AmneziaVPN</b> (Google Play, App Store или amnezia.org).',
-          'Получите файл: кнопка <b>«Файл в Telegram»</b> или команда <b>/new</b> в боте.',
+          'Получите файл: кнопка <b>«Скачать файл»</b> у устройства (или «Файл в Telegram» / <b>/new</b> в боте).',
           'В AmneziaVPN нажмите <b>«Файл с настройками подключения»</b> и выберите этот файл (он в папке Telegram / Загрузки).',
           'Или нажмите <b>«QR-код»</b> и наведите камеру на QR с другого экрана.',
           'Нажмите <b>«Подключиться»</b>.'
@@ -196,13 +203,20 @@ window.Fibr = (function () {
           'Откройте сайт <b>2ip.ru</b>: должен показываться IP сервера, а не ваш домашний.',
           'Не работает — выключите и включите VPN в приложении.',
           'Один файл не работает на двух телефонах одновременно: создайте для второго своё устройство.',
-          'Если WireGuard блокируют — создайте устройство с протоколом <b>Xray</b> и откройте ссылку в v2rayNG, Hiddify или AmneziaVPN.',
+          'Если WireGuard блокируют — напишите боту <b>/vless</b> (или создайте здесь устройство с протоколом <b>Xray</b>) и вставьте ссылку в AmneziaVPN («Вставить ключ»), v2rayNG, Hiddify или Streisand.',
           'Не получилось — напишите администратору.'
         ]]
       ]
     },
     en: {
       title: 'How to connect',
+      web: ['📱 On this phone — with a file (easiest)', [
+        'Install <b>WireGuard</b> (Google Play / App Store) or <b>AmneziaVPN</b>.',
+        'Here, type a device name (e.g. “Phone”) and tap <b>“Add”</b>.',
+        'Tap <b>“Download file”</b> on the device.',
+        'Open the downloaded file (Downloads or the notification) → <b>WireGuard</b> or <b>AmneziaVPN</b>. In AmneziaVPN you can also tap “File with connection settings” and pick it.',
+        'Tap <b>“Allow”</b> when the phone asks about VPN and switch it on.'
+      ]],
       intro: 'Pick the way that suits you and open it. One device = one gadget: create a separate one for each phone, laptop or TV.',
       sections: [
         ['📱 On this phone — with a file (easiest)', [
@@ -214,7 +228,7 @@ window.Fibr = (function () {
         ]],
         ['🅰️ With AmneziaVPN', [
           'Install <b>AmneziaVPN</b> (Google Play, App Store or amnezia.org).',
-          'Get the file: <b>“File to Telegram”</b> or <b>/new</b> in the bot.',
+          'Get the file: <b>“Download file”</b> on the device (or “File to Telegram” / <b>/new</b> in the bot).',
           'In AmneziaVPN tap <b>“File with connection settings”</b> and pick that file (Telegram / Downloads folder).',
           'Or tap <b>“QR code”</b> and point the camera at the QR on another screen.',
           'Tap <b>“Connect”</b>.'
@@ -242,21 +256,24 @@ window.Fibr = (function () {
           'Open <b>2ip.ru</b>: it should show the server IP, not your home one.',
           'Not working — switch the VPN off and on again.',
           'One file does not work on two phones at once: create a separate device for the second one.',
-          'If WireGuard is blocked — create an <b>Xray</b> device and open the link in v2rayNG, Hiddify or AmneziaVPN.',
+          'If WireGuard is blocked — send <b>/vless</b> to the bot (or create an <b>Xray</b> device here) and paste the link into AmneziaVPN (“Paste key”), v2rayNG, Hiddify or Streisand.',
           'Still stuck — message the administrator.'
         ]]
       ]
     }
   };
 
-  // guideHTML renders the guide; opts.firstOpen opens the first section.
+  // guideHTML renders the guide; opts.firstOpen opens the first section,
+  // opts.web swaps the first section for the browser path ("Download file"
+  // instead of the Telegram bot — the web cabinet is the main door).
   // Strings are trusted constants above (they carry <b> markup).
   function guideHTML(lang, opts) {
     var g = GUIDE[lang === 'ru' ? 'ru' : 'en'];
     var first = !opts || opts.firstOpen !== false;
+    var sections = opts && opts.web ? [g.web].concat(g.sections.slice(1)) : g.sections;
     return '<h3>' + g.title + '</h3>' +
       '<p class="muted modal-sub">' + g.intro + '</p>' +
-      '<div class="guide">' + g.sections.map(function (sec, i) {
+      '<div class="guide">' + sections.map(function (sec, i) {
         return '<details class="guide-sec"' + (i === 0 && first ? ' open' : '') + '>' +
           '<summary>' + sec[0] + '</summary>' +
           '<ol class="qr-steps">' + sec[1].map(function (step) { return '<li>' + step + '</li>'; }).join('') + '</ol>' +

@@ -34,6 +34,7 @@ type API struct {
 	updaterURL  string       // opt-in update sidecar; "" = never configured
 	fileSender  FileSender   // Telegram document sender; nil without a bot
 	pairs       pairStore    // TV pairing codes (pair.go), in memory
+	loginFails  loginLimiter // failed password sign-ins per login (password.go)
 }
 
 // New creates the API.
@@ -70,6 +71,9 @@ func (a *API) Handler() http.Handler {
 	// Server login for the Flutter client: exchange an app access key for
 	// the same {token, user} session the Telegram sign-in issues.
 	mux.HandleFunc("POST /api/auth/key", a.handleAuthKey)
+	// Web-first sign-up by invite link, no Telegram needed (weblogin.go).
+	mux.HandleFunc("POST /api/auth/invite", a.handleAuthInvite)
+	mux.HandleFunc("POST /api/auth/password", a.handleAuthPassword)
 
 	// Quick-connect: public exchange of a one-time code for a device config,
 	// plus the /join/<code> landing page (never consumes the code, so
@@ -95,6 +99,7 @@ func (a *API) Handler() http.Handler {
 	// App access key management (server login; see access_key.go). The
 	// plaintext key leaves the server only from the create/rotate handler.
 	mux.HandleFunc("POST /api/me/access-key", a.auth(a.handleMeAccessKeyCreate))
+	mux.HandleFunc("POST /api/me/password", a.auth(a.handleMeSetPassword))
 	mux.HandleFunc("DELETE /api/me/access-key", a.auth(a.handleMeAccessKeyDelete))
 
 	// Admin endpoints (admin token or admin-role user).
@@ -103,6 +108,7 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("POST /api/admin/users", a.admin(a.handleAdminCreateUser))
 	mux.HandleFunc("POST /api/admin/users/{id}/devices", a.admin(a.handleAdminCreateDevice))
 	mux.HandleFunc("PATCH /api/admin/users/{id}", a.admin(a.handleAdminUpdateUser))
+	mux.HandleFunc("POST /api/admin/users/{id}/access-key", a.admin(a.handleAdminUserAccessKey))
 	mux.HandleFunc("DELETE /api/admin/users/{id}", a.admin(a.handleAdminDeleteUser))
 	mux.HandleFunc("GET /api/admin/devices", a.admin(a.handleAdminDevices))
 	mux.HandleFunc("GET /api/admin/devices/{id}/config", a.admin(a.handleAdminDeviceConfig))
@@ -479,10 +485,16 @@ func (a *API) handleMe(w http.ResponseWriter, r *http.Request) {
 		a.errJSON(w, http.StatusInternalServerError, "storage error")
 		return
 	}
+	login, err := a.store.UserLogin(u.ID)
+	if err != nil {
+		a.errJSON(w, http.StatusInternalServerError, "storage error")
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"user": u, "devices": out,
 		"max_devices": limit, "xray_enabled": a.cfg.XrayEnabled,
 		"has_access_key": hasKey,
+		"login":          login, // web login ("" until the person sets one)
 		// The client compares endpoint_changed_at with its stored copy to
 		// decide a re-download is needed (multi-node endpoint switch).
 		"active_node":         ep.Name,
