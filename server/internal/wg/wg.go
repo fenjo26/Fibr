@@ -512,6 +512,16 @@ func (m *Manager) ClientConfig(d store.Device) string {
 	})
 }
 
+// ClientConfigVia renders this box's config with a different endpoint host —
+// the relay (docs/relay.md), which forwards the same UDP port to this box.
+func (m *Manager) ClientConfigVia(d store.Device, host string) string {
+	return m.ClientConfigAt(d, node.Endpoint{
+		Host:           host,
+		WGPort:         m.cfg.WGPort,
+		WGServerPubKey: m.PublicKey(),
+	})
+}
+
 // ClientConfigAt renders the config for an arbitrary node endpoint — with
 // multi-node, the active node's host/port/server key go into the [Peer]
 // section instead of this box's own (see internal/node). Addressing, DNS and

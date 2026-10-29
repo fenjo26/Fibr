@@ -149,7 +149,7 @@ func (a *API) handleMeSendDevice(w http.ResponseWriter, r *http.Request) {
 		a.errJSON(w, http.StatusConflict, "account has no telegram chat")
 		return
 	}
-	content, code, err := a.renderCredential(*d)
+	content, code, err := a.renderCredentialVia(*d, a.viaRelay(r))
 	if err != nil {
 		a.errJSON(w, code, err.Error())
 		return
@@ -158,7 +158,7 @@ func (a *API) handleMeSendDevice(w http.ResponseWriter, r *http.Request) {
 	caption := deviceFileCaption
 	if d.Protocol == store.ProtocolXray {
 		ext = "txt"
-		caption = "Fibr: VLESS link for «" + d.Name + "». Open the file, copy the link and paste it into v2rayNG / Hiddify / Streisand / AmneziaVPN."
+		caption = "Fibr: VLESS link for «" + d.Name + "». Open the file, copy the link and paste it into Hiddify / v2RayTun / Streisand / v2rayNG."
 	}
 	if err := a.fileSender(*u.TelegramID, ConfFileName(d.Name, ext), []byte(content), caption); err != nil {
 		a.log.Warn("send config to telegram failed", "device_id", d.ID, "error", err)

@@ -115,6 +115,8 @@
       qrTitle: 'QR-код конфигурации',
       qrHint: 'Отсканируйте в приложении WireGuard/Fibr',
       qrHintXray: 'Ссылка VLESS — отсканируйте или вставьте в Hiddify, v2RayTun, Streisand (iPhone) или v2rayNG (Android); обновите приложение до последней версии',
+      relaySwitch: '🇷🇺 Я в России — подключать через ретранслятор',
+      relayHint: 'Включите, если VPN не подключается из России (WireGuard, AmneziaWG и VLESS пойдут через российский сервер). После переключения заново скачайте файл или отсканируйте QR.',
       qrStep1: 'Установите приложение WireGuard (или клиент Fibr)',
       qrStep2: 'Нажмите «+» и выберите «Создать из QR-кода»',
       qrStep3: 'Наведите камеру на код',
@@ -250,6 +252,8 @@
       qrTitle: 'Configuration QR code',
       qrHint: 'Scan it in the WireGuard/Fibr app',
       qrHintXray: 'VLESS link — scan or paste it into Hiddify, v2RayTun, Streisand (iPhone) or v2rayNG (Android); keep the app up to date',
+      relaySwitch: '🇷🇺 I am in Russia — connect through the relay',
+      relayHint: 'Turn on if the VPN does not connect from Russia (WireGuard, AmneziaWG and VLESS then go through a server inside Russia). After switching, download the file / scan the QR again.',
       qrStep1: 'Install the WireGuard app (or the Fibr client)',
       qrStep2: 'Tap “+” and choose “Create from QR code”',
       qrStep3: 'Point your camera at the code',
@@ -314,6 +318,44 @@
   var LOGIN_KEY = 'fibr-login-key'; // personal access key = login link, remembered in this browser
   var token = null;
   var me = null;
+
+  // Relay (docs/relay.md): when the server has one, the user picks whether
+  // configs go through it ("I'm in Russia"). The choice is remembered in
+  // this browser and sent as ?via=relay|direct with every config / QR
+  // request; without a relay the parameter is not sent at all.
+  var RELAY_KEY = 'fibr_via_relay';
+  function relayOn() {
+    if (!me || !me.relay_enabled) return false;
+    var v = null;
+    try { v = localStorage.getItem(RELAY_KEY); } catch (e) { /* ignore */ }
+    if (v === '1') return true;
+    if (v === '0') return false;
+    return !!me.relay_default;
+  }
+  function viaQ() {
+    if (!me || !me.relay_enabled) return '';
+    return '?via=' + (relayOn() ? 'relay' : 'direct');
+  }
+  function renderRelaySwitch() {
+    var host = document.getElementById('devices');
+    if (!host) return;
+    var row = document.getElementById('relay-row');
+    if (!me || !me.relay_enabled) { if (row) row.remove(); return; }
+    if (!row) {
+      row = document.createElement('label');
+      row.id = 'relay-row';
+      row.style.cssText = 'display:flex;gap:10px;align-items:flex-start;margin:4px 0 14px;cursor:pointer;line-height:1.35';
+      row.innerHTML = '<input type="checkbox" id="relay-toggle" style="margin-top:3px;width:18px;height:18px;flex:none">' +
+        '<span><b id="relay-title"></b><br><small id="relay-hint" style="opacity:.75"></small></span>';
+      host.parentNode.insertBefore(row, host);
+      row.querySelector('#relay-toggle').addEventListener('change', function (ev) {
+        try { localStorage.setItem(RELAY_KEY, ev.target.checked ? '1' : '0'); } catch (e) { /* ignore */ }
+      });
+    }
+    row.querySelector('#relay-title').textContent = t('relaySwitch');
+    row.querySelector('#relay-hint').textContent = t('relayHint');
+    row.querySelector('#relay-toggle').checked = relayOn();
+  }
   var api = window.Fibr.makeApi(function () { return token; });
 
   var el = function (id) { return document.getElementById(id); };
@@ -707,6 +749,7 @@
       el('greeting').textContent = t('greeting', { name: (data.user && data.user.username) || '' });
       showView('app-view');
       render();
+      renderRelaySwitch();
       loadUsersSection();
       loadRefSection();
       loadKeySection();
@@ -927,7 +970,7 @@
   // device — on a phone it then opens in WireGuard / AmneziaVPN.
   function downloadConf(id) {
     var dev = (me.devices || []).filter(function (x) { return String(x.id) === String(id); })[0];
-    fetch('/api/me/devices/' + id + '/config', { headers: { Authorization: 'Bearer ' + token } })
+    fetch('/api/me/devices/' + id + '/config' + viaQ(), { headers: { Authorization: 'Bearer ' + token } })
       .then(function (res) {
         if (!res.ok) throw new Error('HTTP ' + res.status);
         var cd = res.headers.get('Content-Disposition') || '';
@@ -949,7 +992,7 @@
   // there it opens straight in WireGuard / AmneziaVPN on the phone.
   function sendToTelegram(id, btn) {
     btn.disabled = true;
-    api('/api/me/devices/' + id + '/send', { method: 'POST', body: {} }).then(function () {
+    api('/api/me/devices/' + id + '/send' + viaQ(), { method: 'POST', body: {} }).then(function () {
       btn.textContent = t('sentTg');
     }).catch(function () {
       btn.disabled = false;
@@ -1373,7 +1416,7 @@
   }
 
   function showQR(id, protocol) {
-    fetch('/api/me/devices/' + id + '/qr.png', { headers: { Authorization: 'Bearer ' + token } })
+    fetch('/api/me/devices/' + id + '/qr.png' + viaQ(), { headers: { Authorization: 'Bearer ' + token } })
       .then(function (res) {
         if (!res.ok) throw new Error('HTTP ' + res.status);
         return res.blob();
@@ -1383,7 +1426,7 @@
   }
 
   function showAdminQR(id, protocol) {
-    fetch('/api/admin/devices/' + id + '/qr.png', { headers: { Authorization: 'Bearer ' + token } })
+    fetch('/api/admin/devices/' + id + '/qr.png' + viaQ(), { headers: { Authorization: 'Bearer ' + token } })
       .then(function (res) {
         if (!res.ok) throw new Error('HTTP ' + res.status);
         return res.blob();
@@ -1393,7 +1436,7 @@
   }
 
   function showConfig(id) {
-    fetch('/api/me/devices/' + id + '/config', { headers: { Authorization: 'Bearer ' + token } })
+    fetch('/api/me/devices/' + id + '/config' + viaQ(), { headers: { Authorization: 'Bearer ' + token } })
       .then(function (res) {
         if (!res.ok) throw new Error('HTTP ' + res.status);
         return res.text();

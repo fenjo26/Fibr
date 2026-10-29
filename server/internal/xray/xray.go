@@ -219,9 +219,26 @@ func (m *Manager) ClientLink(d store.Device) string {
 // Reality link.
 func (m *Manager) ClientLinkAt(d store.Device, ep node.Endpoint) string {
 	if ep.IsLocal && m.cfg.XHTTPActive() {
-		return XHTTPLink(d.PublicKey, m.cfg.XHTTPHost, m.cfg.XHTTPPath, d.Name)
+		return XHTTPLink(d.PublicKey, m.cfg.XHTTPHost, m.cfg.XHTTPHost, m.cfg.XHTTPPath, d.Name)
 	}
 	return RealityLink(d, ep)
+}
+
+// ClientLinkVia renders this box's link through a relay (docs/relay.md): the
+// client dials relayHost, which forwards TCP 443 / FIBR_XRAY_PORT to this
+// box untouched. TLS SNI and the HTTP Host stay the real domain, so Caddy's
+// certificate validates and the tunnel is end-to-end.
+func (m *Manager) ClientLinkVia(d store.Device, relayHost string) string {
+	if m.cfg.XHTTPActive() {
+		return XHTTPLink(d.PublicKey, relayHost, m.cfg.XHTTPHost, m.cfg.XHTTPPath, d.Name)
+	}
+	return RealityLink(d, node.Endpoint{
+		Host:          relayHost,
+		XrayPort:      m.cfg.XrayPort,
+		XrayPubKeyB64: m.pubKeyB64,
+		XrayShortID:   m.cfg.XrayShortID,
+		XraySNI:       m.cfg.XraySNI,
+	})
 }
 
 // RealityLinkLocal renders the VLESS + Reality link (port FIBR_XRAY_PORT)
@@ -240,7 +257,9 @@ func (m *Manager) RealityLinkLocal(d store.Device) string {
 // XHTTPLink renders a VLESS-over-XHTTP share link: TLS to the server's own
 // domain on 443 (Chrome uTLS fingerprint, HTTP/2), XHTTP at the secret path,
 // mode auto (the client picks packet-up / stream-up as the path allows).
-func XHTTPLink(uuid, host, path, name string) string {
+// addr is what the client dials (the domain itself, or a relay's IP); host
+// is the domain used for SNI and the HTTP Host header.
+func XHTTPLink(uuid, addr, host, path, name string) string {
 	q := url.Values{}
 	q.Set("encryption", "none")
 	q.Set("security", "tls")
@@ -251,7 +270,7 @@ func XHTTPLink(uuid, host, path, name string) string {
 	q.Set("host", host)
 	q.Set("path", path)
 	q.Set("mode", "auto")
-	return fmt.Sprintf("vless://%s@%s:443?%s#%s", uuid, host, q.Encode(), url.PathEscape("Fibr-"+name))
+	return fmt.Sprintf("vless://%s@%s:443?%s#%s", uuid, addr, q.Encode(), url.PathEscape("Fibr-"+name))
 }
 
 // RealityLink renders the VLESS + Reality + Vision link for an endpoint.

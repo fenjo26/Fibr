@@ -199,16 +199,12 @@ func (a *API) handleJoin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var config string
-	switch d.Protocol {
-	case store.ProtocolXray:
-		if !a.cfg.XrayEnabled {
-			a.errJSON(w, http.StatusConflict, "xray protocol is not enabled on this server")
-			return
-		}
-		config = a.xray.ClientLink(*d)
-	default:
-		config = a.wg.ClientConfig(*d)
+	// Same renderer as the cabinet: active node, AmneziaWG on its own
+	// tunnel, relay per ?via= or the server default (docs/relay.md).
+	config, status, err := a.renderCredentialVia(*d, a.viaRelay(r))
+	if err != nil {
+		a.errJSON(w, status, err.Error())
+		return
 	}
 	a.log.Info("join code redeemed", "code", jc.Code, "device_id", d.ID)
 	writeJSON(w, http.StatusOK, joinResult{

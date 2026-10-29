@@ -41,6 +41,7 @@ Welcome to the comprehensive documentation directory for the **Fibr** self-hoste
 | Document | Description |
 |---|---|
 | [telegram-bot.md](telegram-bot.md) | **Telegram Bot:** Commands reference, `FIBR_ADMIN_TELEGRAM_IDS` superadmin privileges, and Mini App integration. |
+| [relay.md](relay.md) | **Relay inside Russia:** when the server's IP range is blocked, a domestic VPS forwards 443/tcp, WireGuard and AmneziaWG to the main server; one-command install and an "I'm in Russia" switch in the cabinet. |
 | [multinode.md](multinode.md) | **Multi-Node Clusters:** Adding secondary worker nodes, instant endpoint IP hot-swapping during provider blocks without regenerating keys. |
 | [updates.md](updates.md) | **Server Updates:** One-click automated updates from the web panel (`--with-updater`) and manual SSH upgrade workflows. |
 | [DESIGN.md](DESIGN.md) | **Design Specification:** UI tokens, color palettes (dark and light themes), typography rules (Inter 600/800), and card layout principles. |

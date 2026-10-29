@@ -359,6 +359,8 @@ func (a *API) handlePublicInfo(w http.ResponseWriter, r *http.Request) {
 		"domain":          a.cfg.Domain,
 		"invite_required": a.cfg.RequireInvite,
 		"xray_enabled":    a.cfg.XrayEnabled,
+		"relay_enabled":   a.cfg.RelayHost != "",
+		"relay_default":   a.relayByDefault(),
 		"contact_info":    contact,
 	})
 }
@@ -526,6 +528,9 @@ func (a *API) handleMe(w http.ResponseWriter, r *http.Request) {
 		"user": u, "devices": out,
 		"max_devices": limit, "xray_enabled": a.cfg.XrayEnabled,
 		"awg_enabled": a.awgm != nil,
+		// Relay (docs/relay.md): the client shows the "I'm in Russia"
+		// switch and adds ?via=relay|direct to config / QR requests.
+		"relay_enabled": a.cfg.RelayHost != "", "relay_default": a.relayByDefault(),
 		// Protected DNS (docs/dns-games.md): the client renders the
 		// per-device filter switch only while the resolver runs.
 		"dns_enabled":         a.dnssrv != nil,
@@ -604,7 +609,7 @@ func (a *API) handleDeviceConfig(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	a.serveConfig(w, *d)
+	a.serveConfig(w, r, *d)
 }
 
 func (a *API) handleDeviceQR(w http.ResponseWriter, r *http.Request) {
@@ -613,7 +618,7 @@ func (a *API) handleDeviceQR(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	a.serveQR(w, *d)
+	a.serveQR(w, r, *d)
 }
 
 /* ------------------------- admin endpoints ------------------------- */
@@ -1247,7 +1252,7 @@ func (a *API) handleAdminDeviceConfig(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	a.serveConfig(w, *d)
+	a.serveConfig(w, r, *d)
 }
 
 func (a *API) handleAdminDeviceQR(w http.ResponseWriter, r *http.Request) {
@@ -1255,7 +1260,7 @@ func (a *API) handleAdminDeviceQR(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	a.serveQR(w, *d)
+	a.serveQR(w, r, *d)
 }
 
 func (a *API) handleAdminUpdateDevice(w http.ResponseWriter, r *http.Request) {
@@ -1405,18 +1410,55 @@ func (a *API) scopedDevice(w http.ResponseWriter, r *http.Request) (*store.Devic
 	return d, true
 }
 
-// renderCredential renders the device's credential text against the ACTIVE
-// node endpoint (multi-node: the active node's host/ports/keys go into the
-// config instead of this box's own — see docs/multinode.md). The returned
-// status code is 0 on success.
+// renderCredential renders the device's credential with the server's
+// default routing (via the relay when one is configured and
+// FIBR_RELAY_DEFAULT is on — docs/relay.md).
 func (a *API) renderCredential(d store.Device) (content string, code int, err error) {
+	return a.renderCredentialVia(d, a.relayByDefault())
+}
+
+// relayByDefault reports whether configs go through the relay when the
+// client did not choose.
+func (a *API) relayByDefault() bool { return a.cfg.RelayHost != "" && a.cfg.RelayDefault }
+
+// viaRelay reads the client's routing choice (?via=relay | ?via=direct),
+// falling back to the server default. Without a configured relay it is
+// always false.
+func (a *API) viaRelay(r *http.Request) bool {
+	if a.cfg.RelayHost == "" {
+		return false
+	}
+	switch r.URL.Query().Get("via") {
+	case "relay":
+		return true
+	case "direct":
+		return false
+	}
+	return a.cfg.RelayDefault
+}
+
+// renderCredentialVia renders the device's credential text against the
+// ACTIVE node endpoint (multi-node: the active node's host/ports/keys go
+// into the config instead of this box's own — see docs/multinode.md). With
+// relay=true and this box active, the endpoint host is the relay instead
+// (it forwards the same ports here). The returned status code is 0 on
+// success.
+func (a *API) renderCredentialVia(d store.Device, relay bool) (content string, code int, err error) {
 	ep, _, err := a.resolveActiveEndpoint()
 	if err != nil {
 		return "", http.StatusInternalServerError, errors.New("cannot resolve active endpoint")
 	}
+	// The relay forwards to THIS box only: a remote active node keeps its
+	// own address, while the AmneziaWG tunnel (always on this box) can use
+	// the relay whatever node is active.
+	wantRelay := relay && a.cfg.RelayHost != ""
+	relay = wantRelay && ep.IsLocal
 	if d.Protocol == store.ProtocolXray {
 		if !a.cfg.XrayEnabled {
 			return "", http.StatusConflict, errors.New("xray protocol is not enabled on this server")
+		}
+		if relay {
+			return a.xray.ClientLinkVia(d, a.cfg.RelayHost), 0, nil
 		}
 		return a.xray.ClientLinkAt(d, ep), 0, nil
 	}
@@ -1426,15 +1468,21 @@ func (a *API) renderCredential(d store.Device) (content string, code int, err er
 		if a.awgm == nil {
 			return "", http.StatusConflict, errors.New("amneziawg protocol is not enabled on this server")
 		}
+		if wantRelay {
+			return a.awgm.ClientConfigVia(d, a.cfg.RelayHost), 0, nil
+		}
 		return a.awgm.ClientConfig(d), 0, nil
+	}
+	if relay {
+		return a.wg.ClientConfigVia(d, a.cfg.RelayHost), 0, nil
 	}
 	return a.wg.ClientConfigAt(d, ep), 0, nil
 }
 
 // serveConfig renders the device credential: a wg-quick config for "wg"
 // devices or the vless:// share link (text/plain) for "xray" devices.
-func (a *API) serveConfig(w http.ResponseWriter, d store.Device) {
-	content, code, err := a.renderCredential(d)
+func (a *API) serveConfig(w http.ResponseWriter, r *http.Request, d store.Device) {
+	content, code, err := a.renderCredentialVia(d, a.viaRelay(r))
 	if err != nil {
 		a.errJSON(w, code, err.Error())
 		return
@@ -1451,8 +1499,8 @@ func (a *API) serveConfig(w http.ResponseWriter, d store.Device) {
 
 // serveQR renders a PNG QR code of the device credential: the wg-quick config
 // or the vless:// link.
-func (a *API) serveQR(w http.ResponseWriter, d store.Device) {
-	content, code, err := a.renderCredential(d)
+func (a *API) serveQR(w http.ResponseWriter, r *http.Request, d store.Device) {
+	content, code, err := a.renderCredentialVia(d, a.viaRelay(r))
 	if err != nil {
 		a.errJSON(w, code, err.Error())
 		return

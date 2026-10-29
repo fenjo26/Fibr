@@ -66,6 +66,14 @@ type Config struct {
 	XHTTPPath    string // FIBR_XHTTP_PATH, secret URL path (must match the Caddyfile; default /fibr-xh)
 	XHTTPHost    string // derived from FIBR_DOMAIN; "" when the domain is plain http / localhost / an IP
 
+	// Relay (docs/relay.md): a plain TCP/UDP forwarder (nginx stream) on a
+	// VPS inside the censored country — its domestic IP is reachable when the
+	// main server's foreign hosting range is blocked. When RelayHost is set,
+	// client configs of THIS node can point at the relay instead of the
+	// server; TLS / WireGuard encryption stays end-to-end to this box.
+	RelayHost    string // FIBR_RELAY_HOST: relay IP or hostname; empty = no relay
+	RelayDefault bool   // FIBR_RELAY_DEFAULT: configs go via the relay unless the client asks ?via=direct (default true)
+
 	// AWGVersion selects the AmneziaWG parameter generation: 2 (default) adds
 	// S3/S4 padding, H1-H4 ranges and the I1 signature packet; 1 keeps the
 	// legacy Jc/S1/S2/H1-H4 set (docs/awg.md).
@@ -192,6 +200,15 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("FIBR_XHTTP_PATH: %q is not a valid URL path (use e.g. /$(openssl rand -hex 8))", c.XHTTPPath)
 	}
 	c.XHTTPHost = httpsHost(c.Domain)
+	c.RelayHost = strings.TrimSpace(os.Getenv("FIBR_RELAY_HOST"))
+	if i := strings.Index(c.RelayHost, "://"); i >= 0 {
+		c.RelayHost = c.RelayHost[i+3:]
+	}
+	c.RelayHost = strings.TrimSuffix(c.RelayHost, "/")
+	if strings.ContainsAny(c.RelayHost, " /:") && net.ParseIP(c.RelayHost) == nil {
+		return nil, fmt.Errorf("FIBR_RELAY_HOST: %q must be a bare IP or hostname (no port, no path)", c.RelayHost)
+	}
+	c.RelayDefault = getenvBool("FIBR_RELAY_DEFAULT", true)
 	c.AWGVersion = getenvInt("FIBR_AWG_VERSION", 2)
 	if c.AWGVersion != 1 && c.AWGVersion != 2 {
 		return nil, fmt.Errorf("FIBR_AWG_VERSION: %d is not 1 or 2", c.AWGVersion)

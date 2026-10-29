@@ -6,7 +6,8 @@
 
 - 🚀 **Мгновенный старт:** пользователь открывает Mini App или веб-кабинет, нажимает «Добавить устройство» и сканирует QR-код.
 - 📱 **Универсальная совместимость:** конфиги и QR работают как в собственном клиенте Fibr (Android, Android TV, Windows, macOS), так и в официальных приложениях WireGuard и AmneziaVPN (iOS, Android, Windows, macOS, Linux, OpenWrt, Keenetic).
-- 🛡️ **Защита от блокировок (DPI):** поддержка обфусцированного WireGuard (**AmneziaWG**) и протокола **Xray (VLESS + Reality)** под видом обычного HTTPS-трафика.
+- 🛡️ **Защита от блокировок (DPI):** обфусцированный WireGuard (**AmneziaWG 2.0**) и **VLESS через XHTTP на 443** с сертификатом вашего домена (снаружи выглядит как обычный HTTPS к сайту), плюс запасной VLESS + Reality ([docs/xray.md](docs/xray.md), [docs/awg.md](docs/awg.md)).
+- 🇷🇺 **Ретранслятор в России:** если IP сервера заблокирован, маленький российский VPS пересылает трафик на основной сервер. Ставится одной командой, а в кабинете у пользователя появляется переключатель «Я в России» ([docs/relay.md](docs/relay.md)).
 - 🛑 **DNS-защита и фильтрация:** встроенный DNS-резолвер с AdBlock, родительским контролем (Family), расписанием доступа, защитой от утечек (anti-leak) и поддержкой кастомных списков в формате AdGuard/hosts ([docs/dns-games.md](docs/dns-games.md)).
 - 🎮 **Игровой режим:** маршрутизация трафика популярных онлайн-игр (CS2, Dota 2, Valorant, Apex и др.) через туннель с минимальным пингом ([docs/dns-games.md](docs/dns-games.md)).
 - 🌐 **Веб-кабинет без Telegram:** полноценный браузерный личный кабинет с регистрацией по инвайтам, входом по разовым кодам, логину/паролю или виджету Telegram ([docs/web-login.md](docs/web-login.md)).
@@ -48,6 +49,30 @@ curl -fsSL https://raw.githubusercontent.com/fenjo26/Fibr/main/install/install.s
 > **Что сделает скрипт:** установит Docker, проверит DNS-записи, сгенерирует криптографические ключи и пароли, настроит файрвол (ufw), запустит контейнеры (fibr + caddy + xray) и выведет в консоль URL панели управления, токен доступа и ссылки для подключения.
 
 Повторный запуск скрипта безопасен: он обновляет настройки и дописывает флаги в `.env`, не перезатирая существующие данные. Подробнее — в [docs/getting-started.md](docs/getting-started.md).
+
+---
+
+## Если из России не подключается: ретранслятор
+
+Признак: у пользователя в России без VPN не открывается даже `https://ваш-домен/cabinet/` (таймаут), а остальные сайты открываются. Значит, провайдер блокирует IP или подсеть вашего хостера, и протоколы тут ни при чём. Решение: ретранслятор на VPS **в России**. Он просто пересылает трафик на основной сервер и ничего не расшифровывает.
+
+```
+телефон ──► VPS в России (nginx, пересылка) ──► основной сервер Fibr ──► интернет
+```
+
+1. **На российском VPS** (чистый Ubuntu/Debian, свободный порт 443):
+   ```bash
+   curl -fsSL https://raw.githubusercontent.com/fenjo26/Fibr/main/relay/install.sh -o relay.sh
+   bash relay.sh --upstream IP_ОСНОВНОГО_СЕРВЕРА
+   ```
+2. **На основном сервере:**
+   ```bash
+   echo "FIBR_RELAY_HOST=IP_РЕТРАНСЛЯТОРА" >> /opt/fibr/install/.env
+   cd /opt/fibr/install && docker compose up -d
+   ```
+3. **Пользователю:** в кабинете включить «🇷🇺 Я в России» (по умолчанию уже включено) и заново взять QR, файл или ссылку.
+
+Подробно, с проверками и ограничениями: [docs/relay.md](docs/relay.md).
 
 ---
 
@@ -126,6 +151,7 @@ curl -fsSL https://raw.githubusercontent.com/fenjo26/Fibr/main/install/install.s
 │   ├── cmd/fibr-node/    # Агент дополнительной ноды (docs/multinode.md)
 │   └── cmd/fibr-updater/ # Сайдкар обновления в 1 клик (docs/updates.md)
 ├── install/         # Скрипты развёртывания, Caddyfile, docker-compose
+├── relay/           # Ретранслятор для VPS в России (nginx stream, docs/relay.md)
 ├── admin/           # Панель управления администратора (Vanilla JS, адаптивная)
 ├── miniapp/         # Telegram Mini App клиентский интерфейс
 ├── cabinet/         # Браузерный личный кабинет пользователя
@@ -186,8 +212,9 @@ make run     # Запуск в пассивном режиме (эмуляция
 - [Настройка Telegram-бота](docs/telegram-bot.md)
 - [Веб-кабинет и вход без Telegram](docs/web-login.md)
 - [DNS-защита, фильтрация и игровой режим](docs/dns-games.md)
-- [Протокол Xray (VLESS + Reality)](docs/xray.md)
-- [Протокол AmneziaWG](docs/awg.md)
+- [Протокол Xray (VLESS через XHTTP на 443, Reality)](docs/xray.md)
+- [Протокол AmneziaWG 2.0](docs/awg.md)
+- [Ретранслятор в России (если IP сервера заблокирован)](docs/relay.md)
 - [Мультинодовость и распределённая сеть](docs/multinode.md)
 - [Биллинг и ограничение доступа по времени](docs/billing.md)
 - [Реферальная программа](docs/referrals.md)

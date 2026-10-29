@@ -55,6 +55,8 @@
       qrTitle: 'QR-код конфигурации',
       qrHint: 'Отсканируйте в приложении WireGuard/Fibr',
       qrHintXray: 'Ссылка VLESS — отсканируйте или вставьте в Hiddify, v2RayTun, Streisand (iPhone) или v2rayNG (Android); обновите приложение до последней версии',
+      relaySwitch: '🇷🇺 Я в России — подключать через ретранслятор',
+      relayHint: 'Включите, если VPN не подключается из России (WireGuard, AmneziaWG и VLESS пойдут через российский сервер). После переключения заново скачайте файл или отсканируйте QR.',
       qrStep1: 'Установите приложение WireGuard (или клиент Fibr)',
       qrStep2: 'Нажмите «+» и выберите «Создать из QR-кода»',
       qrStep3: 'Наведите камеру на код',
@@ -183,6 +185,8 @@
       qrTitle: 'Configuration QR code',
       qrHint: 'Scan it in the WireGuard/Fibr app',
       qrHintXray: 'VLESS link — scan or paste it into Hiddify, v2RayTun, Streisand (iPhone) or v2rayNG (Android); keep the app up to date',
+      relaySwitch: '🇷🇺 I am in Russia — connect through the relay',
+      relayHint: 'Turn on if the VPN does not connect from Russia (WireGuard, AmneziaWG and VLESS then go through a server inside Russia). After switching, download the file / scan the QR again.',
       qrStep1: 'Install the WireGuard app (or the Fibr client)',
       qrStep2: 'Tap “+” and choose “Create from QR code”',
       qrStep3: 'Point your camera at the code',
@@ -294,6 +298,44 @@
 
   var token = null;
   var me = null; // {user, devices, max_devices}
+
+  // Relay (docs/relay.md): when the server has one, the user picks whether
+  // configs go through it ("I'm in Russia"). The choice is remembered in
+  // this browser and sent as ?via=relay|direct with every config / QR
+  // request; without a relay the parameter is not sent at all.
+  var RELAY_KEY = 'fibr_via_relay';
+  function relayOn() {
+    if (!me || !me.relay_enabled) return false;
+    var v = null;
+    try { v = localStorage.getItem(RELAY_KEY); } catch (e) { /* ignore */ }
+    if (v === '1') return true;
+    if (v === '0') return false;
+    return !!me.relay_default;
+  }
+  function viaQ() {
+    if (!me || !me.relay_enabled) return '';
+    return '?via=' + (relayOn() ? 'relay' : 'direct');
+  }
+  function renderRelaySwitch() {
+    var host = document.getElementById('devices');
+    if (!host) return;
+    var row = document.getElementById('relay-row');
+    if (!me || !me.relay_enabled) { if (row) row.remove(); return; }
+    if (!row) {
+      row = document.createElement('label');
+      row.id = 'relay-row';
+      row.style.cssText = 'display:flex;gap:10px;align-items:flex-start;margin:4px 0 14px;cursor:pointer;line-height:1.35';
+      row.innerHTML = '<input type="checkbox" id="relay-toggle" style="margin-top:3px;width:18px;height:18px;flex:none">' +
+        '<span><b id="relay-title"></b><br><small id="relay-hint" style="opacity:.75"></small></span>';
+      host.parentNode.insertBefore(row, host);
+      row.querySelector('#relay-toggle').addEventListener('change', function (ev) {
+        try { localStorage.setItem(RELAY_KEY, ev.target.checked ? '1' : '0'); } catch (e) { /* ignore */ }
+      });
+    }
+    row.querySelector('#relay-title').textContent = t('relaySwitch');
+    row.querySelector('#relay-hint').textContent = t('relayHint');
+    row.querySelector('#relay-toggle').checked = relayOn();
+  }
   var api = window.Fibr.makeApi(function () { return token; });
 
   var el = function (id) { return document.getElementById(id); };
@@ -532,6 +574,7 @@
       el('app-view').classList.remove('hidden');
       el('error-view').classList.add('hidden');
       render();
+      renderRelaySwitch();
       if (pendingPair) { var pc = pendingPair; pendingPair = null; tvModal(pc); }
       loadUsersSection();
       loadRefSection();
@@ -1220,7 +1263,7 @@
   }
 
   function showQR(id, protocol) {
-    fetch('/api/me/devices/' + id + '/qr.png', { headers: { Authorization: 'Bearer ' + token } })
+    fetch('/api/me/devices/' + id + '/qr.png' + viaQ(), { headers: { Authorization: 'Bearer ' + token } })
       .then(function (res) {
         if (!res.ok) throw new Error('HTTP ' + res.status);
         return res.blob();
@@ -1235,7 +1278,7 @@
   // immediately so it can be handed over right away; the extra "Code" button
   // mints a quick-connect code for the same device via the admin endpoint).
   function showAdminQR(id, protocol) {
-    fetch('/api/admin/devices/' + id + '/qr.png', { headers: { Authorization: 'Bearer ' + token } })
+    fetch('/api/admin/devices/' + id + '/qr.png' + viaQ(), { headers: { Authorization: 'Bearer ' + token } })
       .then(function (res) {
         if (!res.ok) throw new Error('HTTP ' + res.status);
         return res.blob();
@@ -1318,7 +1361,7 @@
   // easiest one-phone path (Telegram webviews are bad at downloads).
   function sendToTelegram(id, btn) {
     if (btn) btn.disabled = true;
-    api('/api/me/devices/' + id + '/send', { method: 'POST', body: {} }).then(function () {
+    api('/api/me/devices/' + id + '/send' + viaQ(), { method: 'POST', body: {} }).then(function () {
       if (btn) { btn.textContent = t('sentTg'); }
       try { if (tg && tg.HapticFeedback) tg.HapticFeedback.notificationOccurred('success'); } catch (e) { /* ignore */ }
     }).catch(function (e) {
@@ -1328,7 +1371,7 @@
     });
   }
 
-  function showConfig(id) {    fetch('/api/me/devices/' + id + '/config', { headers: { Authorization: 'Bearer ' + token } })
+  function showConfig(id) {    fetch('/api/me/devices/' + id + '/config' + viaQ(), { headers: { Authorization: 'Bearer ' + token } })
       .then(function (res) {
         if (!res.ok) throw new Error('HTTP ' + res.status);
         return res.text();
