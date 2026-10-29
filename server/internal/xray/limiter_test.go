@@ -20,6 +20,9 @@ func TestParseAccessLine(t *testing.T) {
 		{"2026/10/28 18:00:00 from tcp:198.51.100.9:4000 accepted tcp:1.1.1.1:443 [vless-in >> direct] email: u1\n", "198.51.100.9", "u1", true},
 		{"2026/10/28 18:00:00 from [2001:db8::1]:4000 accepted tcp:x:443 [vless-in -> direct] email: u6", "2001:db8::1", "u6", true},
 		{"2026/10/28 18:00:00 from 203.0.113.7:51234 accepted tcp:example.com:443 [api -> api]", "", "", false},
+		// XHTTP behind Caddy: the client IP comes from X-Forwarded-For (port 0),
+		// line format captured from xray 26.10 in an end-to-end run.
+		{"2026/10/29 09:16:11.335049 from 203.0.113.9:0 accepted tcp:127.0.0.1:9999 [vless-xhttp >> direct] email: 11111111-2222-4333-8444-555555555555", "203.0.113.9", "11111111-2222-4333-8444-555555555555", true},
 		{"random noise", "", "", false},
 	}
 	for _, c := range cases {
@@ -89,7 +92,7 @@ func TestAPIClientAddRemove(t *testing.T) {
 
 	c := NewAPIClient(ln.Addr().String())
 	ctx := context.Background()
-	if err := c.AddUser(ctx, "uuid-1"); err != nil {
+	if err := c.AddUser(ctx, InboundTag, "uuid-1", ClientFlow); err != nil {
 		t.Fatalf("AddUser: %v", err)
 	}
 	got := <-calls
@@ -107,7 +110,7 @@ func TestAPIClientAddRemove(t *testing.T) {
 		t.Fatalf("unexpected prefix %x", got.msg[:10])
 	}
 
-	if err := c.RemoveUser(ctx, "uuid-1"); err != nil {
+	if err := c.RemoveUser(ctx, InboundTag, "uuid-1"); err != nil {
 		t.Fatalf("RemoveUser: %v", err)
 	}
 	if got := <-calls; !strings.Contains(string(got.msg), "RemoveUserOperation") {
@@ -115,11 +118,11 @@ func TestAPIClientAddRemove(t *testing.T) {
 	}
 
 	status = "2" // "already exists" is success for AddUser
-	if err := c.AddUser(ctx, "uuid-1"); err != nil {
+	if err := c.AddUser(ctx, InboundTag, "uuid-1", ClientFlow); err != nil {
 		t.Fatalf("AddUser on existing: %v", err)
 	}
 	<-calls
-	if err := c.RemoveUser(ctx, "uuid-1"); err == nil {
+	if err := c.RemoveUser(ctx, InboundTag, "uuid-1"); err == nil {
 		t.Fatal("RemoveUser must surface a non-'not found' grpc error")
 	}
 	<-calls

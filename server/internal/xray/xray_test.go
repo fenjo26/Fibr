@@ -363,3 +363,107 @@ func TestSyncClientsAccessLogWritable(t *testing.T) {
 		t.Fatalf("access log not world-writable: %v", fi.Mode())
 	}
 }
+
+func newXHTTPManager(t *testing.T) *Manager {
+	t.Helper()
+	m, _, cfg := newTestManager(t, true)
+	cfg.XHTTPEnabled = true
+	cfg.XHTTPHost = "vpn.example.com"
+	cfg.XHTTPPath = "/secret123"
+	return m
+}
+
+func TestXHTTPLinkForLocalNode(t *testing.T) {
+	m := newXHTTPManager(t)
+	d := store.Device{Name: "phone", PublicKey: "11111111-2222-4333-8444-555555555555"}
+	link := m.ClientLinkAt(d, node.Endpoint{IsLocal: true, Host: "vpn.example.com", XrayPort: 8443})
+	u, err := url.Parse(link)
+	if err != nil {
+		t.Fatalf("parse %q: %v", link, err)
+	}
+	if u.Scheme != "vless" || u.User.Username() != d.PublicKey || u.Host != "vpn.example.com:443" {
+		t.Fatalf("unexpected link head: %s", link)
+	}
+	q := u.Query()
+	for k, want := range map[string]string{
+		"security": "tls", "type": "xhttp", "path": "/secret123", "sni": "vpn.example.com",
+		"host": "vpn.example.com", "encryption": "none", "fp": "chrome", "mode": "auto",
+	} {
+		if q.Get(k) != want {
+			t.Errorf("%s = %q, want %q (link %s)", k, q.Get(k), want, link)
+		}
+	}
+	if q.Get("flow") != "" || q.Get("pbk") != "" {
+		t.Errorf("xhttp link must not carry Vision flow / Reality key: %s", link)
+	}
+	// ClientLink (join pages) goes through the same local path.
+	if got := m.ClientLink(d); got != link {
+		t.Errorf("ClientLink = %s, want %s", got, link)
+	}
+	// Remote nodes have no Caddy: Reality stays.
+	remote := m.ClientLinkAt(d, node.Endpoint{Host: "node2.example.com", XrayPort: 8443, XraySNI: "a.b", XrayPubKeyB64: "k", XrayShortID: "aa"})
+	if !strings.Contains(remote, "security=reality") || !strings.Contains(remote, "node2.example.com:8443") {
+		t.Errorf("remote node link should stay Reality: %s", remote)
+	}
+	if r := m.RealityLinkLocal(d); !strings.Contains(r, "security=reality") || !strings.Contains(r, ":8443") {
+		t.Errorf("RealityLinkLocal: %s", r)
+	}
+}
+
+func TestServerConfigHasXHTTPInbound(t *testing.T) {
+	m := newXHTTPManager(t)
+	data, err := m.BuildServerConfig([]string{"u1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg struct {
+		Inbounds []struct {
+			Tag      string `json:"tag"`
+			Port     int    `json:"port"`
+			Settings struct {
+				Clients []map[string]string `json:"clients"`
+			} `json:"settings"`
+			StreamSettings struct {
+				Network         string          `json:"network"`
+				Security        string          `json:"security"`
+				RealitySettings json.RawMessage `json:"realitySettings"`
+				XHTTPSettings   struct {
+					Path string `json:"path"`
+				} `json:"xhttpSettings"`
+				Sockopt struct {
+					Trusted []string `json:"trustedXForwardedFor"`
+				} `json:"sockopt"`
+			} `json:"streamSettings"`
+		} `json:"inbounds"`
+	}
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Inbounds) != 2 {
+		t.Fatalf("want 2 inbounds, got %d:\n%s", len(cfg.Inbounds), data)
+	}
+	re, xh := cfg.Inbounds[0], cfg.Inbounds[1]
+	if re.Tag != InboundTag || re.StreamSettings.Security != "reality" || re.Settings.Clients[0]["flow"] != ClientFlow {
+		t.Errorf("reality inbound wrong: %+v", re)
+	}
+	if xh.Tag != XHTTPInboundTag || xh.Port != config.XHTTPInternalPort || xh.StreamSettings.Network != "xhttp" ||
+		xh.StreamSettings.Security != "none" || xh.StreamSettings.XHTTPSettings.Path != "/secret123" {
+		t.Errorf("xhttp inbound wrong: %+v", xh)
+	}
+	if len(xh.StreamSettings.RealitySettings) != 0 {
+		t.Errorf("xhttp inbound must not carry realitySettings")
+	}
+	if _, has := xh.Settings.Clients[0]["flow"]; has {
+		t.Errorf("xhttp clients must not have a flow: %v", xh.Settings.Clients[0])
+	}
+	if len(xh.StreamSettings.Sockopt.Trusted) != 1 || xh.StreamSettings.Sockopt.Trusted[0] != "X-Forwarded-For" {
+		t.Errorf("trustedXForwardedFor missing: %+v", xh.StreamSettings.Sockopt)
+	}
+
+	// Without a domain there is no XHTTP inbound (plain-http dev setups).
+	m.cfg.XHTTPHost = ""
+	data, _ = m.BuildServerConfig([]string{"u1"})
+	if strings.Contains(string(data), XHTTPInboundTag) {
+		t.Errorf("xhttp inbound present without an https domain")
+	}
+}

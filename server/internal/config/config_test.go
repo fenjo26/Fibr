@@ -95,3 +95,22 @@ func TestAWGConfig(t *testing.T) {
 		t.Fatal("no second tunnel when the whole server already runs awg")
 	}
 }
+
+func TestHTTPSHost(t *testing.T) {
+	cases := map[string]string{
+		"vpn.example.com":          "vpn.example.com",
+		"https://vpn.example.com/": "vpn.example.com",
+		"vpn.example.com:443":      "vpn.example.com",
+		"vpn.example.com:8443":     "",
+		"http://localhost":         "",
+		"http://vpn.example.com":   "",
+		"localhost":                "",
+		"203.0.113.5":              "",
+		"":                         "",
+	}
+	for in, want := range cases {
+		if got := httpsHost(in); got != want {
+			t.Errorf("httpsHost(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

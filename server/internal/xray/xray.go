@@ -199,6 +199,7 @@ func NewUUID() string {
 // this MVP.
 func (m *Manager) ClientLink(d store.Device) string {
 	return m.ClientLinkAt(d, node.Endpoint{
+		IsLocal:       true,
 		Host:          m.cfg.WGHost,
 		XrayPort:      m.cfg.XrayPort,
 		XrayPubKeyB64: m.pubKeyB64,
@@ -210,7 +211,51 @@ func (m *Manager) ClientLink(d store.Device) string {
 // ClientLinkAt renders the link for an arbitrary node endpoint — with
 // multi-node, the active node's host/port/keys replace this box's own (see
 // internal/node).
+//
+// On this box (ep.IsLocal) with XHTTP active the link points at the XHTTP
+// transport behind Caddy — https://<domain>:443<path> with the domain's real
+// certificate — because that is the traffic filtered networks already let
+// through (the cabinet / mini app). Remote nodes have no Caddy and keep the
+// Reality link.
 func (m *Manager) ClientLinkAt(d store.Device, ep node.Endpoint) string {
+	if ep.IsLocal && m.cfg.XHTTPActive() {
+		return XHTTPLink(d.PublicKey, m.cfg.XHTTPHost, m.cfg.XHTTPPath, d.Name)
+	}
+	return RealityLink(d, ep)
+}
+
+// RealityLinkLocal renders the VLESS + Reality link (port FIBR_XRAY_PORT)
+// against this box even when XHTTP is the primary transport — the fallback
+// for networks where the Reality link happens to work better.
+func (m *Manager) RealityLinkLocal(d store.Device) string {
+	return RealityLink(d, node.Endpoint{
+		Host:          m.cfg.WGHost,
+		XrayPort:      m.cfg.XrayPort,
+		XrayPubKeyB64: m.pubKeyB64,
+		XrayShortID:   m.cfg.XrayShortID,
+		XraySNI:       m.cfg.XraySNI,
+	})
+}
+
+// XHTTPLink renders a VLESS-over-XHTTP share link: TLS to the server's own
+// domain on 443 (Chrome uTLS fingerprint, HTTP/2), XHTTP at the secret path,
+// mode auto (the client picks packet-up / stream-up as the path allows).
+func XHTTPLink(uuid, host, path, name string) string {
+	q := url.Values{}
+	q.Set("encryption", "none")
+	q.Set("security", "tls")
+	q.Set("sni", host)
+	q.Set("fp", "chrome")
+	q.Set("alpn", "h2")
+	q.Set("type", "xhttp")
+	q.Set("host", host)
+	q.Set("path", path)
+	q.Set("mode", "auto")
+	return fmt.Sprintf("vless://%s@%s:443?%s#%s", uuid, host, q.Encode(), url.PathEscape("Fibr-"+name))
+}
+
+// RealityLink renders the VLESS + Reality + Vision link for an endpoint.
+func RealityLink(d store.Device, ep node.Endpoint) string {
 	return fmt.Sprintf("vless://%s@%s:%d?type=tcp&security=reality&fp=chrome&sni=%s&pbk=%s&sid=%s&flow=%s&encryption=none#%s",
 		d.PublicKey, ep.Host, ep.XrayPort, ep.XraySNI, ep.XrayPubKeyB64, ep.XrayShortID,
 		ClientFlow, url.PathEscape("Fibr-"+d.Name))
@@ -224,7 +269,7 @@ func (m *Manager) ClientLinkAt(d store.Device, ep node.Endpoint) string {
 // key RemoveUser works with.
 type clientEntry struct {
 	ID    string `json:"id"`
-	Flow  string `json:"flow"`
+	Flow  string `json:"flow,omitempty"`
 	Email string `json:"email"`
 }
 
@@ -242,10 +287,25 @@ type realitySettings struct {
 	ShortIds    []string `json:"shortIds"`
 }
 
+type xhttpSettings struct {
+	Path string `json:"path"`
+	Mode string `json:"mode"`
+}
+
+type sockoptSettings struct {
+	// Header names whose presence makes xray trust X-Forwarded-For (the
+	// client's real IP, set by Caddy). The XHTTP port is reachable only from
+	// the compose network, i.e. only through Caddy, which overwrites any
+	// client-supplied X-Forwarded-For.
+	TrustedXForwardedFor []string `json:"trustedXForwardedFor,omitempty"`
+}
+
 type streamSettings struct {
-	Network         string          `json:"network"`
-	Security        string          `json:"security"`
-	RealitySettings realitySettings `json:"realitySettings"`
+	Network         string           `json:"network"`
+	Security        string           `json:"security"`
+	RealitySettings *realitySettings `json:"realitySettings,omitempty"`
+	XHTTPSettings   *xhttpSettings   `json:"xhttpSettings,omitempty"`
+	Sockopt         *sockoptSettings `json:"sockopt,omitempty"`
 }
 
 type sniffingSettings struct {
@@ -290,8 +350,17 @@ type serverConfig struct {
 //
 // Unlike node configs it also turns on the access log and the gRPC API that
 // the control plane's live apply and sharing limiter use.
+//
+// With XHTTP active a second inbound (XHTTPInboundTag) serves the same
+// clients over XHTTP on config.XHTTPInternalPort, plain HTTP inside the
+// compose network — Caddy terminates TLS on :443 and proxies the secret path
+// to it.
 func (m *Manager) BuildServerConfig(uuids []string) ([]byte, error) {
-	return buildConfig(m.cfg.XrayPort, m.cfg.XraySNI, m.cfg.XrayDest, m.privB64, m.cfg.XrayShortID, uuids, true)
+	path := ""
+	if m.cfg.XHTTPActive() {
+		path = m.cfg.XHTTPPath
+	}
+	return buildConfig(m.cfg.XrayPort, m.cfg.XraySNI, m.cfg.XrayDest, m.privB64, m.cfg.XrayShortID, uuids, true, path)
 }
 
 // BuildStandaloneConfig renders an xray-core config for an arbitrary Reality
@@ -299,14 +368,17 @@ func (m *Manager) BuildServerConfig(uuids []string) ([]byte, error) {
 // local files instead of the control plane's settings table, so they render
 // through this function with their own values.
 func BuildStandaloneConfig(listenPort int, sni, dest, privKeyB64, shortID string, uuids []string) ([]byte, error) {
-	return buildConfig(listenPort, sni, dest, privKeyB64, shortID, uuids, false)
+	return buildConfig(listenPort, sni, dest, privKeyB64, shortID, uuids, false, "")
 }
 
-// buildConfig renders the config; control adds the access log + gRPC API.
-func buildConfig(listenPort int, sni, dest, privKeyB64, shortID string, uuids []string, control bool) ([]byte, error) {
+// buildConfig renders the config; control adds the access log + gRPC API,
+// a non-empty xhttpPath the XHTTP inbound.
+func buildConfig(listenPort int, sni, dest, privKeyB64, shortID string, uuids []string, control bool, xhttpPath string) ([]byte, error) {
 	clients := make([]clientEntry, 0, len(uuids))
+	plain := make([]clientEntry, 0, len(uuids)) // XHTTP: no Vision flow
 	for _, id := range uuids {
 		clients = append(clients, clientEntry{ID: id, Flow: ClientFlow, Email: id})
+		plain = append(plain, clientEntry{ID: id, Email: id})
 	}
 	cfg := serverConfig{}
 	cfg.Log.LogLevel = "warning"
@@ -327,7 +399,7 @@ func buildConfig(listenPort int, sni, dest, privKeyB64, shortID string, uuids []
 		StreamSettings: streamSettings{
 			Network:  "tcp",
 			Security: "reality",
-			RealitySettings: realitySettings{
+			RealitySettings: &realitySettings{
 				Show:        false,
 				Dest:        dest,
 				Xver:        0,
@@ -338,6 +410,22 @@ func buildConfig(listenPort int, sni, dest, privKeyB64, shortID string, uuids []
 		},
 		Sniffing: sniffingSettings{Enabled: true, DestOverride: []string{"http", "tls", "quic"}},
 	}}
+	if xhttpPath != "" {
+		cfg.Inbounds = append(cfg.Inbounds, inbound{
+			Tag:      XHTTPInboundTag,
+			Listen:   "0.0.0.0",
+			Port:     config.XHTTPInternalPort,
+			Protocol: "vless",
+			Settings: inboundSettings{Clients: plain, Decryption: "none"},
+			StreamSettings: streamSettings{
+				Network:       "xhttp",
+				Security:      "none",
+				XHTTPSettings: &xhttpSettings{Path: xhttpPath, Mode: "auto"},
+				Sockopt:       &sockoptSettings{TrustedXForwardedFor: []string{"X-Forwarded-For"}},
+			},
+			Sniffing: sniffingSettings{Enabled: true, DestOverride: []string{"http", "tls", "quic"}},
+		})
+	}
 	cfg.Outbounds = []outbound{
 		{Protocol: "freedom", Tag: "direct"},
 		{Protocol: "blackhole", Tag: "block"},
@@ -456,15 +544,46 @@ func (m *Manager) applyLive(uuids []string) {
 	m.mu.Unlock()
 
 	for _, u := range remove {
-		if err := m.api.RemoveUser(ctx, u); err != nil {
+		if err := m.removeUser(ctx, u); err != nil {
 			m.log.Warn("xray live apply failed; restart the xray container to apply (docker compose restart xray)", "error", err)
 			return
 		}
 	}
 	for _, u := range add {
-		if err := m.api.AddUser(ctx, u); err != nil {
+		if err := m.addUser(ctx, u); err != nil {
 			m.log.Warn("xray live apply failed; restart the xray container to apply (docker compose restart xray)", "error", err)
 			return
 		}
 	}
+}
+
+// inboundFlows lists the inbounds every VLESS client lives in, with the flow
+// each one needs: Vision on Reality/TCP; none on XHTTP (Vision is a raw-TCP
+// splice and does not apply to HTTP transports).
+func (m *Manager) inboundFlows() [][2]string {
+	out := [][2]string{{InboundTag, ClientFlow}}
+	if m.cfg.XHTTPActive() {
+		out = append(out, [2]string{XHTTPInboundTag, ""})
+	}
+	return out
+}
+
+// addUser puts a client into every inbound (live, via the gRPC API).
+func (m *Manager) addUser(ctx context.Context, uuid string) error {
+	for _, in := range m.inboundFlows() {
+		if err := m.api.AddUser(ctx, in[0], uuid, in[1]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// removeUser takes a client out of every inbound.
+func (m *Manager) removeUser(ctx context.Context, uuid string) error {
+	for _, in := range m.inboundFlows() {
+		if err := m.api.RemoveUser(ctx, in[0], uuid); err != nil {
+			return err
+		}
+	}
+	return nil
 }

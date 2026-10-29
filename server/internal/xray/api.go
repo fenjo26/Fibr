@@ -21,8 +21,12 @@ import (
 	"time"
 )
 
-// InboundTag is the tag of the VLESS inbound in the rendered config.
+// InboundTag is the tag of the VLESS + Reality inbound in the rendered config.
 const InboundTag = "vless-in"
+
+// XHTTPInboundTag is the tag of the VLESS-over-XHTTP inbound that Caddy
+// proxies to (control plane only, see xray.go).
+const XHTTPInboundTag = "vless-xhttp"
 
 // APIClient talks to xray's HandlerService at addr ("host:port").
 type APIClient struct {
@@ -56,24 +60,29 @@ type ErrGRPC struct {
 func (e *ErrGRPC) Error() string { return "xray api: grpc status " + e.Code + ": " + e.Message }
 
 // AddUser adds a VLESS client (id = uuid, email = uuid so the access log
-// names the link). "already exists" counts as success.
-func (c *APIClient) AddUser(ctx context.Context, uuid string) error {
-	account := typedMessage("xray.proxy.vless.Account",
-		cat(pbString(1, uuid), pbString(2, ClientFlow), pbString(3, "none")))
+// names the link) to the inbound with the given tag. flow is the client flow
+// ("xtls-rprx-vision" on Reality/TCP, "" on XHTTP). "already exists" counts
+// as success.
+func (c *APIClient) AddUser(ctx context.Context, tag, uuid, flow string) error {
+	acct := pbString(1, uuid)
+	if flow != "" {
+		acct = cat(acct, pbString(2, flow))
+	}
+	account := typedMessage("xray.proxy.vless.Account", cat(acct, pbString(3, "none")))
 	user := cat(pbString(2, uuid), pbBytes(3, account)) // level 0 omitted
 	op := typedMessage("xray.app.proxyman.command.AddUserOperation", pbBytes(1, user))
-	err := c.alterInbound(ctx, op)
+	err := c.alterInbound(ctx, tag, op)
 	if isGRPC(err, "already exists") {
 		return nil
 	}
 	return err
 }
 
-// RemoveUser drops a VLESS client by email (= uuid). "not found" counts as
-// success.
-func (c *APIClient) RemoveUser(ctx context.Context, uuid string) error {
+// RemoveUser drops a VLESS client by email (= uuid) from the inbound with
+// the given tag. "not found" counts as success.
+func (c *APIClient) RemoveUser(ctx context.Context, tag, uuid string) error {
 	op := typedMessage("xray.app.proxyman.command.RemoveUserOperation", pbString(1, uuid))
-	err := c.alterInbound(ctx, op)
+	err := c.alterInbound(ctx, tag, op)
 	if isGRPC(err, "not found") {
 		return nil
 	}
@@ -86,8 +95,8 @@ func isGRPC(err error, substr string) bool {
 }
 
 // alterInbound calls HandlerService.AlterInbound{tag, operation}.
-func (c *APIClient) alterInbound(ctx context.Context, operation []byte) error {
-	req := cat(pbString(1, InboundTag), pbBytes(2, operation))
+func (c *APIClient) alterInbound(ctx context.Context, tag string, operation []byte) error {
+	req := cat(pbString(1, tag), pbBytes(2, operation))
 	return c.unary(ctx, "/xray.app.proxyman.command.HandlerService/AlterInbound", req)
 }
 

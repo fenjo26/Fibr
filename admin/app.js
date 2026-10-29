@@ -1016,7 +1016,7 @@
   /* Issue a device for a user: name + protocol, then jump straight to the QR. */
   function showAddDevice(userId) {
     var protoOptions = '<option value="wg">' + t('protWG') + ' — WireGuard</option>' +
-      (xrayEnabled ? '<option value="xray">' + t('protXray') + ' — VLESS/Reality</option>' : '') +
+      (xrayEnabled ? '<option value="xray">' + t('protXray') + ' — VLESS</option>' : '') +
       (awgEnabled ? '<option value="awg">AWG — AmneziaWG (AmneziaVPN)</option>' : '');
     openModal('<h3>' + esc(t('addDevTitle')) + '</h3>' +
       '<p class="muted modal-sub">' + esc(t('fieldName')) + '</p>' +

@@ -82,7 +82,7 @@ func TestLoadOrGenerateParamsIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("second load: %v", err)
 	}
-	if *p1 != *p2 {
+	if p1.UAPISet() != p2.UAPISet() {
 		t.Fatalf("params not persisted identically: %+v vs %+v", p1, p2)
 	}
 }
@@ -228,5 +228,120 @@ func TestApplyParamsSockInvalidParams(t *testing.T) {
 	p := &Params{Jc: 0} // invalid, must be rejected before dialing
 	if err := ApplyParamsSock("/nonexistent/wg0.sock", p); err == nil || !strings.Contains(err.Error(), "invalid") {
 		t.Fatalf("invalid params must fail validation, got: %v", err)
+	}
+}
+
+func TestGenerateV2Valid(t *testing.T) {
+	for i := 0; i < 300; i++ {
+		p, err := GenerateV2()
+		if err != nil {
+			t.Fatalf("generate v2: %v", err)
+		}
+		if !p.V2() || len(p.HR) != 4 || p.I1 == "" || p.S3 == 0 || p.S4 == 0 {
+			t.Fatalf("incomplete v2 set: %+v", p)
+		}
+		if err := p.Validate(); err != nil {
+			t.Fatalf("v2 invalid: %v", err)
+		}
+	}
+}
+
+func TestValidateV2RejectsBad(t *testing.T) {
+	good := func() *Params {
+		p, err := GenerateV2()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	cases := map[string]func(p *Params){
+		"overlap":         func(p *Params) { p.HR[1] = HRange{Min: p.HR[0].Min, Max: p.HR[0].Max} },
+		"three ranges":    func(p *Params) { p.HR = p.HR[:3] },
+		"reversed":        func(p *Params) { p.HR[2] = HRange{Min: 900, Max: 800} },
+		"too low":         func(p *Params) { p.HR[3] = HRange{Min: 1, Max: 4} },
+		"size collide":    func(p *Params) { p.S1 = 10; p.S3 = 94 }, // 148+10 == 64+94
+		"s4 too big":      func(p *Params) { p.S4 = 65 },
+		"bad i1 tag":      func(p *Params) { p.I1 = "<x 1>" },
+		"bad i1 hex":      func(p *Params) { p.I1 = "<b 0xabc>" },
+		"i1 over mtu":     func(p *Params) { p.I1 = "<r 1300>" },
+		"i1 unterminated": func(p *Params) { p.I1 = "<r 10" },
+	}
+	for name, mut := range cases {
+		p := good()
+		mut(p)
+		if err := p.Validate(); err == nil {
+			t.Errorf("%s: expected validation error", name)
+		}
+	}
+}
+
+func TestQUICInitialSignature(t *testing.T) {
+	s, err := QUICInitialSignature()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateSignature(s); err != nil {
+		t.Fatalf("%s: %v", s, err)
+	}
+	// 6 + 8 + 4 + 1182 = 1200 bytes; length varint 0x4000|1182.
+	if !strings.Contains(s, "0000000108><r 8><b 0x0000449e><r 1182>") || !strings.HasPrefix(s, "<b 0xc") {
+		t.Errorf("unexpected QUIC signature %q", s)
+	}
+}
+
+func TestClientINIAndUAPIV2(t *testing.T) {
+	p := &Params{Version: 2, Jc: 5, Jmin: 40, Jmax: 80, S1: 15, S2: 16, S3: 20, S4: 8,
+		HR: []HRange{{100, 200}, {300, 400}, {500, 600}, {700, 700}}, I1: "<b 0xc0><r 10>"}
+	if err := p.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	ini := p.ClientINI()
+	for _, want := range []string{"S3 = 20\n", "S4 = 8\n", "H1 = 100-200\n", "H4 = 700\n", "I1 = <b 0xc0><r 10>\n"} {
+		if !strings.Contains(ini, want) {
+			t.Errorf("ClientINI missing %q:\n%s", want, ini)
+		}
+	}
+	want := "jc=5\njmin=40\njmax=80\ns1=15\ns2=16\ns3=20\ns4=8\nh1=100-200\nh2=300-400\nh3=500-600\nh4=700"
+	if got := p.UAPISet(); got != want {
+		t.Errorf("UAPISet v2:\n got %q\nwant %q", got, want)
+	}
+	// The daemon's own parser must accept every header spec we render.
+	for _, r := range p.HR {
+		if s, e, err := ParseHeaderSpec(r.String()); err != nil || s != r.Min || e != r.Max {
+			t.Errorf("ParseHeaderSpec(%s) = %d %d %v", r, s, e, err)
+		}
+	}
+}
+
+func TestLoadOrGenerateV2(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	v1, err := LoadOrGenerate(st, 1, "")
+	if err != nil || v1.V2() {
+		t.Fatalf("v1: %+v %v", v1, err)
+	}
+	a, err := LoadOrGenerate(st, 2, "")
+	if err != nil || !a.V2() {
+		t.Fatalf("v2: %+v %v", a, err)
+	}
+	b, err := LoadOrGenerate(st, 2, "")
+	if err != nil || b.UAPISet() != a.UAPISet() || b.I1 != a.I1 {
+		t.Fatalf("v2 not persisted: %v\n%s\n%s", err, a.UAPISet(), b.UAPISet())
+	}
+	// The legacy set stays untouched next to it.
+	v1b, _ := LoadOrGenerate(st, 1, "")
+	if v1b.UAPISet() != v1.UAPISet() {
+		t.Errorf("legacy params changed")
+	}
+	// I1 override (client-side only) replaces the stored signature.
+	c, err := LoadOrGenerate(st, 2, "<b 0x01><r 5>")
+	if err != nil || c.I1 != "<b 0x01><r 5>" || c.UAPISet() != a.UAPISet() {
+		t.Fatalf("i1 override: %+v %v", c, err)
+	}
+	if _, err := LoadOrGenerate(st, 2, "<zz>"); err == nil {
+		t.Error("bad FIBR_AWG_I1 must fail")
 	}
 }

@@ -208,7 +208,7 @@ func (m *Manager) ban(ctx context.Context, uuid string, ips []string, now time.T
 	m.banned[uuid] = now.Add(m.cfg.XrayBan)
 	cb := m.onLimit
 	m.mu.Unlock()
-	if err := m.api.RemoveUser(ctx, uuid); err != nil {
+	if err := m.removeUser(ctx, uuid); err != nil {
 		m.log.Warn("xray limiter: cannot cut link", "uuid", uuid, "error", err)
 	}
 	m.log.Warn("xray limiter: link used from too many places, cut temporarily",
@@ -242,7 +242,7 @@ func (m *Manager) unbanExpired(ctx context.Context, now time.Time) {
 		if !active[uuid] {
 			continue
 		}
-		if err := m.api.AddUser(ctx, uuid); err != nil {
+		if err := m.addUser(ctx, uuid); err != nil {
 			m.log.Warn("xray limiter: cannot restore link", "uuid", uuid, "error", err)
 		}
 	}

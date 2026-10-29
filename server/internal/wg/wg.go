@@ -114,7 +114,7 @@ func New(cfg *config.Config, st *store.Store, log *slog.Logger) (*Manager, error
 	// (they live on the interface, not per peer), generated once and shared
 	// by every client config.
 	if cfg.WGEngine == config.EngineAWG {
-		p, err := awg.LoadOrGenerateParams(st)
+		p, err := awg.LoadOrGenerate(st, cfg.AWGVersion, cfg.AWGI1)
 		if err != nil {
 			return nil, fmt.Errorf("awg params: %w", err)
 		}
@@ -221,7 +221,7 @@ func (m *Manager) ensureInterfaceAWG() error {
 	if err := run("ip", "addr", "replace", m.cfg.ServerIP6+"/64", "dev", m.cfg.WGInterface); err != nil {
 		return fmt.Errorf("assign ipv6 address: %w", err)
 	}
-	if err := run("ip", "link", "set", "mtu", strconv.Itoa(m.cfg.MTU), "dev", m.cfg.WGInterface, "up"); err != nil {
+	if err := run("ip", "link", "set", "mtu", strconv.Itoa(m.mtu()), "dev", m.cfg.WGInterface, "up"); err != nil {
 		return fmt.Errorf("bring up: %w", err)
 	}
 
@@ -237,9 +237,9 @@ func (m *Manager) ensureInterfaceAWG() error {
 	if err := awg.ApplyParams(m.cfg.WGInterface, m.awg); err != nil {
 		return fmt.Errorf("apply amneziawg params: %w", err)
 	}
-	m.log.Info("amneziawg obfuscation applied",
+	m.log.Info("amneziawg obfuscation applied", "awg_version", max(m.awg.Version, 1),
 		"jc", m.awg.Jc, "jmin", m.awg.Jmin, "jmax", m.awg.Jmax,
-		"s1", m.awg.S1, "s2", m.awg.S2)
+		"s1", m.awg.S1, "s2", m.awg.S2, "s3", m.awg.S3, "s4", m.awg.S4, "mtu", m.mtu())
 	return m.ensureFirewall()
 }
 
@@ -572,8 +572,22 @@ PresharedKey = %s
 AllowedIPs = %s
 Endpoint = %s:%d
 PersistentKeepalive = 25
-`, d.PrivateKey, address, m.DNSLine(d), m.cfg.MTU, awgBlock,
+`, d.PrivateKey, address, m.DNSLine(d), m.mtu(), awgBlock,
 		ep.WGServerPubKey, d.PresharedKey, allowedIPs, ep.Host, ep.WGPort)
+}
+
+// AWG2MaxMTU caps the tunnel MTU of an AWG 2.0 interface: S4 pads every
+// transport packet and the I1 signature is a full 1200-byte datagram, so
+// leave room for both under the mobile networks' ~1420-1460 path MTU (the
+// same 1376 AmneziaVPN uses by default).
+const AWG2MaxMTU = 1376
+
+// mtu is the tunnel MTU for this interface and its client configs.
+func (m *Manager) mtu() int {
+	if m.awg != nil && m.awg.V2() && m.cfg.MTU > AWG2MaxMTU {
+		return AWG2MaxMTU
+	}
+	return m.cfg.MTU
 }
 
 func detectDefaultIface() string {

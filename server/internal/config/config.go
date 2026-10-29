@@ -57,6 +57,21 @@ type Config struct {
 	XrayDest    string // FIBR_XRAY_DEST, Reality fallback target, defaults to SNI:443
 	XrayShortID string // FIBR_XRAY_SHORT_ID, hex short id shared by all clients
 
+	// VLESS over XHTTP behind Caddy (docs/xray.md): the same VLESS clients,
+	// reached at https://<domain>:443<XHTTPPath> with the domain's own TLS
+	// certificate — indistinguishable from the cabinet/mini app traffic that
+	// filtered networks already let through. Enabled when FIBR_DOMAIN is a
+	// real HTTPS host; XHTTPHost is that host (empty = transport off).
+	XHTTPEnabled bool   // FIBR_XHTTP_ENABLED (default true)
+	XHTTPPath    string // FIBR_XHTTP_PATH, secret URL path (must match the Caddyfile; default /fibr-xh)
+	XHTTPHost    string // derived from FIBR_DOMAIN; "" when the domain is plain http / localhost / an IP
+
+	// AWGVersion selects the AmneziaWG parameter generation: 2 (default) adds
+	// S3/S4 padding, H1-H4 ranges and the I1 signature packet; 1 keeps the
+	// legacy Jc/S1/S2/H1-H4 set (docs/awg.md).
+	AWGVersion int    // FIBR_AWG_VERSION
+	AWGI1      string // FIBR_AWG_I1: override of the I1 signature packet (client side)
+
 	// AmneziaWG as a per-device protocol: a second tunnel (awg0) next to the
 	// plain WireGuard one, on its own UDP port and subnet, served by the
 	// bundled amneziawg-go daemon. On by default. When the whole server
@@ -86,6 +101,14 @@ type Config struct {
 	// endpoints serve the catalog for the app's game-tunnel mode.
 	GamesEnabled bool // FIBR_GAMES_ENABLED (default true)
 }
+
+// DefaultXHTTPPath is the XHTTP path used when FIBR_XHTTP_PATH is unset; the
+// Caddyfile carries the same default ({$FIBR_XHTTP_PATH:/fibr-xh}).
+const DefaultXHTTPPath = "/fibr-xh"
+
+// XHTTPInternalPort is the XHTTP inbound's port inside the xray container
+// (compose network only; Caddy proxies to xray:<port>).
+const XHTTPInternalPort = 10086
 
 // DefaultXraySNI is the Reality camouflage host used when FIBR_XRAY_SNI is
 // not set (same default as install.sh).
@@ -159,6 +182,21 @@ func Load() (*Config, error) {
 	c.XraySNI = strings.TrimSpace(os.Getenv("FIBR_XRAY_SNI"))
 	c.XrayDest = strings.TrimSpace(os.Getenv("FIBR_XRAY_DEST"))
 	c.XrayShortID = strings.TrimSpace(os.Getenv("FIBR_XRAY_SHORT_ID"))
+	c.XHTTPEnabled = getenvBool("FIBR_XHTTP_ENABLED", true)
+	c.XHTTPPath = getenv("FIBR_XHTTP_PATH", DefaultXHTTPPath)
+	if !strings.HasPrefix(c.XHTTPPath, "/") {
+		c.XHTTPPath = "/" + c.XHTTPPath
+	}
+	c.XHTTPPath = strings.TrimRight(c.XHTTPPath, "/")
+	if c.XHTTPPath == "" || strings.ContainsAny(c.XHTTPPath, " ?#*{}") {
+		return nil, fmt.Errorf("FIBR_XHTTP_PATH: %q is not a valid URL path (use e.g. /$(openssl rand -hex 8))", c.XHTTPPath)
+	}
+	c.XHTTPHost = httpsHost(c.Domain)
+	c.AWGVersion = getenvInt("FIBR_AWG_VERSION", 2)
+	if c.AWGVersion != 1 && c.AWGVersion != 2 {
+		return nil, fmt.Errorf("FIBR_AWG_VERSION: %d is not 1 or 2", c.AWGVersion)
+	}
+	c.AWGI1 = strings.TrimSpace(os.Getenv("FIBR_AWG_I1"))
 	c.AWGEnabled = getenvBool("FIBR_AWG_ENABLED", true)
 	c.AWGPort = getenvInt("FIBR_AWG_PORT", 51821)
 	c.AWGInterface = getenv("FIBR_AWG_IFACE", "awg0")
@@ -348,4 +386,38 @@ func splitCSV(s string) []string {
 		}
 	}
 	return out
+}
+
+// XHTTPActive reports whether the VLESS-over-XHTTP transport (behind Caddy on
+// :443) is served and advertised in client links.
+func (c *Config) XHTTPActive() bool {
+	return c.XrayEnabled && c.XHTTPEnabled && c.XHTTPHost != ""
+}
+
+// httpsHost returns the bare host of FIBR_DOMAIN when Caddy serves it over
+// HTTPS with a real certificate (a DNS name, no http:// scheme, not
+// localhost) — the precondition for the XHTTP transport. Otherwise "".
+func httpsHost(domain string) string {
+	d := strings.TrimSpace(domain)
+	if d == "" || strings.HasPrefix(strings.ToLower(d), "http://") {
+		return ""
+	}
+	if i := strings.Index(d, "://"); i >= 0 {
+		d = d[i+3:]
+	}
+	d = strings.TrimSuffix(d, "/")
+	if i := strings.IndexByte(d, '/'); i >= 0 {
+		d = d[:i]
+	}
+	host := d
+	if h, port, err := net.SplitHostPort(d); err == nil {
+		if port != "443" {
+			return "" // a non-standard Caddy port: the transport assumes :443
+		}
+		host = h
+	}
+	if host == "" || strings.EqualFold(host, "localhost") || net.ParseIP(host) != nil || !strings.Contains(host, ".") {
+		return ""
+	}
+	return host
 }

@@ -29,7 +29,11 @@ services:
       retries: 3
       start_period: 10s
 
-  # Xray (VLESS + Reality) — DPI-resistant second protocol, ON by default:
+  # Xray (VLESS) — DPI-resistant second protocol, ON by default. Two
+  # transports for the same clients: XHTTP behind Caddy on :443 with the
+  # site's own certificate (what client links use when FIBR_DOMAIN is a real
+  # HTTPS domain; Caddy reaches xray:10086 over the compose network) and
+  # Reality on FIBR_XRAY_PORT (fallback, and what remote nodes serve):
   # every user can pick WireGuard or VLESS. (FIBR_XRAY_ENABLED=false in .env
   # turns it off; then also stop this container: docker compose stop xray.)
   # fibr renders /data/xray/config.json on the shared fibr-data volume; this
@@ -80,6 +84,9 @@ services:
       - "443:443"
     environment:
       FIBR_DOMAIN: ${FIBR_DOMAIN}
+      # Secret path of the VLESS-over-XHTTP transport; fibr reads the same
+      # value from .env (default /fibr-xh on both sides).
+      FIBR_XHTTP_PATH: ${FIBR_XHTTP_PATH:-/fibr-xh}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data

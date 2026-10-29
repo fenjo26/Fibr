@@ -319,6 +319,19 @@ else
   info "generated .env with fresh secrets"
 fi
 
+# VLESS over XHTTP behind Caddy on :443 (docs/xray.md): a random secret URL
+# path, shared by Caddy (compose interpolation) and fibr. Fresh installs and
+# upgrades alike get one; an existing value is never changed (it is baked
+# into every issued VLESS link).
+if ! grep -q '^FIBR_XHTTP_PATH=' "$ENV_FILE"; then
+  cat >> "$ENV_FILE" <<HEOF
+
+# VLESS over XHTTP on :443 behind Caddy — secret path; see docs/xray.md.
+FIBR_XHTTP_PATH=/$(rand_hex 8)
+HEOF
+  info "generated FIBR_XHTTP_PATH (VLESS over XHTTP on :443)"
+fi
+
 # --bot-token / --admin-tg write the Telegram settings into .env so the whole
 # setup fits into one command — no manual file editing. Works both on fresh
 # installs and on already-running ones (just re-run the installer).
@@ -393,8 +406,9 @@ ${C_INFO}───────────────────────�
                 login & password; Telegram sign-in is optional)
   Protocols   : every user picks per device —
                 WireGuard  udp/$WG_PORT
-                AmneziaWG  udp/51821   (for AmneziaVPN, masked WireGuard)
-                VLESS      tcp/$XRAY_PORT  (Reality, SNI $XRAY_SNI)
+                AmneziaWG  udp/51821   (AWG 2.0 for AmneziaVPN, masked WireGuard)
+                VLESS      tcp/443 (XHTTP + TLS of $DOMAIN, behind Caddy;
+                           fallback Reality on tcp/$XRAY_PORT)
   Firewall    : if your hosting has its own firewall panel, open the same
                 ports there too (80,443/tcp, $WG_PORT+51821/udp, $XRAY_PORT/tcp).
 EOF

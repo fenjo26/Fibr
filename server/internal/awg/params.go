@@ -1,6 +1,17 @@
 // Package awg implements AmneziaWG support: generation and persistence of the
-// obfuscation parameters (Jc/Jmin/Jmax/S1/S2/H1-H4), a small client for the
-// amneziawg-go UAPI socket and lifecycle management of the userspace daemon.
+// obfuscation parameters, a small client for the amneziawg-go UAPI socket and
+// lifecycle management of the userspace daemon.
+//
+// Two parameter generations exist:
+//
+//   - AWG 1.0 (legacy): Jc/Jmin/Jmax/S1/S2 and fixed H1-H4 values. Its
+//     fixed-size, fixed-header handshake is fingerprinted by Russian TSPU
+//     since 2025 (docs/awg.md).
+//   - AWG 2.0 (default, Version 2): adds S3/S4 padding of the cookie and
+//     transport messages, H1-H4 as non-overlapping RANGES (every packet gets a
+//     fresh random header from its range) and the I1 "signature" packet sent
+//     before each handshake, here shaped like a QUIC Initial. Understood by
+//     current AmneziaVPN / AmneziaWG apps and by amneziawg-go >= v0.2.15.
 //
 // AmneziaWG extends WireGuard with traffic masking: junk packets before the
 // handshake (Jc of random size Jmin..Jmax), padding on handshake packets
@@ -12,19 +23,41 @@ package awg
 
 import (
 	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"math/big"
 	"strconv"
+	"strings"
 
 	"github.com/fenjo26/Fibr/internal/store"
 )
 
-const settingParamsKey = "awg_params"
+const (
+	settingParamsKey   = "awg_params"  // AWG 1.0 parameter set (legacy)
+	settingParamsKeyV2 = "awg2_params" // AWG 2.0 parameter set
+)
+
+// HRange is an AWG 2.0 magic-header range (inclusive).
+type HRange struct {
+	Min uint32 `json:"min"`
+	Max uint32 `json:"max"`
+}
+
+func (r HRange) String() string {
+	if r.Min == r.Max {
+		return strconv.FormatUint(uint64(r.Min), 10)
+	}
+	return fmt.Sprintf("%d-%d", r.Min, r.Max)
+}
 
 // Params holds the AmneziaWG obfuscation parameters shared by the server
 // daemon and every client config.
 type Params struct {
+	// Version: 0 or 1 = AWG 1.0 (H1-H4 single values), 2 = AWG 2.0 (S3/S4,
+	// HR ranges, I1).
+	Version int `json:"version,omitempty"`
+
 	Jc   int    `json:"jc"`   // junk packet count before each handshake: 1..128 (recommended 4..12)
 	Jmin int    `json:"jmin"` // minimum junk packet size: < Jmax, < 1280
 	Jmax int    `json:"jmax"` // maximum junk packet size: > Jmin, <= 1280
@@ -34,7 +67,16 @@ type Params struct {
 	H2   uint32 `json:"h2"`
 	H3   uint32 `json:"h3"`
 	H4   uint32 `json:"h4"`
+
+	// AWG 2.0 only.
+	S3 int      `json:"s3,omitempty"` // cookie reply padding (server-side, must match)
+	S4 int      `json:"s4,omitempty"` // transport message padding (must match)
+	HR []HRange `json:"hr,omitempty"` // H1-H4 ranges, exactly 4, non-overlapping (must match)
+	I1 string   `json:"i1,omitempty"` // signature packet before each handshake (client-side)
 }
+
+// V2 reports whether the set is AWG 2.0.
+func (p *Params) V2() bool { return p.Version >= 2 }
 
 // Generate returns fresh random parameters inside the ranges recommended by
 // the AmneziaWG documentation.
@@ -88,6 +130,9 @@ func Generate() (*Params, error) {
 // Validate checks the documented AmneziaWG constraints (assuming path MTU of
 // 1280, as the official docs do).
 func (p *Params) Validate() error {
+	if p.V2() {
+		return p.validateV2()
+	}
 	if p.Jc < 1 || p.Jc > 128 {
 		return fmt.Errorf("Jc must be in 1..128, got %d", p.Jc)
 	}
@@ -113,6 +158,218 @@ func (p *Params) Validate() error {
 		}
 	}
 	return nil
+}
+
+// validateV2 checks an AWG 2.0 set: junk as in 1.0; paddings within the
+// MTU budget; the three fixed-size handshake messages distinguishable by
+// size; four non-overlapping header ranges; a parseable I1.
+func (p *Params) validateV2() error {
+	if p.Jc < 1 || p.Jc > 128 {
+		return fmt.Errorf("Jc must be in 1..128, got %d", p.Jc)
+	}
+	if p.Jmin <= 0 || p.Jmin > p.Jmax || p.Jmax > 1280 {
+		return fmt.Errorf("need 0 < Jmin <= Jmax <= 1280, got Jmin=%d Jmax=%d", p.Jmin, p.Jmax)
+	}
+	if p.S1 < 0 || p.S1 > 1132 || p.S2 < 0 || p.S2 > 1188 || p.S3 < 0 || p.S3 > 1216 || p.S4 < 0 || p.S4 > 64 {
+		return fmt.Errorf("paddings out of range: S1=%d (0..1132) S2=%d (0..1188) S3=%d (0..1216) S4=%d (0..64)", p.S1, p.S2, p.S3, p.S4)
+	}
+	// Handshake initiation 148, response 92, cookie reply 64 bytes.
+	sizes := map[int]string{148 + p.S1: "S1", 92 + p.S2: "S2"}
+	if _, dup := sizes[64+p.S3]; dup || len(sizes) != 2 {
+		return fmt.Errorf("padded handshake sizes collide (S1=%d S2=%d S3=%d)", p.S1, p.S2, p.S3)
+	}
+	if len(p.HR) != 4 {
+		return fmt.Errorf("AWG 2.0 needs exactly 4 header ranges, got %d", len(p.HR))
+	}
+	for i, r := range p.HR {
+		if r.Min < 5 || r.Max < r.Min || r.Max > 2147483647 {
+			return fmt.Errorf("H%d range %s out of 5..2147483647", i+1, r)
+		}
+		for j := 0; j < i; j++ {
+			o := p.HR[j]
+			if r.Min <= o.Max && o.Min <= r.Max {
+				return fmt.Errorf("H%d range %s overlaps H%d range %s", i+1, r, j+1, o)
+			}
+		}
+	}
+	if err := ValidateSignature(p.I1); err != nil {
+		return fmt.Errorf("I1: %w", err)
+	}
+	return nil
+}
+
+// ValidateSignature checks an I1-I5 tag chain the way amneziawg-go parses
+// it: <b 0xHEX>, <r N>, <rc N>, <rd N>, <t>; empty is allowed (no packet).
+func ValidateSignature(spec string) error {
+	rest := strings.TrimSpace(spec)
+	if rest == "" {
+		return nil
+	}
+	size := 0
+	for rest != "" {
+		if rest[0] != '<' {
+			return fmt.Errorf("expected '<' at %q", rest)
+		}
+		end := strings.IndexByte(rest, '>')
+		if end < 0 {
+			return fmt.Errorf("missing '>' in %q", rest)
+		}
+		parts := strings.Fields(rest[1:end])
+		rest = strings.TrimSpace(rest[end+1:])
+		if len(parts) == 0 {
+			return fmt.Errorf("empty tag")
+		}
+		switch parts[0] {
+		case "b":
+			if len(parts) != 2 {
+				return fmt.Errorf("<b> needs one hex argument")
+			}
+			h := strings.TrimPrefix(parts[1], "0x")
+			raw, err := hex.DecodeString(h)
+			if err != nil || len(raw) == 0 {
+				return fmt.Errorf("<b %s>: bad hex", parts[1])
+			}
+			size += len(raw)
+		case "r", "rc", "rd":
+			if len(parts) != 2 {
+				return fmt.Errorf("<%s> needs a size", parts[0])
+			}
+			n, err := strconv.Atoi(parts[1])
+			if err != nil || n <= 0 {
+				return fmt.Errorf("<%s %s>: bad size", parts[0], parts[1])
+			}
+			size += n
+		case "t":
+			size += 4
+		default:
+			return fmt.Errorf("unknown tag <%s>", parts[0])
+		}
+	}
+	if size > 1280 {
+		return fmt.Errorf("signature packet is %d bytes, over the 1280-byte safe MTU", size)
+	}
+	return nil
+}
+
+// GenerateV2 returns a fresh AWG 2.0 parameter set.
+func GenerateV2() (*Params, error) {
+	base, err := Generate() // Jc/Jmin/Jmax/S1/S2 as in 1.0
+	if err != nil {
+		return nil, err
+	}
+	p := &Params{Version: 2, Jc: base.Jc, Jmin: base.Jmin, Jmax: base.Jmax, S1: base.S1, S2: base.S2}
+	for {
+		if p.S3, err = randInt(15, 56); err != nil {
+			return nil, err
+		}
+		if p.S4, err = randInt(4, 24); err != nil {
+			return nil, err
+		}
+		if 64+p.S3 != 148+p.S1 && 64+p.S3 != 92+p.S2 {
+			break
+		}
+	}
+	if p.HR, err = genHeaderRanges(); err != nil {
+		return nil, err
+	}
+	if p.I1, err = QUICInitialSignature(); err != nil {
+		return nil, err
+	}
+	if err := p.Validate(); err != nil {
+		return nil, fmt.Errorf("generated awg2 params invalid: %w", err)
+	}
+	return p, nil
+}
+
+// genHeaderRanges splits 5..2^31-1 into four bands, shuffles which message
+// type gets which band, and picks a random sub-range inside each — so the
+// ranges never overlap and differ from server to server.
+func genHeaderRanges() ([]HRange, error) {
+	const lo, hi = 5, 2147483647
+	band := (hi - lo + 1) / 4
+	order := []int{0, 1, 2, 3}
+	for i := len(order) - 1; i > 0; i-- { // Fisher-Yates
+		j, err := randInt(0, i)
+		if err != nil {
+			return nil, err
+		}
+		order[i], order[j] = order[j], order[i]
+	}
+	out := make([]HRange, 4)
+	for i, b := range order {
+		bLo := lo + b*band
+		start, err := randInt(bLo, bLo+band/2)
+		if err != nil {
+			return nil, err
+		}
+		width, err := randInt(band/16, band/3)
+		if err != nil {
+			return nil, err
+		}
+		out[i] = HRange{Min: uint32(start), Max: uint32(start + width)}
+	}
+	return out, nil
+}
+
+// QUICInitialSignature builds an I1 chain that looks like a QUIC v1 Initial
+// packet: long header (0xc3), version 1, an 8-byte random destination
+// connection id, empty source id and token, a length field matching the
+// rest, then random "encrypted" payload — 1200 bytes, the minimum size of a
+// real client Initial. The fixed prefix differs per server (header byte low
+// bits are random), the connection id and payload are fresh per handshake.
+func QUICInitialSignature() (string, error) {
+	pn, err := randInt(0, 3)
+	if err != nil {
+		return "", err
+	}
+	first := 0xc0 | pn
+	const total = 1200
+	const head = 1 + 4 + 1 + 8 + 1 + 1 + 2 // flags, version, dcid len+dcid, scid len, token len, length
+	rest := total - head
+	length := 0x4000 | rest // 2-byte QUIC varint
+	return fmt.Sprintf("<b 0x%02x0000000108><r 8><b 0x0000%04x><r %d>", first, length, rest), nil
+}
+
+// LoadOrGenerate returns the stored parameters of the requested generation
+// (1 or 2), generating and persisting them on first use. i1 (FIBR_AWG_I1),
+// when set, replaces the stored I1 signature of a 2.0 set — it is
+// client-side only, so changing it never breaks existing configs.
+func LoadOrGenerate(st *store.Store, version int, i1 string) (*Params, error) {
+	if version < 2 {
+		return LoadOrGenerateParams(st)
+	}
+	raw, err := st.GetSetting(settingParamsKeyV2)
+	var p *Params
+	switch {
+	case err == nil:
+		p = &Params{}
+		if jerr := json.Unmarshal([]byte(raw), p); jerr != nil {
+			return nil, fmt.Errorf("stored awg2 params are corrupt: %w", jerr)
+		}
+		if verr := p.Validate(); verr != nil {
+			return nil, fmt.Errorf("stored awg2 params are invalid: %w", verr)
+		}
+	case err == store.ErrNotFound:
+		if p, err = GenerateV2(); err != nil {
+			return nil, err
+		}
+		blob, merr := json.Marshal(p)
+		if merr != nil {
+			return nil, merr
+		}
+		if serr := st.SetSetting(settingParamsKeyV2, string(blob)); serr != nil {
+			return nil, fmt.Errorf("persist awg2 params: %w", serr)
+		}
+	default:
+		return nil, err
+	}
+	if i1 = strings.TrimSpace(i1); i1 != "" {
+		if verr := ValidateSignature(i1); verr != nil {
+			return nil, fmt.Errorf("FIBR_AWG_I1: %w", verr)
+		}
+		p.I1 = i1
+	}
+	return p, nil
 }
 
 // LoadOrGenerateParams returns the stored server-wide parameters, generating
@@ -152,6 +409,14 @@ func LoadOrGenerateParams(st *store.Store) (*Params, error) {
 // AmneziaVPN client apps understand (extra keys in the [Interface] section;
 // the official WireGuard app rejects them).
 func (p *Params) ClientINI() string {
+	if p.V2() {
+		ini := fmt.Sprintf("Jc = %d\nJmin = %d\nJmax = %d\nS1 = %d\nS2 = %d\nS3 = %d\nS4 = %d\nH1 = %s\nH2 = %s\nH3 = %s\nH4 = %s\n",
+			p.Jc, p.Jmin, p.Jmax, p.S1, p.S2, p.S3, p.S4, p.HR[0], p.HR[1], p.HR[2], p.HR[3])
+		if p.I1 != "" {
+			ini += "I1 = " + p.I1 + "\n"
+		}
+		return ini
+	}
 	return fmt.Sprintf("Jc = %d\nJmin = %d\nJmax = %d\nS1 = %d\nS2 = %d\nH1 = %d\nH2 = %d\nH3 = %d\nH4 = %d\n",
 		p.Jc, p.Jmin, p.Jmax, p.S1, p.S2, p.H1, p.H2, p.H3, p.H4)
 }
@@ -159,7 +424,15 @@ func (p *Params) ClientINI() string {
 // UAPISet renders the parameters as the device part of a cross-platform UAPI
 // "set" request (see https://www.wireguard.com/xplatform/), which is how the
 // amneziawg-go daemon is configured at runtime.
+//
+// The I1 signature is deliberately not pushed to the server: it is a
+// client-side knob (sent by the handshake initiator), and the server only
+// has to recognise the paddings and header ranges.
 func (p *Params) UAPISet() string {
+	if p.V2() {
+		return fmt.Sprintf("jc=%d\njmin=%d\njmax=%d\ns1=%d\ns2=%d\ns3=%d\ns4=%d\nh1=%s\nh2=%s\nh3=%s\nh4=%s",
+			p.Jc, p.Jmin, p.Jmax, p.S1, p.S2, p.S3, p.S4, p.HR[0], p.HR[1], p.HR[2], p.HR[3])
+	}
 	return fmt.Sprintf("jc=%d\njmin=%d\njmax=%d\ns1=%d\ns2=%d\nh1=%d\nh2=%d\nh3=%d\nh4=%d",
 		p.Jc, p.Jmin, p.Jmax, p.S1, p.S2, p.H1, p.H2, p.H3, p.H4)
 }
