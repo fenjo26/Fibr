@@ -7,10 +7,10 @@
 # binary named amneziawg-go). v3.x speaks AWG 2.0 parameters (S3/S4, H1-H4
 # ranges, I1) and stays wire-compatible with older AmneziaWG 2.0 clients
 # (verified against amneziawg-go v0.2.19 in both directions).
-FROM golang:1.26-alpine AS awg
+FROM golang:1.27-alpine AS awg
 RUN GOBIN=/out go install github.com/amnezia-vpn/amneziawg-go/v3@v3.1.20260828
 
-FROM golang:1.26-alpine AS build
+FROM golang:1.27-alpine AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
