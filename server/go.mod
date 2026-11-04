@@ -7,7 +7,7 @@ require (
 	github.com/miekg/dns v1.1.72
 	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
 	golang.zx2c4.com/wireguard/wgctrl v0.0.0-20241231184526-a9ab2273dd10
-	modernc.org/sqlite v1.61.0
+	modernc.org/sqlite v1.61.1
 )
 
 require (
